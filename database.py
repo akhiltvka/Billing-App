@@ -243,6 +243,20 @@ def init_db():
             created_at  TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
+        -- Full activity audit trail — every important user action is logged
+        CREATE TABLE IF NOT EXISTS activity_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            username    TEXT NOT NULL,
+            full_name   TEXT NOT NULL,
+            role        TEXT NOT NULL,
+            action      TEXT NOT NULL,
+            description TEXT,
+            table_name  TEXT,
+            record_id   INTEGER,
+            ip_address  TEXT,
+            created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
         -- Login rate limiting & lockout tracking
         CREATE TABLE IF NOT EXISTS login_attempts (
             username       TEXT PRIMARY KEY,

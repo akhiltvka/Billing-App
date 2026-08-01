@@ -100,6 +100,34 @@ def ok(data=None, message="Success"):
 def err(message="Error", code=400):
     return jsonify({"status": "error", "message": message}), code
 
+def log_activity(action, description=None, table_name=None, record_id=None):
+    """Record a user action to the activity_log table for audit trail."""
+    if 'user_id' not in session:
+        return
+    try:
+        conn = get_db()
+        conn.execute(
+            '''INSERT INTO activity_log (username, full_name, role, action, description, table_name, record_id, ip_address)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+            (
+                session.get('username', 'unknown'),
+                session.get('full_name', 'Unknown User'),
+                session.get('user_role', 'unknown'),
+                action,
+                description,
+                table_name,
+                record_id,
+                request.remote_addr
+            )
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass  # Never let audit logging break the main request
+
+def is_counter_staff():
+    return session.get('user_role') in ('counter_staff', 'tester')
+
 def wants_excel():
     return request.args.get('export', '').strip().lower() == 'excel'
 
@@ -589,6 +617,7 @@ def create_user():
         conn.close()
         result = dict(row)
         result['role_label'] = ROLE_LABELS.get(result['role'])
+        log_activity('CREATE_USER', f"Created user @{username} ({full_name}) as {ROLE_LABELS.get(role, role)}", 'users', c.lastrowid)
         return ok(result, "User created"), 201
     except sqlite3.IntegrityError:
         conn.close()
@@ -672,19 +701,20 @@ def delete_user(uid):
 
     conn.execute('DELETE FROM users WHERE id=?', (uid,))
     conn.commit(); conn.close()
+    log_activity('DELETE_USER', f"Deleted user @{target_user['username']} ({target_user['full_name']} — {ROLE_LABELS.get(target_user['role'], target_user['role'])})", 'users', uid)
     return ok(message="User deleted")
 
 # ─── Notifications (Managing Director Alerts) ────────────────────────────────
 
 @app.route('/api/notifications', methods=['GET'])
-@require_role('admin')
+@require_role('admin', 'md')
 def get_notifications():
     conn = get_db()
     rows = conn.execute(
-        'SELECT * FROM notifications WHERE target_role="admin" ORDER BY created_at DESC LIMIT 20'
+        'SELECT * FROM notifications WHERE target_role IN ("admin","md") ORDER BY created_at DESC LIMIT 20'
     ).fetchall()
     unread_count = conn.execute(
-        'SELECT COUNT(*) FROM notifications WHERE target_role="admin" AND read=0'
+        'SELECT COUNT(*) FROM notifications WHERE target_role IN ("admin","md") AND read=0'
     ).fetchone()[0]
     conn.close()
     return ok({'notifications': dict_rows(rows), 'unread_count': unread_count})
@@ -708,19 +738,72 @@ def get_settings():
     return ok({r['key']: r['value'] for r in rows})
 
 @app.route('/api/settings', methods=['POST'])
-@require_role('admin', 'manager')
+@require_role('admin', 'md', 'manager')
 def update_settings():
     data = request.get_json()
     if data is None or not isinstance(data, dict):
         return err("Invalid or missing JSON payload")
     conn = get_db()
+    changed = []
     for k, v in data.items():
         conn.execute(
             'INSERT INTO shop_settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
             (k, str(v))
         )
+        changed.append(k)
     conn.commit(); conn.close()
+    # Log if GST was toggled
+    if 'gst_enabled' in changed:
+        gst_val = data.get('gst_enabled', '')
+        log_activity('TOGGLE_GST', f"GST billing {'enabled' if str(gst_val)=='true' else 'disabled'}", 'shop_settings')
+    log_activity('UPDATE_SETTINGS', f"Updated settings: {', '.join(changed)}", 'shop_settings')
     return ok(message="Settings saved")
+
+@app.route('/api/settings/toggle-gst', methods=['POST'])
+@require_role('admin', 'md', 'manager')
+def toggle_gst():
+    d = request.get_json() or {}
+    enabled = d.get('enabled', True)
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO shop_settings (key, value) VALUES ('gst_enabled',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        ('true' if enabled else 'false',)
+    )
+    conn.commit(); conn.close()
+    log_activity('TOGGLE_GST', f"GST billing {'enabled' if enabled else 'disabled'}", 'shop_settings')
+    return ok(message=f"GST {'enabled' if enabled else 'disabled'} successfully")
+
+# ─── Activity Audit Log ──────────────────────────────────────────────────────
+
+@app.route('/api/activity-log', methods=['GET'])
+@require_role('admin', 'md')
+def get_activity_log():
+    page     = max(int(request.args.get('page', 1)), 1)
+    per_page = int(request.args.get('per_page', 50))
+    role_f   = request.args.get('role', '')
+    user_f   = request.args.get('username', '')
+    action_f = request.args.get('action', '')
+    offset   = (page - 1) * per_page
+
+    filters = []
+    params  = []
+    if role_f:   filters.append("role = ?");     params.append(role_f)
+    if user_f:   filters.append("username LIKE ?"); params.append(f'%{user_f}%')
+    if action_f: filters.append("action = ?");   params.append(action_f)
+
+    where = ('WHERE ' + ' AND '.join(filters)) if filters else ''
+    conn = get_db()
+    total = conn.execute(f'SELECT COUNT(*) FROM activity_log {where}', params).fetchone()[0]
+    rows  = conn.execute(
+        f'SELECT * FROM activity_log {where} ORDER BY id DESC LIMIT ? OFFSET ?',
+        params + [per_page, offset]
+    ).fetchall()
+    conn.close()
+    return ok({
+        'total': total, 'page': page, 'per_page': per_page,
+        'pages': (total + per_page - 1) // per_page,
+        'logs': [dict(r) for r in rows]
+    })
 
 # ─── Categories ─────────────────────────────────────────────────────────────
 
@@ -844,6 +927,8 @@ def list_products():
     conn.close()
 
     if wants_excel():
+        if is_counter_staff():
+            return err("Counter Staff are not authorized to export product data", 403)
         excel_rows = []
         for p in dict_rows(rows):
             excel_rows.append([
@@ -861,14 +946,18 @@ def list_products():
                 p.get('hsn_code') or '',
                 float(p.get('min_stock') or 0)
             ])
-        sheets = [{
-            "sheet_name": "Products",
-            "headers": ["Code", "Name", "Category", "Product Type", "Current Stock", "Purchase Unit", "Sale Unit", "Purchase Price (₹)", "Selling Price (₹)", "MRP (₹)", "GST Rate (%)", "HSN Code", "Min Stock"],
-            "rows": excel_rows
-        }]
+        sheets = [{"sheet_name": "Products", "headers": ["Code","Name","Category","Product Type","Current Stock","Purchase Unit","Sale Unit","Purchase Price (₹)","Selling Price (₹)","MRP (₹)","GST Rate (%)","HSN Code","Min Stock"], "rows": excel_rows}]
         return export_to_excel(sheets, "products_list")
 
-    return ok(dict_rows(rows))
+    product_list = dict_rows(rows)
+    # Counter staff must not see confidential buying prices
+    if is_counter_staff():
+        for p in product_list:
+            p.pop('purchase_price', None)
+            p.pop('mrp', None)
+            p.pop('min_stock', None)
+            p.pop('reorder_qty', None)
+    return ok(product_list)
 
 @app.route('/api/products/<int:pid>', methods=['GET'])
 @require_auth
@@ -880,7 +969,13 @@ def get_product(pid):
     ).fetchone()
     conn.close()
     if not row: return err("Product not found", 404)
-    return ok(dict_row(row))
+    p = dict_row(row)
+    if is_counter_staff():
+        p.pop('purchase_price', None)
+        p.pop('mrp', None)
+        p.pop('min_stock', None)
+        p.pop('reorder_qty', None)
+    return ok(p)
 
 @app.route('/api/products/barcode/<barcode>', methods=['GET'])
 @require_auth
@@ -965,6 +1060,7 @@ def create_product():
             (pid,)
         ).fetchone()
         conn.close()
+        log_activity('ADD_PRODUCT', f"Added product '{d['name']}' (code: {code})", 'products', pid)
         return ok(dict_row(row), "Product created"), 201
     except sqlite3.IntegrityError as e:
         conn.close()
@@ -2642,6 +2738,7 @@ def create_bill():
     payments   = conn.execute('SELECT * FROM bill_payments WHERE bill_id=? ORDER BY paid_at ASC', (bill_id,)).fetchall()
     conn.close()
     result = dict_row(bill); result['items'] = dict_rows(bill_items); result['payments'] = dict_rows(payments)
+    log_activity('CREATE_BILL', f"Bill {bill_no} created — ₹{grand_total} for {d.get('customer_name','Walk-in')}", 'bills', bill_id)
     return ok(result, f"Bill {bill_no} created"), 201
 
 @app.route('/api/bills/next-number', methods=['GET'])
@@ -3482,14 +3579,18 @@ def create_expense():
     conn.commit()
     row = conn.execute('SELECT * FROM expenses WHERE id=?', (c.lastrowid,)).fetchone()
     conn.close()
+    log_activity('ADD_EXPENSE', f"{entry_type.title()}: {d['category']} — ₹{exp_amount}", 'expenses', exp_id)
     return ok(dict_row(row)), 201
 
 @app.route('/api/expenses/<int:eid>', methods=['DELETE'])
-@require_role('admin', 'manager', 'accountant')
+@require_role('admin', 'md', 'manager', 'accountant')
 def delete_expense(eid):
     conn = get_db()
+    exp = conn.execute('SELECT category, amount FROM expenses WHERE id=?', (eid,)).fetchone()
     conn.execute('DELETE FROM expenses WHERE id=?', (eid,))
     conn.commit(); conn.close()
+    if exp:
+        log_activity('DELETE_EXPENSE', f"Deleted {exp['category']} ₹{exp['amount']}", 'expenses', eid)
     return ok(message="Expense deleted")
 
 # ─── Reports ─────────────────────────────────────────────────────────────────
@@ -3497,6 +3598,8 @@ def delete_expense(eid):
 @app.route('/api/reports/dashboard', methods=['GET'])
 @require_auth
 def dashboard():
+    if is_counter_staff():
+        return err("Counter Staff do not have access to reports and financial data.", 403)
     conn = get_db()
     today = str(date.today())
     def q1(sql, params=[]): return conn.execute(sql, params).fetchone()

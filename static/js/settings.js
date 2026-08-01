@@ -165,7 +165,7 @@ const Settings = {
               <div>
                 <div class="text-muted text-sm">Application</div>
                 <div class="font-semibold">Meat Products of India</div>
-                <div class="text-muted text-sm">Billing & Inventory Manager</div>
+                <div class="text-muted text-sm">Billing &amp; Inventory Manager</div>
               </div>
               <div>
                 <div class="text-muted text-sm">Version</div>
@@ -184,9 +184,98 @@ const Settings = {
               </div>
             </div>
           </div>
-        </div>`;
+
+        ${['admin','md','manager'].includes(Auth.user?.role) ? `
+        <!-- Activity Audit Log — MD/CEO & Developer only -->
+        <div class="card" style="margin-top:20px">
+          <div class="card-title" style="display:flex;align-items:center;justify-content:space-between">
+            <div><span class="card-title-icon">📋</span> Activity Audit Log</div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <select id="al-role-filter" class="form-control" style="width:auto;padding:4px 8px;font-size:12px">
+                <option value="">All Roles</option>
+                <option value="admin">Developer</option>
+                <option value="md">Managing Director</option>
+                <option value="manager">Manager</option>
+                <option value="accountant">Accountant</option>
+                <option value="counter_staff">Counter Staff</option>
+              </select>
+              <select id="al-action-filter" class="form-control" style="width:auto;padding:4px 8px;font-size:12px">
+                <option value="">All Actions</option>
+                <option value="CREATE_BILL">Bills Created</option>
+                <option value="CANCEL_BILL">Bills Cancelled</option>
+                <option value="ADD_PRODUCT">Products Added</option>
+                <option value="ADD_STOCK">Stock Added</option>
+                <option value="CREATE_USER">Users Created</option>
+                <option value="DELETE_USER">Users Deleted</option>
+                <option value="ADD_EXPENSE">Expenses Added</option>
+                <option value="TOGGLE_GST">GST Toggled</option>
+                <option value="UPDATE_SETTINGS">Settings Updated</option>
+                <option value="MD_REGISTER">MD Registered</option>
+              </select>
+              <button class="btn btn-secondary btn-sm" onclick="Settings.loadActivityLog(1)">🔍 Filter</button>
+            </div>
+          </div>
+          <div id="activity-log-table" style="overflow-x:auto">
+            <div class="empty-state" style="padding:20px">
+              <div class="empty-state-icon">📋</div>
+              <p class="text-muted">Click Filter to load activity log</p>
+            </div>
+          </div>
+          <div id="activity-log-pagination" style="display:flex;justify-content:center;gap:8px;padding:12px 0"></div>
+        </div>` : ''}
+      </div>`;
     } catch(e) {
       content.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><h3>${e.message}</h3></div>`;
+    }
+    // Load activity log on page open for md/admin
+    if (['admin','md'].includes(Auth.user?.role)) Settings.loadActivityLog(1);
+  },
+
+  async loadActivityLog(page = 1) {
+    const role   = document.getElementById('al-role-filter')?.value   || '';
+    const action = document.getElementById('al-action-filter')?.value || '';
+    const el = document.getElementById('activity-log-table');
+    const pg = document.getElementById('activity-log-pagination');
+    if (!el) return;
+    el.innerHTML = `<div style="padding:20px;text-align:center;color:var(--text-muted)">⏳ Loading...</div>`;
+    try {
+      const params = new URLSearchParams({page, per_page: 30});
+      if (role)   params.set('role', role);
+      if (action) params.set('action', action);
+      const data = await App.api('/activity-log?' + params.toString());
+      const logs = data.logs || [];
+      if (!logs.length) {
+        el.innerHTML = `<div class="empty-state" style="padding:20px"><p class="text-muted">No activity records found.</p></div>`;
+        pg.innerHTML = '';
+        return;
+      }
+      const ACTION_ICONS = {CREATE_BILL:'🧾',CANCEL_BILL:'❌',ADD_PRODUCT:'📦',EDIT_PRODUCT:'✏️',DELETE_PRODUCT:'🗑️',ADD_STOCK:'📥',APPROVE_STOCK:'✅',CREATE_USER:'👤',EDIT_USER:'✏️',DELETE_USER:'🗑️',RESET_PASSWORD:'🔑',ADD_EXPENSE:'💸',DELETE_EXPENSE:'🗑️',TOGGLE_GST:'🔄',UPDATE_SETTINGS:'⚙️',MD_REGISTER:'👑'};
+      el.innerHTML = `<table class="data-table" style="font-size:12px">
+        <thead><tr>
+          <th style="width:140px">Date &amp; Time</th>
+          <th>User</th>
+          <th>Role</th>
+          <th>Action</th>
+          <th>Description</th>
+        </tr></thead>
+        <tbody>
+          ${logs.map(l => `<tr>
+            <td style="white-space:nowrap;color:var(--text-muted)">${(l.created_at||'').replace('T',' ').slice(0,19)}</td>
+            <td><strong>@${l.username}</strong><br><span class="text-muted" style="font-size:11px">${l.full_name}</span></td>
+            <td><span class="badge badge-secondary" style="font-size:10px">${Auth.ROLE_LABELS[l.role]||l.role}</span></td>
+            <td><span style="white-space:nowrap">${ACTION_ICONS[l.action]||'📌'} ${l.action.replace(/_/g,' ')}</span></td>
+            <td style="max-width:260px;word-break:break-word">${l.description||'-'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+      // Pagination
+      if (data.pages > 1) {
+        pg.innerHTML = Array.from({length: data.pages}, (_,i) => i+1).map(p =>
+          `<button class="btn btn-${p===page?'primary':'secondary'} btn-sm" onclick="Settings.loadActivityLog(${p})">${p}</button>`
+        ).join('');
+      } else { pg.innerHTML = ''; }
+    } catch(e) {
+      el.innerHTML = `<div style="padding:16px;color:var(--crimson)">${e.message}</div>`;
     }
   },
 
