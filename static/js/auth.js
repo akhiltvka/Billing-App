@@ -594,7 +594,7 @@ const Auth = {
 const UsersAdmin = {
 
   async render() {
-    if (!Auth.isRole('admin', 'manager')) {
+    if (!Auth.isRole('admin', 'md', 'manager')) {
       document.getElementById('page-content').innerHTML = `
         <div class="empty-state">
           <div class="empty-state-icon">🔒</div>
