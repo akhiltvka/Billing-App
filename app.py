@@ -736,9 +736,16 @@ def change_password():
 @require_role('admin', 'md', 'manager')
 def list_users():
     conn = get_db()
-    rows = conn.execute(
-        'SELECT id, username, full_name, role, active, last_login, created_at, employee_id FROM users ORDER BY role, full_name'
-    ).fetchall()
+    current_role = session.get('user_role')
+    if current_role == 'admin':
+        rows = conn.execute(
+            'SELECT id, username, full_name, role, active, last_login, created_at, employee_id FROM users ORDER BY role, full_name'
+        ).fetchall()
+    else:
+        # Completely hide developer superuser (admin role) from MD and Manager
+        rows = conn.execute(
+            "SELECT id, username, full_name, role, active, last_login, created_at, employee_id FROM users WHERE role != 'admin' ORDER BY role, full_name"
+        ).fetchall()
     conn.close()
     result = [dict(r) for r in rows]
     for r in result:
@@ -813,6 +820,11 @@ def update_user(uid):
         conn.close()
         return err("User not found", 404)
 
+    # Developer (admin) accounts cannot be modified by non-developer roles (MD, Manager)
+    if target_user['role'] == 'admin' and session.get('user_role') != 'admin':
+        conn.close()
+        return err("Managing Directors and Store Managers are not authorized to modify Developer accounts", 403)
+
     # Manager restriction: cannot edit or reset password for Developers or Managing Directors
     if session.get('user_role') == 'manager':
         if target_user['role'] in ('admin', 'md') or d.get('role') in ('admin', 'md'):
@@ -871,6 +883,11 @@ def delete_user(uid):
     if not target_user:
         conn.close()
         return err("User not found", 404)
+
+    # Developer (admin) accounts cannot be deleted by non-developer roles (MD, Manager)
+    if target_user['role'] == 'admin' and session.get('user_role') != 'admin':
+        conn.close()
+        return err("Managing Directors and Store Managers are not authorized to delete Developer accounts", 403)
 
     if session.get('user_role') == 'manager' and target_user['role'] in ('admin', 'md'):
         conn.close()
