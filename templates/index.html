@@ -116,11 +116,15 @@
         </div>
       </div>
 
-      <div class="login-footer login-field" style="--lf:3">
-        <strong style="color:var(--text-secondary)">Default Accounts</strong><br>
-        admin / Admin@1234 &nbsp;|&nbsp; manager / Manager@1234<br>
-        accountant / Account@1234 &nbsp;|&nbsp; counter / Counter@1234<br>
-        <span style="color:var(--gold)">🧪 tester / Tester@1234 (Demo / Auto-cleanup)</span>
+      <div class="login-footer login-field" style="--lf:3;padding-top:12px">
+        <div style="padding:12px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.25);border-radius:var(--r-md);font-size:12px;color:#FCA5A5;text-align:left;line-height:1.5">
+          ⚠️ <strong>WARNING:</strong> User registration is strictly reserved for the <strong>Managing Director (MD/CEO) / Business Owner</strong>. The registered MD holds primary administrative authority to create and manage staff accounts.
+        </div>
+        <div style="margin-top:12px;text-align:center">
+          <button class="btn btn-secondary btn-sm w-full" onclick="Auth.showMDRegisterModal()" style="color:var(--gold);font-weight:700;padding:9px">
+            👑 Register Managing Director (MD / CEO)
+          </button>
+        </div>
       </div>
     </div>
   </div>

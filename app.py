@@ -452,6 +452,34 @@ def login():
         'pages':     ROLE_PAGES.get(user['role'], []),
     }, "Login successful")
 
+@app.route('/api/auth/register-md', methods=['POST'])
+def register_md():
+    d = request.get_json() or {}
+    username = (d.get('username') or '').strip()
+    password = d.get('password') or ''
+    full_name = (d.get('full_name') or '').strip()
+
+    if not username: return err("Username required")
+    if not full_name: return err("Managing Director Full Name required")
+    if len(password) < 6: return err("Password must be at least 6 characters")
+
+    conn = get_db()
+    existing = conn.execute('SELECT id FROM users WHERE username=? COLLATE NOCASE', (username,)).fetchone()
+    if existing:
+        conn.execute(
+            'UPDATE users SET password_hash=?, full_name=?, role="md", active=1 WHERE id=?',
+            (generate_password_hash(password), full_name, existing['id'])
+        )
+        conn.commit(); conn.close()
+        return ok(message="Managing Director (MD/CEO) account updated successfully! You can now sign in.")
+    else:
+        conn.execute(
+            'INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,"md")',
+            (username, generate_password_hash(password), full_name)
+        )
+        conn.commit(); conn.close()
+        return ok(message="Managing Director (MD/CEO) account registered successfully! You can now sign in."), 201
+
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():
     # If logging out from Tester account, clean up all test bills & restore stock

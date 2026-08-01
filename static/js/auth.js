@@ -45,6 +45,91 @@ const Auth = {
     tester:        '🧪',
   },
 
+  // ── MD/CEO Registration ────────────────────────────────────────────────────
+  showMDRegisterModal() {
+    App.showModal(`
+      <div class="modal-header">
+        <h3 style="margin:0;display:flex;align-items:center;gap:10px">👑 Register Managing Director (MD / CEO)</h3>
+      </div>
+      <div class="modal-body">
+        <div style="background:rgba(239,68,68,0.10);border:1px solid rgba(239,68,68,0.35);border-radius:var(--r-md);padding:14px;margin-bottom:18px">
+          <div style="font-weight:700;color:#FCA5A5;font-size:13px;margin-bottom:6px">⚠️ IMPORTANT WARNING</div>
+          <div style="font-size:12px;color:#FCA5A5;line-height:1.6">
+            This registration is <strong>STRICTLY RESERVED</strong> for the <strong>Managing Director / CEO / Business Owner</strong> of this outlet. The registered MD account will have full administrative authority including:<br>
+            &nbsp;• Creating and managing all staff accounts and passwords<br>
+            &nbsp;• Accessing all financial reports and settings<br>
+            &nbsp;• Approving stock transactions and viewing accounts<br><br>
+            <strong>⚠️ Registering as MD without authorization is a serious security violation.</strong>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Full Name (MD/CEO)</label>
+          <input class="form-control" id="md-fullname" type="text" placeholder="e.g. Rajesh Kumar" autocomplete="name">
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Username</label>
+          <input class="form-control" id="md-username" type="text" placeholder="e.g. rajesh_md" autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Password</label>
+          <div style="position:relative">
+            <input class="form-control" id="md-password" type="password" placeholder="Minimum 6 characters" autocomplete="new-password">
+            <button onclick="const i=document.getElementById('md-password');i.type=i.type==='password'?'text':'password'" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text-muted)">👁️</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label required">Confirm Password</label>
+          <input class="form-control" id="md-password2" type="password" placeholder="Re-enter password" autocomplete="new-password">
+        </div>
+        <div id="md-reg-error" style="display:none;padding:10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:var(--r-sm);font-size:12.5px;color:#FCA5A5;margin-top:8px"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+        <button class="btn btn-primary" id="md-reg-btn" onclick="Auth.submitMDRegister()" style="background:linear-gradient(135deg,#D97706,#B45309)">
+          👑 Register as Managing Director
+        </button>
+      </div>
+    `);
+  },
+
+  async submitMDRegister() {
+    const full_name = (document.getElementById('md-fullname').value || '').trim();
+    const username  = (document.getElementById('md-username').value  || '').trim();
+    const password  = document.getElementById('md-password').value;
+    const password2 = document.getElementById('md-password2').value;
+    const errDiv    = document.getElementById('md-reg-error');
+
+    const showErr = (msg) => { errDiv.textContent = '❌ ' + msg; errDiv.style.display = ''; };
+    errDiv.style.display = 'none';
+
+    if (!full_name)        return showErr('Full Name is required.');
+    if (!username)         return showErr('Username is required.');
+    if (password.length < 6) return showErr('Password must be at least 6 characters.');
+    if (password !== password2)  return showErr('Passwords do not match. Please re-enter.');
+
+    const btn = document.getElementById('md-reg-btn');
+    btn.disabled = true; btn.textContent = '⏳ Registering...';
+
+    try {
+      const res = await fetch('/api/auth/register-md', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full_name, username, password })
+      });
+      const json = await res.json();
+      if (json.status === 'ok') {
+        App.closeModal();
+        App.toast('success', '👑 MD Account Registered! You can now sign in with your credentials.', 5000);
+      } else {
+        showErr(json.message || 'Registration failed.');
+        btn.disabled = false; btn.textContent = '👑 Register as Managing Director';
+      }
+    } catch (e) {
+      showErr('Network error. Please try again.');
+      btn.disabled = false; btn.textContent = '👑 Register as Managing Director';
+    }
+  },
+
   // ── Login ──────────────────────────────────────────────────────────────────
   async login() {
     const username = document.getElementById('login-username').value.trim();
@@ -148,15 +233,15 @@ const Auth = {
     document.getElementById('topbar-user-name').textContent = name;
     document.getElementById('topbar-user-role').textContent = Auth.ROLE_LABELS[user.role] || user.role;
 
-    // Show/hide Users management link (for admin and manager)
+    // Show/hide Users management link (for admin, md and manager)
     const navUsers = document.getElementById('nav-users');
-    if (navUsers) navUsers.style.display = (user.role === 'admin' || user.role === 'manager') ? '' : 'none';
+    if (navUsers) navUsers.style.display = (['admin','md','manager'].includes(user.role)) ? '' : 'none';
 
-    // Show/hide Notification button (for admin)
+    // Show/hide Notification button (for admin and md)
     const notifBtn = document.getElementById('notif-btn');
     if (notifBtn) {
-      notifBtn.style.display = user.role === 'admin' ? '' : 'none';
-      if (user.role === 'admin') Auth.fetchNotifications();
+      notifBtn.style.display = (user.role === 'admin' || user.role === 'md') ? '' : 'none';
+      if (user.role === 'admin' || user.role === 'md') Auth.fetchNotifications();
     }
 
     // Grey-out / hide nav items not allowed for this role
