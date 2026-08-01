@@ -49,10 +49,12 @@ const Auth = {
   showMDRegisterModal() {
     const INDIAN_STATES = ['Andaman & Nicobar','Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chandigarh','Chhattisgarh','Dadra & Nagar Haveli','Daman & Diu','Delhi','Goa','Gujarat','Haryana','Himachal Pradesh','Jammu & Kashmir','Jharkhand','Karnataka','Kerala','Ladakh','Lakshadweep','Madhya Pradesh','Maharashtra','Manipur','Meghalaya','Mizoram','Nagaland','Odisha','Puducherry','Punjab','Rajasthan','Sikkim','Tamil Nadu','Telangana','Tripura','Uttar Pradesh','Uttarakhand','West Bengal'];
     App.showModal(`
-      <div class="modal-header">
-        <h3 style="margin:0;display:flex;align-items:center;gap:10px">👑 Register Managing Director (MD / CEO)</h3>
-      </div>
-      <div class="modal-body" style="max-height:72vh;overflow-y:auto;padding-right:4px">
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <div class="modal-title"><span class="modal-title-icon">👑</span> Register Managing Director (MD / CEO)</div>
+          <button class="modal-close" onclick="App.closeModal()">✕</button>
+        </div>
+        <div class="modal-body" style="max-height:68vh;overflow-y:auto;padding-right:4px">
 
         <!-- Warning -->
         <div style="background:rgba(239,68,68,0.10);border:1px solid rgba(239,68,68,0.35);border-radius:var(--r-md);padding:14px;margin-bottom:18px">
@@ -139,14 +141,15 @@ const Auth = {
         </div>
 
         <div id="md-reg-error" style="display:none;padding:10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:var(--r-sm);font-size:12.5px;color:#FCA5A5;margin-top:8px"></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
-        <button class="btn btn-primary" id="md-reg-btn" onclick="Auth.submitMDRegister()" style="background:linear-gradient(135deg,#D97706,#B45309)">
-          👑 Register as Managing Director
-        </button>
-      </div>
-    `, { wide: true });
+        </div><!-- end modal-body -->
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button class="btn btn-primary" id="md-reg-btn" onclick="Auth.submitMDRegister()" style="background:linear-gradient(135deg,#D97706,#B45309)">
+            👑 Register as Managing Director
+          </button>
+        </div>
+      </div><!-- end .modal -->
+    `);
   },
 
   async submitMDRegister() {
