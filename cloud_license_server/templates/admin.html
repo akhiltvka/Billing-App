@@ -59,6 +59,15 @@
     Registered Outlets: <strong style="color:#fff">{{ outlets|length }}</strong> | Annual License: <strong style="color:var(--gold)">₹5,000 / Outlet / Year</strong>
   </div>
 
+  {% if is_sqlite %}
+  <div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#FDA4AF;display:flex;align-items:center;gap:10px">
+    <span>⚠️</span>
+    <div style="flex:1">
+      <strong>Running in Ephemeral/Temporary SQLite Mode:</strong> The local database resets every time the server restarts or deploys. For a persistent database, please set the <code>DATABASE_URL</code> environment variable to a PostgreSQL connection string in the Render Dashboard settings.
+    </div>
+  </div>
+  {% endif %}
+
   <table>
     <thead>
       <tr>

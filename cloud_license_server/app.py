@@ -604,7 +604,7 @@ def admin_portal():
 
             outlets_list.append(d)
 
-        return render_template('admin.html', outlets=outlets_list)
+        return render_template('admin.html', outlets=outlets_list, is_sqlite=not is_pg)
     except Exception as e:
         return f"<div style='font-family:sans-serif;padding:20px;color:red'><h2>Database Error</h2><p>{str(e)}</p></div>", 500
 
