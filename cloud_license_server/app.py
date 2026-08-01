@@ -7,8 +7,10 @@ import os
 import sqlite3
 import hmac
 import hashlib
+import zipfile
+from io import BytesIO
 from datetime import datetime, date, timedelta
-from flask import Flask, jsonify, request, render_template, redirect, url_for, session
+from flask import Flask, jsonify, request, render_template, redirect, url_for, session, send_file
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("ADMIN_SECRET_KEY", "mpi_cloud_admin_secret_key_2025_#99!")
@@ -428,18 +430,117 @@ def admin_portal():
     try:
         init_db()
         conn, is_pg = get_db()
+        sql = """
+            SELECT 
+                o.*,
+                r.outlet_code,
+                r.md_username,
+                r.md_fullname,
+                r.group_name,
+                r.outlet_name as reg_outlet_name,
+                r.outlet_phone as reg_outlet_phone,
+                r.address as reg_address,
+                r.city as reg_city,
+                r.state as reg_state,
+                r.pincode as reg_pincode,
+                r.registered_at as reg_date
+            FROM outlets o
+            LEFT JOIN outlet_registrations r ON UPPER(o.machine_id) = UPPER(r.machine_id)
+            ORDER BY o.id DESC
+        """
         if is_pg:
             cur = conn.cursor()
-            cur.execute("SELECT * FROM outlets ORDER BY id DESC")
+            cur.execute(sql)
             outlets = cur.fetchall()
         else:
-            outlets = conn.execute("SELECT * FROM outlets ORDER BY id DESC").fetchall()
+            outlets = conn.execute(sql).fetchall()
         conn.close()
 
-        outlets_list = [dict(o) for o in outlets]
+        outlets_list = []
+        base_backup_dir = os.path.join(os.path.dirname(__file__), 'cloud_backups')
+
+        for o in outlets:
+            d = dict(o)
+            mid = (d.get('machine_id') or '').strip().upper()
+            outlet_dir = os.path.join(base_backup_dir, mid)
+
+            d['has_backup'] = False
+            d['backup_file'] = None
+            d['backup_time'] = None
+            d['backup_size_kb'] = 0
+
+            if os.path.exists(outlet_dir):
+                zips = sorted([f for f in os.listdir(outlet_dir) if f.endswith('.zip')], reverse=True)
+                if zips:
+                    latest_file = zips[0]
+                    full_p = os.path.join(outlet_dir, latest_file)
+                    d['has_backup'] = True
+                    d['backup_file'] = latest_file
+                    mtime = os.path.getmtime(full_p)
+                    d['backup_time'] = datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M:%S')
+                    d['backup_size_kb'] = round(os.path.getsize(full_p) / 1024, 1)
+
+            outlets_list.append(d)
+
         return render_template('admin.html', outlets=outlets_list)
     except Exception as e:
         return f"<div style='font-family:sans-serif;padding:20px;color:red'><h2>Database Error</h2><p>{str(e)}</p></div>", 500
+
+
+@app.route('/admin/download-db/<machine_id>')
+def download_latest_db(machine_id):
+    if not session.get('logged_in'):
+        return redirect(url_for('admin_portal'))
+
+    machine_id = machine_id.strip().upper()
+    backup_dir = os.path.join(os.path.dirname(__file__), 'cloud_backups', machine_id)
+    if not os.path.exists(backup_dir):
+        return "<div style='font-family:sans-serif;padding:20px;color:orange'><h2>No Backups</h2><p>No cloud database backups found for this machine ID.</p></div>", 404
+
+    zip_files = sorted([f for f in os.listdir(backup_dir) if f.endswith('.zip')], reverse=True)
+    if not zip_files:
+        return "<div style='font-family:sans-serif;padding:20px;color:orange'><h2>No Zip Files</h2><p>No zip backup files found for this machine ID.</p></div>", 404
+
+    latest_zip_path = os.path.join(backup_dir, zip_files[0])
+
+    try:
+        with zipfile.ZipFile(latest_zip_path, 'r') as zf:
+            db_names = [name for name in zf.namelist() if name.endswith('.db')]
+            target_name = db_names[0] if db_names else 'meatshop.db'
+            if target_name in zf.namelist():
+                db_data = zf.read(target_name)
+                buffer = BytesIO(db_data)
+                buffer.seek(0)
+                download_filename = f"meatshop_{machine_id[:8]}.db"
+                return send_file(
+                    buffer,
+                    mimetype='application/x-sqlite3',
+                    as_attachment=True,
+                    download_name=download_filename
+                )
+            else:
+                return send_file(latest_zip_path, as_attachment=True)
+    except Exception as e:
+        return f"<div style='font-family:sans-serif;padding:20px;color:red'><h2>Extraction Error</h2><p>{str(e)}</p></div>", 500
+
+
+@app.route('/admin/download-zip/<machine_id>')
+def download_latest_zip(machine_id):
+    if not session.get('logged_in'):
+        return redirect(url_for('admin_portal'))
+
+    machine_id = machine_id.strip().upper()
+    backup_dir = os.path.join(os.path.dirname(__file__), 'cloud_backups', machine_id)
+    if not os.path.exists(backup_dir):
+        return "No backup directory found", 404
+
+    zip_files = sorted([f for f in os.listdir(backup_dir) if f.endswith('.zip')], reverse=True)
+    if not zip_files:
+        return "No backup zip files found", 404
+
+    latest_zip_path = os.path.join(backup_dir, zip_files[0])
+    return send_file(latest_zip_path, as_attachment=True)
+
 
 @app.route('/login', methods=['POST'])
 def admin_login():
@@ -491,3 +592,4 @@ def approve_outlet(outlet_id):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
     app.run(host='0.0.0.0', port=port, debug=True)
+

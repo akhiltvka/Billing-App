@@ -6,24 +6,41 @@
   <title>👑 Developer License Portal — MPI Billing</title>
   <style>
     :root {
-      --bg: #0F172A; --card: #1E293B; --border: #334155; --text: #F8FAFC;
-      --gold: #F59E0B; --green: #10B981; --red: #EF4444; --cyan: #06B6D4;
+      --bg: #0B0F19; --card: #1E293B; --border: #334155; --text: #F8FAFC;
+      --gold: #F59E0B; --green: #10B981; --red: #EF4444; --cyan: #06B6D4; --purple: #8B5CF6;
     }
     body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 24px; }
-    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
     h1 { margin: 0; font-size: 24px; color: var(--gold); }
-    .btn { background: #3B82F6; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
-    .btn-success { background: var(--green); }
+    .btn { background: #3B82F6; color: #fff; border: none; padding: 8px 14px; border-radius: 6px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+    .btn-success { background: var(--green); color: #000; }
     .btn-danger { background: var(--red); }
-    .badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 700; }
+    .btn-db { background: linear-gradient(135deg, #F59E0B, #D97706); color: #000; font-weight: 700; }
+    .btn-zip { background: #475569; color: #fff; }
+    .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; display: inline-block; }
     .badge-active { background: rgba(16,185,129,0.2); color: var(--green); border: 1px solid var(--green); }
     .badge-trial { background: rgba(245,158,11,0.2); color: var(--gold); border: 1px solid var(--gold); }
     .badge-sub { background: rgba(6,182,212,0.2); color: var(--cyan); border: 1px solid var(--cyan); }
-    table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
-    th, td { padding: 14px 16px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14px; }
-    th { background: #0F172A; color: var(--gold); font-size: 12px; text-transform: uppercase; }
-    tr:hover { background: rgba(255,255,255,0.02); }
+    .badge-code { background: rgba(139,92,246,0.2); color: #C4B5FD; border: 1px solid rgba(139,92,246,0.4); font-family: monospace; letter-spacing: 1px; }
+
+    table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+    th, td { padding: 14px 16px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+    th { background: #0F172A; color: var(--gold); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+    tr.clickable-row { cursor: pointer; transition: background 0.15s ease; }
+    tr.clickable-row:hover { background: rgba(245,158,11,0.06); }
     .mono { font-family: monospace; font-weight: bold; }
+
+    /* Modal */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(6px); display: none; align-items: center; justify-content: center; z-index: 10000; padding: 20px; }
+    .modal-overlay.active { display: flex; }
+    .modal { background: #1E293B; border: 1px solid var(--border); border-radius: 12px; width: 100%; max-width: 680px; max-height: 88vh; overflow-y: auto; padding: 24px; box-shadow: 0 20px 40px rgba(0,0,0,0.6); }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 14px; margin-bottom: 18px; }
+    .modal-title { font-size: 18px; font-weight: 700; color: var(--gold); display: flex; align-items: center; gap: 8px; }
+    .close-btn { background: #334155; color: #fff; border: none; width: 30px; height: 30px; border-radius: 6px; cursor: pointer; font-size: 16px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+    .info-card { background: #0F172A; border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+    .info-label { font-size: 11px; color: #94A3B8; text-transform: uppercase; margin-bottom: 4px; font-weight: 600; }
+    .info-val { font-size: 14px; color: #F8FAFC; font-weight: 600; word-break: break-word; }
   </style>
 </head>
 <body>
@@ -31,7 +48,7 @@
   <div class="header">
     <div>
       <h1>👑 Developer License Portal</h1>
-      <div style="font-size:13px;color:#94A3B8;margin-top:4px">Manage MPI Billing Software Outlets, UPI Payments &amp; Auto-Activations</div>
+      <div style="font-size:13px;color:#94A3B8;margin-top:4px">Manage MPI Billing Software Outlets, User Details &amp; Direct .db Backups</div>
     </div>
     <div>
       <a href="/logout" class="btn btn-danger">Sign Out</a>
@@ -39,34 +56,41 @@
   </div>
 
   <div style="margin-bottom:16px;font-size:14px;color:#94A3B8">
-    Registered Outlets: <strong>{{ outlets|length }}</strong> | Annual Rate: <strong style="color:var(--gold)">₹5,000 / Outlet / Year</strong>
+    Registered Outlets: <strong style="color:#fff">{{ outlets|length }}</strong> | Annual License: <strong style="color:var(--gold)">₹5,000 / Outlet / Year</strong>
   </div>
 
   <table>
     <thead>
       <tr>
         <th>ID</th>
-        <th>Shop Name &amp; Contact</th>
-        <th>Machine Hardware ID</th>
+        <th>Shop Name &amp; MD / Owner</th>
+        <th>Hardware ID</th>
         <th>License Status</th>
-        <th>UPI Payment Status</th>
-        <th>Valid Until</th>
+        <th>Payment Status</th>
+        <th>Cloud Backup (.db)</th>
         <th>Last Online Check</th>
         <th>Action</th>
       </tr>
     </thead>
     <tbody>
       {% if not outlets %}
-      <tr><td colspan="8" style="text-align:center;color:#94A3B8">No outlets have connected to the central server yet.</td></tr>
+      <tr><td colspan="8" style="text-align:center;color:#94A3B8;padding:30px">No outlets have connected to the central server yet.</td></tr>
       {% endif %}
       {% for o in outlets %}
-      <tr>
+      <tr class="clickable-row" onclick="openDetailsModal({{ loop.index0 }})">
         <td>#{{ o.id }}</td>
         <td>
-          <div style="font-weight:700">{{ o.shop_name or 'Walk-in Shop' }}</div>
-          <div style="font-size:12px;color:#94A3B8">{{ o.phone or 'No phone' }}</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            {% if o.outlet_code %}
+              <span class="badge badge-code">🔐 {{ o.outlet_code }}</span>
+            {% endif %}
+            <span style="font-weight:700;color:var(--gold)">{{ o.reg_outlet_name or o.shop_name or 'Walk-in Outlet' }}</span>
+          </div>
+          <div style="font-size:12px;color:#94A3B8;margin-top:2px">
+            👤 {{ o.md_fullname or o.owner_name or 'Not set' }} &nbsp;•&nbsp; 📞 {{ o.reg_outlet_phone or o.phone or 'No phone' }}
+          </div>
         </td>
-        <td class="mono" style="color:var(--cyan)">{{ o.machine_id }}</td>
+        <td class="mono" style="color:var(--cyan);font-size:12px">{{ o.machine_id[:12] }}…</td>
         <td>
           {% if o.status == 'active' %}
             <span class="badge badge-active">ACTIVE (365 DAYS)</span>
@@ -83,11 +107,20 @@
             <span style="color:#94A3B8;font-size:12px">UNPAID</span>
           {% endif %}
         </td>
-        <td>{{ o.expires_at[:10] if o.expires_at else '—' }}</td>
+        <td onclick="event.stopPropagation()">
+          {% if o.has_backup %}
+            <a href="/admin/download-db/{{ o.machine_id }}" class="btn btn-db" title="Download latest meatshop.db database file">
+              📥 Download .db
+            </a>
+            <div style="font-size:10px;color:#94A3B8;margin-top:3px">{{ o.backup_size_kb }} KB &bull; {{ o.backup_time[:10] }}</div>
+          {% else %}
+            <span style="color:#64748B;font-size:11px">No backup file</span>
+          {% endif %}
+        </td>
         <td style="font-size:12px;color:#94A3B8">{{ o.last_ping[:19] if o.last_ping else '—' }}</td>
-        <td>
+        <td onclick="event.stopPropagation()">
           <form action="/admin/approve/{{ o.id }}" method="POST" style="margin:0">
-            <button class="btn btn-success" type="submit" onclick="return confirm('Confirm ₹5,000 UPI Payment Received for {{ o.shop_name }}? This will activate 1-Year subscription for 365 days!')">
+            <button class="btn btn-success" type="submit" onclick="return confirm('Confirm ₹5,000 UPI Payment Received for {{ o.reg_outlet_name or o.shop_name }}? This will activate 1-Year subscription!')">
               {% if o.status == 'active' %}🔄 Extend +1 Year{% else %}⚡ Approve 1 Year (₹5000){% endif %}
             </button>
           </form>
@@ -96,6 +129,124 @@
       {% endfor %}
     </tbody>
   </table>
+
+  <!-- Details Modal -->
+  <div class="modal-overlay" id="details-modal" onclick="if(event.target===this) closeModal()">
+    <div class="modal">
+      <div class="modal-header">
+        <div class="modal-title" id="m-title">🏪 Outlet Details</div>
+        <button class="close-btn" onclick="closeModal()">✕</button>
+      </div>
+
+      <div class="grid-2">
+        <div class="info-card">
+          <div class="info-label">👑 MD / Owner Name</div>
+          <div class="info-val" id="m-md-name">—</div>
+        </div>
+        <div class="info-card">
+          <div class="info-label">👤 MD Username</div>
+          <div class="info-val" id="m-md-username">—</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="info-card">
+          <div class="info-label">🏢 Business / Group Name</div>
+          <div class="info-val" id="m-group">—</div>
+        </div>
+        <div class="info-card">
+          <div class="info-label">📞 Outlet Phone</div>
+          <div class="info-val" id="m-phone">—</div>
+        </div>
+      </div>
+
+      <div class="info-card" style="margin-bottom:14px">
+        <div class="info-label">📍 Outlet Address &amp; Location</div>
+        <div class="info-val" id="m-address">—</div>
+      </div>
+
+      <div class="grid-2">
+        <div class="info-card">
+          <div class="info-label">🔐 Assigned Outlet Code</div>
+          <div class="info-val" style="color:var(--purple);font-family:monospace;font-size:16px" id="m-code">—</div>
+        </div>
+        <div class="info-card">
+          <div class="info-label">💻 Machine Hardware ID</div>
+          <div class="info-val" style="color:var(--cyan);font-family:monospace;font-size:12px" id="m-machine">—</div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="info-card">
+          <div class="info-label">💳 License Status &amp; Valid Until</div>
+          <div class="info-val" id="m-license">—</div>
+        </div>
+        <div class="info-card">
+          <div class="info-label">🕒 Last Online Check</div>
+          <div class="info-val" id="m-ping">—</div>
+        </div>
+      </div>
+
+      <!-- Backup Download Section -->
+      <div style="background:#0F172A;border:1px dashed var(--gold);border-radius:10px;padding:16px;margin-top:14px;text-align:center">
+        <div style="font-size:12px;color:var(--gold);font-weight:700;text-transform:uppercase;margin-bottom:6px">💾 Latest Cloud Database Backup</div>
+        <div style="font-size:12px;color:#94A3B8;margin-bottom:12px" id="m-backup-info">Checking backup status...</div>
+        <div style="display:flex;justify-content:center;gap:10px" id="m-backup-actions">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const OUTLETS_DATA = {{ outlets|tojson }};
+
+    function openDetailsModal(index) {
+      const o = OUTLETS_DATA[index];
+      if (!o) return;
+
+      document.getElementById('m-title').innerHTML = `🏪 ${o.reg_outlet_name || o.shop_name || 'Outlet Details'}`;
+      document.getElementById('m-md-name').textContent = o.md_fullname || o.owner_name || 'Not set';
+      document.getElementById('m-md-username').textContent = o.md_username ? `@${o.md_username}` : 'Not set';
+      document.getElementById('m-group').textContent = o.group_name || o.reg_outlet_name || o.shop_name || 'Not set';
+      document.getElementById('m-phone').textContent = o.reg_outlet_phone || o.phone || 'No phone';
+
+      const fullAddr = [o.reg_address, o.reg_city, o.reg_state, o.reg_pincode].filter(Boolean).join(', ') || 'No address registered';
+      document.getElementById('m-address').textContent = fullAddr;
+
+      document.getElementById('m-code').textContent = o.outlet_code ? `🔐 ${o.outlet_code}` : 'NOT ASSIGNED';
+      document.getElementById('m-machine').textContent = o.machine_id || 'DEFAULT-ID';
+
+      const statusText = (o.status === 'active' ? '🟢 ACTIVE (365 Days)' : '🟡 TRIAL VERSION') + (o.expires_at ? ` — Expires: ${o.expires_at.slice(0,10)}` : '');
+      document.getElementById('m-license').textContent = statusText;
+      document.getElementById('m-ping').textContent = o.last_ping ? o.last_ping.slice(0,19) : 'Never';
+
+      const bInfo = document.getElementById('m-backup-info');
+      const bActions = document.getElementById('m-backup-actions');
+
+      if (o.has_backup) {
+        bInfo.innerHTML = `File: <strong>${o.backup_file}</strong> &bull; Size: <strong>${o.backup_size_kb} KB</strong> &bull; Uploaded: <strong>${o.backup_time}</strong>`;
+        bActions.innerHTML = `
+          <a href="/admin/download-db/${o.machine_id}" class="btn btn-db" style="padding:10px 18px;font-size:14px">
+            📥 Download Database (.db)
+          </a>
+          <a href="/admin/download-zip/${o.machine_id}" class="btn btn-zip">
+            📦 Download Zip
+          </a>
+        `;
+      } else {
+        bInfo.textContent = 'No database backup uploaded from this outlet machine yet.';
+        bActions.innerHTML = `<span style="font-size:12px;color:#64748B">Backups auto-upload every 6 hours when connected online.</span>`;
+      }
+
+      document.getElementById('details-modal').classList.add('active');
+    }
+
+    function closeModal() {
+      document.getElementById('details-modal').classList.remove('active');
+    }
+  </script>
 
 </body>
 </html>
