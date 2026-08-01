@@ -250,6 +250,29 @@ def license_status():
     info = get_license_info()
     return ok(info)
 
+@app.route('/api/license/system-info', methods=['GET'])
+def license_system_info():
+    """Returns outlet_code and machine_id for display in the title bar / UI."""
+    from license_manager import get_machine_id as _si_mid
+    machine_id = _si_mid()
+    conn = get_db()
+    oc_row  = conn.execute("SELECT value FROM shop_settings WHERE key='outlet_code'").fetchone()
+    mid_row = conn.execute("SELECT value FROM shop_settings WHERE key='system_machine_id'").fetchone()
+    name_row = conn.execute("SELECT value FROM shop_settings WHERE key='outlet_name'").fetchone()
+    city_row = conn.execute("SELECT value FROM shop_settings WHERE key='outlet_city'").fetchone()
+    conn.close()
+    outlet_code = oc_row['value']  if oc_row  else None
+    outlet_name = name_row['value'] if name_row else None
+    outlet_city = city_row['value'] if city_row else None
+    return ok({
+        'machine_id':     machine_id,
+        'machine_id_short': machine_id[:8],
+        'outlet_code':    outlet_code,
+        'outlet_name':    outlet_name,
+        'outlet_city':    outlet_city,
+        'registered':     bool(outlet_code),
+    })
+
 @app.route('/api/license/activate', methods=['POST'])
 @require_auth
 def license_activate():
@@ -465,23 +488,61 @@ def login():
     conn.execute('UPDATE users SET last_login=CURRENT_TIMESTAMP WHERE id=?', (user['id'],))
     conn.commit()
     conn.close()
+
+    # ── Hardware-Binding Cross-Check (non-admin roles only) ────────────────────
+    # admin (developer) can login on any machine; all others must match outlet_code & machine_id
+    if user['role'] != 'admin':
+        from license_manager import get_machine_id as _login_mid
+        from database import get_db as _ldb
+        current_mid = _login_mid()
+        lconn = _ldb()
+        oc_row  = lconn.execute("SELECT value FROM shop_settings WHERE key='outlet_code'").fetchone()
+        mid_row = lconn.execute("SELECT value FROM shop_settings WHERE key='system_machine_id'").fetchone()
+        lconn.close()
+        machine_outlet_code = oc_row['value'].strip().upper()  if oc_row  else None
+        machine_sys_id      = mid_row['value'].strip().upper() if mid_row else None
+
+        user_oc  = (user['outlet_code']  or '').strip().upper() if user['outlet_code']  else None
+        user_mid = (user['machine_id']   or '').strip().upper() if user['machine_id']   else None
+
+        # Only enforce if both the machine and the user have been bound
+        if machine_outlet_code and user_oc and user_oc != machine_outlet_code:
+            return err(
+                f"❌ Access Denied. Your account belongs to outlet {user_oc}. "
+                f"This machine is outlet {machine_outlet_code}. "
+                f"Please use the computer assigned to your outlet.", 403
+            )
+        if machine_sys_id and user_mid and user_mid != current_mid:
+            return err(
+                f"❌ Access Denied. Your account is registered to a different computer. "
+                f"Contact your Managing Director if you believe this is an error.", 403
+            )
+
     session.clear()
-    session['user_id']   = user['id']
-    session['username']  = user['username']
-    session['full_name'] = user['full_name']
-    session['user_role'] = user['role']
-    session.permanent    = True
-    return ok({
-        'id':        user['id'],
-        'username':  user['username'],
-        'full_name': user['full_name'],
-        'role':      user['role'],
-        'role_label': ROLE_LABELS.get(user['role'], user['role']),
-        'pages':     ROLE_PAGES.get(user['role'], []),
-    }, "Login successful")
+    session['user_id']    = user['id']
+    session['username']   = user['username']
+    session['full_name']  = user['full_name']
+    session['user_role']  = user['role']
+    session['outlet_code'] = (user['outlet_code'] or '') if user['outlet_code'] else ''
+    session.permanent     = True
+
+    resp_data = {
+        'id':          user['id'],
+        'username':    user['username'],
+        'full_name':   user['full_name'],
+        'role':        user['role'],
+        'role_label':  ROLE_LABELS.get(user['role'], user['role']),
+        'pages':       ROLE_PAGES.get(user['role'], []),
+        'outlet_code': user['outlet_code'] or '',
+        'machine_id':  (user['machine_id'] or '')[:8],
+    }
+    return ok(resp_data, "Login successful")
 
 @app.route('/api/auth/register-md', methods=['POST'])
 def register_md():
+    import json as _json
+    import urllib.request as _urllib_req
+
     d = request.get_json() or {}
     username   = (d.get('username')   or '').strip()
     password   = d.get('password')    or ''
@@ -506,9 +567,48 @@ def register_md():
     if pincode and (not pincode.isdigit() or len(pincode) != 6):
         return err("Pincode must be exactly 6 digits")
 
+    from license_manager import get_machine_id as _get_mid
+    from license_sync import get_cloud_server_url as _get_cloud_url
+    machine_id = _get_mid()
+
+    # ── Call cloud server to assign/retrieve outlet code ──────────────────
+    outlet_code = None
+    cloud_error = None
+    try:
+        cloud_url  = _get_cloud_url()
+        full_addr  = ', '.join(filter(None, [addr1, addr2, city, state, pincode]))
+        payload_bytes = _json.dumps({
+            'machine_id':   machine_id,
+            'md_username':  username,
+            'md_fullname':  full_name,
+            'group_name':   group_name,
+            'outlet_name':  outlet_name,
+            'outlet_phone': outlet_phone,
+            'address':      full_addr,
+            'city':         city,
+            'state':        state,
+            'pincode':      pincode,
+        }).encode('utf-8')
+        req = _urllib_req.Request(
+            f"{cloud_url}/api/v1/outlet/register",
+            data=payload_bytes,
+            headers={'Content-Type': 'application/json', 'User-Agent': 'MPI-Billing-App/1.0'},
+            method='POST'
+        )
+        with _urllib_req.urlopen(req, timeout=10) as resp:
+            resp_data = _json.loads(resp.read().decode())
+            if resp_data.get('status') == 'ok':
+                outlet_code = resp_data.get('outlet_code')
+    except Exception as e:
+        cloud_error = str(e)
+        # Fallback: generate code locally if cloud is unreachable
+        prefix = ''.join(c for c in outlet_name.upper() if c.isalpha())[:2] or 'XX'
+        if len(prefix) < 2: prefix = (prefix + 'XX')[:2]
+        outlet_code = f"{prefix}01"
+
     conn = get_db()
 
-    # Save outlet address to shop_settings (also pre-fills invoice header)
+    # Save outlet details + outlet_code + machine_id to shop_settings
     full_address = ', '.join(filter(None, [addr1, addr2, city, state, pincode]))
     outlet_settings = {
         'shop_name':       outlet_name,
@@ -520,6 +620,8 @@ def register_md():
         'outlet_pincode':  pincode,
         'shop_address':    full_address,
         'shop_phone':      outlet_phone,
+        'outlet_code':     outlet_code,
+        'system_machine_id': machine_id,
     }
     for k, v in outlet_settings.items():
         conn.execute(
@@ -530,20 +632,22 @@ def register_md():
     existing = conn.execute('SELECT id FROM users WHERE username=? COLLATE NOCASE', (username,)).fetchone()
     if existing:
         conn.execute(
-            'UPDATE users SET password_hash=?, full_name=?, role="md", active=1 WHERE id=?',
-            (generate_password_hash(password), full_name, existing['id'])
+            'UPDATE users SET password_hash=?, full_name=?, role="md", active=1, outlet_code=?, machine_id=? WHERE id=?',
+            (generate_password_hash(password), full_name, outlet_code, machine_id, existing['id'])
         )
         conn.commit(); conn.close()
         session['user_id']   = existing['id']
         session['username']  = username
         session['full_name'] = full_name
         session['user_role'] = 'md'
-        log_activity('MD_REGISTER', f"MD/CEO account updated for outlet '{outlet_name}', {city}, {state}", 'users', existing['id'])
-        return ok(message=f"Managing Director account updated! Outlet '{outlet_name}' configured.")
+        log_activity('MD_REGISTER', f"MD account updated. Outlet: '{outlet_name}' ({outlet_code}), Machine: {machine_id[:8]}", 'users', existing['id'])
+        msg = f"MD account updated! Outlet Code: {outlet_code}"
+        if cloud_error: msg += f" (offline fallback — sync when online)"
+        return ok({'outlet_code': outlet_code, 'machine_id': machine_id}, message=msg)
     else:
         c = conn.execute(
-            'INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,"md")',
-            (username, generate_password_hash(password), full_name)
+            'INSERT INTO users (username, password_hash, full_name, role, outlet_code, machine_id) VALUES (?,?,?,"md",?,?)',
+            (username, generate_password_hash(password), full_name, outlet_code, machine_id)
         )
         uid = c.lastrowid
         conn.commit(); conn.close()
@@ -551,8 +655,10 @@ def register_md():
         session['username']  = username
         session['full_name'] = full_name
         session['user_role'] = 'md'
-        log_activity('MD_REGISTER', f"MD/CEO registered for outlet '{outlet_name}', {city}, {state}", 'users', uid)
-        return ok(message=f"Managing Director registered! Outlet '{outlet_name}' configured. Sign in now."), 201
+        log_activity('MD_REGISTER', f"MD registered. Outlet: '{outlet_name}' ({outlet_code}), Machine: {machine_id[:8]}", 'users', uid)
+        msg = f"Managing Director registered! Outlet Code: {outlet_code}"
+        if cloud_error: msg += f" (offline fallback — sync when online)"
+        return ok({'outlet_code': outlet_code, 'machine_id': machine_id}, message=msg), 201
 
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():
@@ -649,21 +755,28 @@ def create_user():
     if session.get('user_role') == 'manager' and role in ('admin', 'md'):
         return err("Managers are not authorized to create Developer or Managing Director accounts", 403)
 
+    # Stamp this machine's outlet_code and machine_id onto the new user
+    from license_manager import get_machine_id as _cu_mid
+    current_machine_id = _cu_mid()
     conn = get_db()
+    oc_row = conn.execute("SELECT value FROM shop_settings WHERE key='outlet_code'").fetchone()
+    machine_outlet_code = oc_row['value'].strip() if oc_row else None
+
     try:
         c = conn.execute(
-            'INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,?)',
-            (username, generate_password_hash(password), full_name, role)
+            'INSERT INTO users (username, password_hash, full_name, role, outlet_code, machine_id) VALUES (?,?,?,?,?,?)',
+            (username, generate_password_hash(password), full_name, role, machine_outlet_code, current_machine_id)
         )
         conn.commit()
         row = conn.execute(
-            'SELECT id, username, full_name, role, active, last_login, created_at FROM users WHERE id=?',
+            'SELECT id, username, full_name, role, active, last_login, created_at, outlet_code FROM users WHERE id=?',
             (c.lastrowid,)
         ).fetchone()
         conn.close()
         result = dict(row)
         result['role_label'] = ROLE_LABELS.get(result['role'])
-        log_activity('CREATE_USER', f"Created user @{username} ({full_name}) as {ROLE_LABELS.get(role, role)}", 'users', c.lastrowid)
+        outlet_info = f" for outlet {machine_outlet_code}" if machine_outlet_code else ""
+        log_activity('CREATE_USER', f"Created user @{username} ({full_name}) as {ROLE_LABELS.get(role, role)}{outlet_info}", 'users', c.lastrowid)
         return ok(result, "User created"), 201
     except sqlite3.IntegrityError:
         conn.close()

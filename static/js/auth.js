@@ -198,7 +198,15 @@ const Auth = {
           const s = await App.api('/settings');
           App.applySettings(s);
         } catch(_) {}
-        App.toast('success', `👑 MD Registered! Outlet "${outlet_name}" configured. Sign in with your credentials.`, 6000);
+        // Refresh system info so title bar shows the new outlet code
+        try {
+          const si = await App.api('/license/system-info');
+          App.injectSystemIdBadge(si);
+        } catch(_) {}
+        const oc = json.data?.outlet_code || '';
+        const ocBadge = oc ? `<br><span style="font-size:18px;letter-spacing:2px;color:#FCD34D">🔐 ${oc}</span>` : '';
+        App.toast('success',
+          `👑 MD Registered! Outlet "${outlet_name}" configured.${ocBadge}<br><small>Keep your Outlet Code safe — staff need it to log in.</small>`, 8000);
       } else {
         showErr(json.message || 'Registration failed.');
         btn.disabled = false; btn.textContent = '👑 Register as Managing Director';
@@ -239,8 +247,60 @@ const Auth = {
         return;
       }
 
-      Auth.currentUser = json.data;
-      Auth.onLoginSuccess(json.data);
+      const userData = json.data;
+
+      // ── MD Multi-Outlet Confirmation ───────────────────────────────────────
+      // If the MD has multiple outlets registered, ask them to confirm their outlet code
+      if (userData.role === 'md' && userData.outlet_code) {
+        const machineOC = App.sysInfo?.outlet_code || userData.outlet_code;
+        // Ask cloud how many outlets this MD has (non-blocking, best-effort)
+        let mdOutlets = [];
+        try {
+          const mdRes = await fetch(`https://mpi-license-server.onrender.com/api/v1/outlet/md-outlets?md_username=${encodeURIComponent(username)}`);
+          const mdJson = await mdRes.json();
+          mdOutlets = mdJson.outlets || [];
+        } catch(_) {}
+
+        if (mdOutlets.length > 1) {
+          // Prompt the MD to confirm which outlet they're at
+          const confirmed = await new Promise(resolve => {
+            App.showModal(`
+              <div class="modal">
+                <div class="modal-header">
+                  <div class="modal-title"><span class="modal-title-icon">🏪</span> Confirm Your Outlet</div>
+                </div>
+                <div style="padding:16px">
+                  <div style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);border-radius:var(--r-sm);padding:12px;font-size:13px;color:#A5B4FC;margin-bottom:14px">
+                    Your MD account has <strong>${mdOutlets.length} outlets</strong> registered.
+                    This machine is outlet: <strong style="color:#FCD34D;font-size:14px">${machineOC}</strong>.
+                    Please confirm by entering your outlet code.
+                  </div>
+                  <div class="form-group">
+                    <label class="form-label required">Enter Outlet Code for this machine</label>
+                    <input class="form-control" id="oc-confirm-input" placeholder="e.g. KK01" maxlength="4"
+                      style="text-transform:uppercase;font-size:18px;letter-spacing:3px;text-align:center;font-weight:700"
+                      oninput="this.value=this.value.toUpperCase()">
+                  </div>
+                  <div id="oc-confirm-error" style="display:none;color:#FCA5A5;font-size:12px;padding:6px 0"></div>
+                </div>
+                <div class="modal-footer">
+                  <button class="btn btn-secondary" onclick="App.closeModal();window._ocResolve(false)">Cancel</button>
+                  <button class="btn btn-primary" onclick="
+                    const v=document.getElementById('oc-confirm-input').value.trim().toUpperCase();
+                    if(!v){document.getElementById('oc-confirm-error').textContent='Please enter your outlet code';document.getElementById('oc-confirm-error').style.display='block';return;}
+                    if(v!=='${machineOC}'){document.getElementById('oc-confirm-error').textContent='❌ Outlet code does not match this machine (${machineOC}). Use the computer assigned to your outlet.';document.getElementById('oc-confirm-error').style.display='block';return;}
+                    App.closeModal();window._ocResolve(true);
+                  ">✅ Confirm &amp; Sign In</button>
+                </div>
+              </div>`);
+            window._ocResolve = resolve;
+          });
+          if (!confirmed) return;
+        }
+      }
+
+      Auth.currentUser = userData;
+      Auth.onLoginSuccess(userData);
     } catch(e) {
       Auth.showLoginError('Connection error. Is the server running?');
     } finally {

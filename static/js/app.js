@@ -899,8 +899,6 @@ const App = {
     this.startClock();
 
     // ── Desktop App Mode Detection ─────────────────────────────────────────
-    // pywebview injects window.pywebview when running as a desktop app.
-    // We wait up to 500ms for it to appear, then decide.
     const checkDesktopMode = () => {
       if (typeof window.pywebview !== 'undefined') {
         document.body.classList.add('desktop-mode');
@@ -908,9 +906,22 @@ const App = {
         if (bar) bar.style.display = 'flex';
       }
     };
-    // Check immediately + after a short delay (pywebview loads async)
     checkDesktopMode();
     setTimeout(checkDesktopMode, 400);
+
+    // ── Load System Info (outlet_code + machine_id) ────────────────────────
+    // This runs immediately so the title bar always shows the hardware ID
+    try {
+      const sRes = await fetch('/api/license/system-info');
+      const sJson = await sRes.json();
+      if (sJson.status === 'ok' && sJson.data) {
+        this.sysInfo = sJson.data;
+        this.injectSystemIdBadge(sJson.data);
+      }
+    } catch(e) {
+      // Offline or unreachable — still show machine_id from local computation
+      this.injectSystemIdBadge({ outlet_code: null, machine_id_short: '????????', registered: false });
+    }
 
     // Pre-fetch settings so login screen displays configured shop_name immediately
     try {
@@ -924,10 +935,34 @@ const App = {
     // Try to restore existing session (no page reload needed)
     const hasSession = await Auth.checkSession();
     if (!hasSession) {
-      // Focus username field
       setTimeout(() => document.getElementById('login-username')?.focus(), 200);
     }
   },
+
+  // ── System ID Badge Injection ───────────────────────────────────────────
+  injectSystemIdBadge(info) {
+    const badge = document.getElementById('win-sys-id-text');
+    if (!badge) return;
+    const oc  = info.outlet_code || '——';
+    const mid = (info.machine_id_short || info.machine_id || '????????').toUpperCase().slice(0,8);
+    badge.textContent = `${oc} · ${mid}`;
+
+    // Also add a subtle system ID indicator on the login screen (below brand panel)
+    let loginSys = document.getElementById('login-sys-id-badge');
+    if (!loginSys) {
+      loginSys = document.createElement('div');
+      loginSys.id = 'login-sys-id-badge';
+      loginSys.style.cssText = `
+        position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
+        background:rgba(217,119,6,0.12);border:1px solid rgba(217,119,6,0.3);
+        border-radius:5px;padding:3px 10px;font-size:10px;font-weight:700;
+        letter-spacing:.6px;color:#FCD34D;white-space:nowrap;pointer-events:none;z-index:10;
+      `;
+      document.querySelector('.login-brand-panel')?.appendChild(loginSys);
+    }
+    loginSys.innerHTML = `🔐 SYS: ${oc} &middot; ${mid}`;
+  },
+
 };
 
 // ── Boot ──────────────────────────────────────────────────────────────────────

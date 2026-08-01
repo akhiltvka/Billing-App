@@ -519,6 +519,15 @@ def init_db():
     c.execute("UPDATE products SET product_type = 'perishable' WHERE product_type IS NULL OR product_type = ''")
     c.execute("UPDATE products SET reorder_lead_time_days = 7 WHERE product_type = 'general' AND (reorder_lead_time_days IS NULL OR reorder_lead_time_days = 1)")
 
+    # Users table: add outlet_code and machine_id for hardware-bound login
+    u_cols = [r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()]
+    if 'outlet_code' not in u_cols:
+        try: c.execute("ALTER TABLE users ADD COLUMN outlet_code TEXT DEFAULT NULL")
+        except Exception: pass
+    if 'machine_id' not in u_cols:
+        try: c.execute("ALTER TABLE users ADD COLUMN machine_id TEXT DEFAULT NULL")
+        except Exception: pass
+
     cat_cols = [r[1] for r in c.execute("PRAGMA table_info(categories)").fetchall()]
     if 'parent_category_id' not in cat_cols:
         try: c.execute("ALTER TABLE categories ADD COLUMN parent_category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL")

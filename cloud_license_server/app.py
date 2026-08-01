@@ -55,6 +55,24 @@ def init_db():
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS outlet_registrations (
+                    id           SERIAL PRIMARY KEY,
+                    outlet_code  VARCHAR(4) UNIQUE NOT NULL,
+                    machine_id   VARCHAR(64),
+                    md_username  TEXT NOT NULL,
+                    md_fullname  TEXT NOT NULL,
+                    group_name   TEXT,
+                    outlet_name  TEXT NOT NULL,
+                    outlet_phone TEXT,
+                    address      TEXT,
+                    city         TEXT,
+                    state        TEXT,
+                    pincode      TEXT,
+                    registered_at TIMESTAMP DEFAULT NOW(),
+                    updated_at    TIMESTAMP DEFAULT NOW()
+                );
+            """)
             conn.commit()
             conn.close()
         else:
@@ -74,6 +92,22 @@ def init_db():
                     last_ping TEXT DEFAULT CURRENT_TIMESTAMP,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
+                CREATE TABLE IF NOT EXISTS outlet_registrations (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    outlet_code  TEXT UNIQUE NOT NULL,
+                    machine_id   TEXT,
+                    md_username  TEXT NOT NULL,
+                    md_fullname  TEXT NOT NULL,
+                    group_name   TEXT,
+                    outlet_name  TEXT NOT NULL,
+                    outlet_phone TEXT,
+                    address      TEXT,
+                    city         TEXT,
+                    state        TEXT,
+                    pincode      TEXT,
+                    registered_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at    TEXT DEFAULT CURRENT_TIMESTAMP
+                );
             """)
             conn.commit()
             conn.close()
@@ -81,6 +115,135 @@ def init_db():
         print(f"[DB Init Error] {e}")
 
 # ─── API Endpoints for Outlet Apps ──────────────────────────────────────────
+
+@app.route('/api/v1/outlet/register', methods=['POST'])
+def register_outlet():
+    """
+    Called when an MD registers a new outlet.
+    Generates a unique 4-digit outlet code (e.g. KK01) and stores full outlet details.
+    Returns the assigned outlet_code.
+    """
+    try:
+        init_db()
+        d = request.get_json() or {}
+        machine_id   = (d.get('machine_id')   or '').strip().upper()
+        md_username  = (d.get('md_username')  or '').strip()
+        md_fullname  = (d.get('md_fullname')  or '').strip()
+        group_name   = (d.get('group_name')   or '').strip()
+        outlet_name  = (d.get('outlet_name')  or '').strip()
+        outlet_phone = (d.get('outlet_phone') or '').strip()
+        address      = (d.get('address')      or '').strip()
+        city         = (d.get('city')         or '').strip()
+        state        = (d.get('state')        or '').strip()
+        pincode      = (d.get('pincode')      or '').strip()
+
+        if not md_username or not outlet_name:
+            return jsonify({'status': 'error', 'message': 'md_username and outlet_name are required'}), 400
+
+        # Generate 2-letter prefix from outlet name
+        prefix = ''.join(c for c in outlet_name.upper() if c.isalpha())[:2]
+        if len(prefix) < 2:
+            prefix = (prefix + 'XX')[:2]
+
+        conn, is_pg = get_db()
+
+        # Check if this machine_id already has a registered outlet_code → return it
+        if machine_id and is_pg:
+            cur = conn.cursor()
+            cur.execute("SELECT outlet_code FROM outlet_registrations WHERE machine_id = %s", (machine_id,))
+            existing = cur.fetchone()
+        elif machine_id:
+            existing = conn.execute("SELECT outlet_code FROM outlet_registrations WHERE machine_id = ?", (machine_id,)).fetchone()
+        else:
+            existing = None
+
+        if existing:
+            outlet_code = existing['outlet_code']
+            conn.close()
+            return jsonify({'status': 'ok', 'outlet_code': outlet_code, 'message': f'Outlet already registered as {outlet_code}'})
+
+        # Count existing outlets with this prefix to determine serial
+        if is_pg:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) as cnt FROM outlet_registrations WHERE outlet_code LIKE %s", (f'{prefix}%',))
+            row = cur.fetchone()
+        else:
+            row = conn.execute("SELECT COUNT(*) as cnt FROM outlet_registrations WHERE outlet_code LIKE ?", (f'{prefix}%',)).fetchone()
+
+        serial = (row['cnt'] if row else 0) + 1
+        outlet_code = f"{prefix}{serial:02d}"
+
+        # Ensure uniqueness (collision safety)
+        for attempt in range(50):
+            if is_pg:
+                cur.execute("SELECT 1 FROM outlet_registrations WHERE outlet_code = %s", (outlet_code,))
+                exists = cur.fetchone()
+            else:
+                exists = conn.execute("SELECT 1 FROM outlet_registrations WHERE outlet_code = ?", (outlet_code,)).fetchone()
+            if not exists:
+                break
+            serial += 1
+            outlet_code = f"{prefix}{serial:02d}"
+
+        # Insert the outlet registration
+        now_str = str(datetime.now())[:19]
+        if is_pg:
+            cur.execute("""
+                INSERT INTO outlet_registrations
+                    (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
+                     outlet_phone, address, city, state, pincode, registered_at, updated_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
+            """, (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
+                  outlet_phone, address, city, state, pincode))
+        else:
+            conn.execute("""
+                INSERT INTO outlet_registrations
+                    (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
+                     outlet_phone, address, city, state, pincode, registered_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """, (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
+                  outlet_phone, address, city, state, pincode, now_str, now_str))
+
+        conn.commit()
+        conn.close()
+
+        print(f"[OUTLET REGISTERED] {outlet_code} | {outlet_name} | MD: {md_username} | Machine: {machine_id}")
+        return jsonify({'status': 'ok', 'outlet_code': outlet_code,
+                        'message': f"Outlet '{outlet_name}' registered as {outlet_code}"}), 201
+
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/v1/outlet/md-outlets', methods=['GET'])
+def get_md_outlets():
+    """Returns all outlet codes registered under a given MD username."""
+    try:
+        init_db()
+        md_username = request.args.get('md_username', '').strip()
+        if not md_username:
+            return jsonify({'status': 'error', 'message': 'md_username required'}), 400
+
+        conn, is_pg = get_db()
+        if is_pg:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT outlet_code, outlet_name, city, machine_id FROM outlet_registrations WHERE md_username = %s ORDER BY registered_at",
+                (md_username,)
+            )
+            rows = cur.fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT outlet_code, outlet_name, city, machine_id FROM outlet_registrations WHERE md_username = ? ORDER BY registered_at",
+                (md_username,)
+            ).fetchall()
+
+        conn.close()
+        outlets = [dict(r) for r in rows]
+        return jsonify({'status': 'ok', 'outlets': outlets, 'count': len(outlets)})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 
 @app.route('/api/v1/outlet/ping', methods=['POST'])
 def outlet_ping():
