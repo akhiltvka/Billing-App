@@ -142,7 +142,7 @@ const Settings = {
               <div class="card">
                 <div class="card-title"><span class="card-title-icon">🔑</span> Software License &amp; Subscription</div>
                 ${(() => {
-                  const lic = App.licenseInfo || { status: 'trial', days_left: 10, expires_at: '—', machine_id: '—', price_inr: 5000 };
+                  const lic = App.licenseInfo || { status: 'trial', days_left: 10, expires_at: '—', machine_id: '—', price_inr: 12000 };
                   const badgeCls = lic.status === 'active' ? 'success' : lic.status === 'grace' ? 'warning' : lic.status === 'trial' ? 'info' : 'danger';
                   return `
                     <div style="display:flex;flex-direction:column;gap:12px">
@@ -152,7 +152,7 @@ const Settings = {
                       </div>
                       <div style="display:flex;justify-content:space-between;align-items:center">
                         <span class="text-muted text-sm">Yearly Rate:</span>
-                        <span class="font-bold text-gold">₹${lic.price_inr || 5000} / Year / Outlet</span>
+                        <span class="font-bold text-gold">₹${lic.price_inr || 12000} / Year / Outlet</span>
                       </div>
                       <div style="display:flex;justify-content:space-between;align-items:center">
                         <span class="text-muted text-sm">Valid Until:</span>

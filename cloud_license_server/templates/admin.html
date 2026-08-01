@@ -56,7 +56,7 @@
   </div>
 
   <div style="margin-bottom:16px;font-size:14px;color:#94A3B8">
-    Registered Outlets: <strong style="color:#fff">{{ outlets|length }}</strong> | Annual License: <strong style="color:var(--gold)">₹5,000 / Outlet / Year</strong>
+    Registered Outlets: <strong style="color:#fff">{{ outlets|length }}</strong> | Annual License: <strong style="color:var(--gold)">₹12,000 / Outlet / Year</strong>
   </div>
 
   {% if is_sqlite %}
@@ -109,7 +109,7 @@
         </td>
         <td>
           {% if o.payment_status == 'VERIFIED_BY_DEV' %}
-            <span class="badge badge-active">✅ ₹5000 PAID</span>
+            <span class="badge badge-active">✅ ₹12,000 PAID</span>
           {% elif o.payment_status == 'SUBMITTED' %}
             <span class="badge badge-sub">📩 UTR: {{ o.utr_number or 'Submitted' }}</span>
           {% else %}
@@ -129,8 +129,8 @@
         <td style="font-size:12px;color:#94A3B8">{{ o.last_ping[:19] if o.last_ping else '—' }}</td>
         <td onclick="event.stopPropagation()">
           <form action="/admin/approve/{{ o.id }}" method="POST" style="margin:0">
-            <button class="btn btn-success" type="submit" onclick="return confirm('Confirm ₹5,000 UPI Payment Received for {{ o.reg_outlet_name or o.shop_name }}? This will activate 1-Year subscription!')">
-              {% if o.status == 'active' %}🔄 Extend +1 Year{% else %}⚡ Approve 1 Year (₹5000){% endif %}
+            <button class="btn btn-success" type="submit" onclick="return confirm('Confirm ₹12,000 UPI Payment Received for {{ o.reg_outlet_name or o.shop_name }}? This will activate 1-Year subscription!')">
+              {% if o.status == 'active' %}🔄 Extend +1 Year{% else %}⚡ Approve 1 Year (₹12,000){% endif %}
             </button>
           </form>
         </td>

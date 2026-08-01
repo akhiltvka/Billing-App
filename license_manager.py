@@ -21,7 +21,7 @@ LICENSE_SECRET_SALT = "MPI_MEATSHOP_SUB_KEY_SALT_2025_SECRET_#99!"
 TRIAL_DAYS = 10
 SUBSCRIPTION_DAYS = 365
 GRACE_PERIOD_DAYS = 10
-YEARLY_PRICE_INR = 5000
+YEARLY_PRICE_INR = 12000
 
 def get_machine_id():
     """Generate a deterministic 16-character hardware ID for single-outlet machine locking."""

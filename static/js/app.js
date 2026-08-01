@@ -769,7 +769,7 @@ const App = {
   },
 
   showActivationModal() {
-    const info = this.licenseInfo || { machine_id: 'FETCHING...', price_inr: 5000, upi_id: 'mpi.billing@upi', upi_name: 'MPI Billing Software' };
+    const info = this.licenseInfo || { machine_id: 'FETCHING...', price_inr: 12000, upi_id: 'mpi.billing@upi', upi_name: 'MPI Billing Software' };
     const upiQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`upi://pay?pa=${info.upi_id}&pn=${encodeURIComponent(info.upi_name)}&am=${info.price_inr}&cu=INR`)}`;
 
     const html = `
@@ -790,7 +790,7 @@ const App = {
           <!-- Option A: Automatic Cloud Activation & UPI -->
           <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:var(--r-md);padding:16px;margin-bottom:16px">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-              <div style="font-size:15px;font-weight:700;color:var(--text-success)">💰 Annual Subscription: ₹${info.price_inr || 5000} / Year</div>
+              <div style="font-size:15px;font-weight:700;color:var(--text-success)">💰 Annual Subscription: ₹${info.price_inr || 12000} / Year</div>
               <button class="btn btn-success btn-sm" onclick="App.syncCloudLicense()">⚡ Auto-Check Cloud Approval</button>
             </div>
             
