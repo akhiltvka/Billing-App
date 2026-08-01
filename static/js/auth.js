@@ -17,24 +17,28 @@ const Auth = {
   // Pages each role is allowed to access
   ROLE_PAGES: {
     admin:         ['dashboard','billing','bills','inventory','stock-in','purchase-orders',
-                    'categories','customers','suppliers','expenses','reports','settings','users'],
+                    'categories','customers','suppliers','expenses','accounts','reports','settings','users'],
+    md:            ['dashboard','billing','bills','inventory','stock-in','purchase-orders',
+                    'categories','customers','suppliers','expenses','accounts','reports','settings','users'],
     manager:       ['dashboard','billing','bills','inventory','stock-in','purchase-orders',
-                    'categories','customers','suppliers','expenses','reports','users'],
-    accountant:    ['dashboard','billing','bills','customers','expenses','reports','inventory'],
+                    'categories','customers','suppliers','expenses','accounts','reports','users'],
+    accountant:    ['dashboard','billing','bills','customers','expenses','accounts','reports','inventory'],
     counter_staff: ['billing','bills','customers'],
     tester:        ['billing','bills','customers'],
   },
 
   ROLE_LABELS: {
-    admin:         '👑 Managing Director',
-    manager:       '🏪 Manager',
+    admin:         '🛠️ Developer Superuser',
+    md:            '👑 Managing Director',
+    manager:       '🏪 Store Manager',
     accountant:    '📊 Accountant',
     counter_staff: '🧾 Counter Staff',
     tester:        '🧪 Tester Staff (Demo)',
   },
 
   ROLE_ICON: {
-    admin:         '👑',
+    admin:         '🛠️',
+    md:            '👑',
     manager:       '🏪',
     accountant:    '📊',
     counter_staff: '🧾',
@@ -498,11 +502,12 @@ const UsersAdmin = {
         </div>
         <div class="form-group">
           <label class="form-label required">Role</label>
-          <select class="form-control" id="u-role" ${isSelf || (isManager && u?.role === 'admin') ? 'disabled' : ''}>
+          <select class="form-control" id="u-role" ${isSelf || (isManager && (u?.role === 'admin' || u?.role === 'md')) ? 'disabled' : ''}>
             <option value="counter_staff" ${u?.role === 'counter_staff' ? 'selected' : ''}>🧾 Counter Staff</option>
             <option value="accountant"    ${u?.role === 'accountant'    ? 'selected' : ''}>📊 Accountant</option>
-            <option value="manager"       ${u?.role === 'manager'       ? 'selected' : ''}>🏪 Manager</option>
-            ${!isManager ? `<option value="admin" ${u?.role === 'admin' ? 'selected' : ''}>👑 Managing Director</option>` : ''}
+            <option value="manager"       ${u?.role === 'manager'       ? 'selected' : ''}>🏪 Store Manager</option>
+            <option value="md"            ${u?.role === 'md'            ? 'selected' : ''}>👑 Managing Director</option>
+            ${!isManager && Auth.user?.role === 'admin' ? `<option value="admin" ${u?.role === 'admin' ? 'selected' : ''}>🛠️ Developer Superuser</option>` : ''}
           </select>
         </div>
         ${!u ? `

@@ -227,7 +227,7 @@ def init_db():
             username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
             password_hash TEXT NOT NULL,
             full_name     TEXT NOT NULL,
-            role          TEXT NOT NULL CHECK(role IN ('admin','manager','accountant','counter_staff','tester')),
+            role          TEXT NOT NULL CHECK(role IN ('admin','md','manager','accountant','counter_staff','tester')),
             active        INTEGER DEFAULT 1,
             last_login    TEXT,
             created_at    TEXT DEFAULT CURRENT_TIMESTAMP
@@ -468,6 +468,18 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Recreate users table if old CHECK constraint exists without 'md'
+    try:
+        users_sql = c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()
+        if users_sql and users_sql[0] and "('admin','manager'" in users_sql[0]:
+            c.execute("CREATE TABLE users_new (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL, full_name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','md','manager','accountant','counter_staff','tester')), active INTEGER DEFAULT 1, last_login TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+            c.execute("INSERT OR IGNORE INTO users_new SELECT id, username, password_hash, full_name, role, active, last_login, created_at FROM users")
+            c.execute("DROP TABLE users")
+            c.execute("ALTER TABLE users_new RENAME TO users")
+            conn.commit()
+    except Exception:
+        pass
+
     # Products & Categories multi-type and hierarchy migrations
     p_cols = [r[1] for r in c.execute("PRAGMA table_info(products)").fetchall()]
     if 'product_type' not in p_cols:
@@ -666,10 +678,11 @@ def init_db():
 
     # ── Default user accounts ────────────────────────────────────────────────
     default_users = [
-        ('admin',       'Admin@1234',     'Managing Director', 'admin'),
-        ('manager',     'Manager@1234',   'Store Manager',     'manager'),
-        ('accountant',  'Account@1234',   'Accountant',        'accountant'),
-        ('counter',     'Counter@1234',   'Counter Staff',     'counter_staff'),
+        ('admin',       'Admin@1234',     'Developer Superuser', 'admin'),
+        ('md',          'Md@1234',        'Managing Director',   'md'),
+        ('manager',     'Manager@1234',   'Store Manager',       'manager'),
+        ('accountant',  'Account@1234',   'Accountant',          'accountant'),
+        ('counter',     'Counter@1234',   'Counter Staff',       'counter_staff'),
         ('tester',      'Tester@1234',    'Tester Staff (Demo)', 'tester'),
     ]
     for username, password, full_name, role in default_users:

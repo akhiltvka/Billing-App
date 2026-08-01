@@ -36,8 +36,9 @@ CORS(app, supports_credentials=True)
 # ─── Role Permissions ────────────────────────────────────────────────────────
 
 ROLE_LABELS = {
-    'admin':         'Managing Director',
-    'manager':       'Manager',
+    'admin':         'Developer Superuser',
+    'md':            'Managing Director',
+    'manager':       'Store Manager',
     'accountant':    'Accountant',
     'counter_staff': 'Counter Staff',
     'tester':        'Tester Staff (Sandbox)',
@@ -46,6 +47,8 @@ ROLE_LABELS = {
 # Pages each role can access (used by frontend)
 ROLE_PAGES = {
     'admin':         ['dashboard','billing','bills','inventory','stock-in','purchase-orders',
+                      'categories','customers','suppliers','expenses','accounts','reports','settings','users'],
+    'md':            ['dashboard','billing','bills','inventory','stock-in','purchase-orders',
                       'categories','customers','suppliers','expenses','accounts','reports','settings','users'],
     'manager':       ['dashboard','billing','bills','inventory','stock-in','purchase-orders',
                       'categories','customers','suppliers','expenses','accounts','reports','users'],
@@ -513,7 +516,7 @@ def change_password():
 # ─── User Management & Role Administration ────────────────────────────────────
 
 @app.route('/api/auth/users', methods=['GET'])
-@require_role('admin', 'manager')
+@require_role('admin', 'md', 'manager')
 def list_users():
     conn = get_db()
     rows = conn.execute(
@@ -526,7 +529,7 @@ def list_users():
     return ok(result)
 
 @app.route('/api/auth/users', methods=['POST'])
-@require_role('admin', 'manager')
+@require_role('admin', 'md', 'manager')
 def create_user():
     d = request.get_json()
     if d is None:
@@ -540,9 +543,9 @@ def create_user():
     if len(password) < 6: return err("Password must be at least 6 characters")
     if role not in ROLE_LABELS: return err("Invalid role")
 
-    # Manager restriction: cannot create Managing Director accounts
-    if session.get('user_role') == 'manager' and role == 'admin':
-        return err("Managers are not authorized to create Managing Director accounts", 403)
+    # Manager restriction: cannot create Developer or Managing Director accounts
+    if session.get('user_role') == 'manager' and role in ('admin', 'md'):
+        return err("Managers are not authorized to create Developer or Managing Director accounts", 403)
 
     conn = get_db()
     try:
@@ -564,7 +567,7 @@ def create_user():
         return err("Username already exists")
 
 @app.route('/api/auth/users/<int:uid>', methods=['PUT'])
-@require_role('admin', 'manager')
+@require_role('admin', 'md', 'manager')
 def update_user(uid):
     d = request.get_json()
     if d is None:
@@ -576,11 +579,11 @@ def update_user(uid):
         conn.close()
         return err("User not found", 404)
 
-    # Manager restriction: cannot edit or reset password for Managing Directors
+    # Manager restriction: cannot edit or reset password for Developers or Managing Directors
     if session.get('user_role') == 'manager':
-        if target_user['role'] == 'admin' or d.get('role') == 'admin':
+        if target_user['role'] in ('admin', 'md') or d.get('role') in ('admin', 'md'):
             conn.close()
-            return err("Managers are not authorized to modify or change password of Managing Directors", 403)
+            return err("Managers are not authorized to modify Developer or Managing Director accounts", 403)
 
     full_name = (d.get('full_name') or '').strip()
     role = d.get('role', target_user['role'])
@@ -624,7 +627,7 @@ def update_user(uid):
     return ok(result)
 
 @app.route('/api/auth/users/<int:uid>', methods=['DELETE'])
-@require_role('admin', 'manager')
+@require_role('admin', 'md', 'manager')
 def delete_user(uid):
     if uid == session['user_id']:
         return err("Cannot delete your own account")
@@ -635,9 +638,9 @@ def delete_user(uid):
         conn.close()
         return err("User not found", 404)
 
-    if session.get('user_role') == 'manager' and target_user['role'] == 'admin':
+    if session.get('user_role') == 'manager' and target_user['role'] in ('admin', 'md'):
         conn.close()
-        return err("Managers cannot delete Managing Director accounts", 403)
+        return err("Managers cannot delete Developer or Managing Director accounts", 403)
 
     conn.execute('DELETE FROM users WHERE id=?', (uid,))
     conn.commit(); conn.close()

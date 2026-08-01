@@ -202,12 +202,39 @@ def get_license_info():
             'upi_name': 'Meat Products of India Billing App'
         }
 
+MASTER_DEVELOPER_KEY = "Revathyr@j6123"
+
 def activate_subscription(raw_key_str):
     """
-    Redeem a 12-digit activation key online.
+    Redeem a 12-digit activation key online OR Master Developer Secret Key offline.
     Extends subscription by 365 days + sets 10-day grace period.
     """
-    # 1. Require Internet Connection for Activation
+    raw_clean = (raw_key_str or '').strip()
+
+    # ── 1. Check Master Developer Secret Key (100% Offline Activation) ───────
+    if raw_clean == MASTER_DEVELOPER_KEY:
+        today_dt = date.today()
+        exp_dt = today_dt + timedelta(days=SUBSCRIPTION_DAYS)
+        grace_exp_dt = exp_dt + timedelta(days=GRACE_PERIOD_DAYS)
+
+        lic_payload = {
+            'key': 'MASTER-DEV-OFFLINE-BYPASS',
+            'activated_at': str(today_dt),
+            'expires_at': str(exp_dt),
+            'grace_expires_at': str(grace_exp_dt),
+            'machine_id': get_machine_id(),
+            'subscription_days': SUBSCRIPTION_DAYS
+        }
+
+        conn = get_db()
+        import json
+        conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('active_license_json', ?)", (json.dumps(lic_payload),))
+        conn.commit()
+        conn.close()
+
+        return True, f"Master Developer Key Accepted! Subscription activated offline for 365 days until {str(exp_dt)}."
+
+    # ── 2. Require Internet Connection for 12-Digit Key Online Verification ──
     if not check_internet_connection():
         return False, "Internet connection is required to verify and activate subscription online. Please connect to the internet and try again."
 
