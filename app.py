@@ -737,7 +737,7 @@ def change_password():
 def list_users():
     conn = get_db()
     rows = conn.execute(
-        'SELECT id, username, full_name, role, active, last_login, created_at FROM users ORDER BY role, full_name'
+        'SELECT id, username, full_name, role, active, last_login, created_at, employee_id FROM users ORDER BY role, full_name'
     ).fetchall()
     conn.close()
     result = [dict(r) for r in rows]
@@ -754,9 +754,11 @@ def create_user():
     username = (d.get('username') or '').strip()
     password = d.get('password') or ''
     full_name = (d.get('full_name') or '').strip()
+    employee_id = (d.get('employee_id') or '').strip().upper()
     role = d.get('role', '')
     if not username: return err("Username required")
     if not full_name: return err("Full name required")
+    if not employee_id: return err("Employee ID is mandatory to identify employees uniquely")
     if len(password) < 6: return err("Password must be at least 6 characters")
     if role not in ROLE_LABELS: return err("Invalid role")
 
@@ -768,24 +770,31 @@ def create_user():
     from license_manager import get_machine_id as _cu_mid
     current_machine_id = _cu_mid()
     conn = get_db()
+
+    # Check unique employee ID
+    dup = conn.execute('SELECT username FROM users WHERE employee_id=? COLLATE NOCASE', (employee_id,)).fetchone()
+    if dup:
+        conn.close()
+        return err(f"Employee ID '{employee_id}' is already assigned to @{dup['username']}")
+
     oc_row = conn.execute("SELECT value FROM shop_settings WHERE key='outlet_code'").fetchone()
     machine_outlet_code = oc_row['value'].strip() if oc_row else None
 
     try:
         c = conn.execute(
-            'INSERT INTO users (username, password_hash, full_name, role, outlet_code, machine_id) VALUES (?,?,?,?,?,?)',
-            (username, generate_password_hash(password), full_name, role, machine_outlet_code, current_machine_id)
+            'INSERT INTO users (username, password_hash, full_name, role, outlet_code, machine_id, employee_id) VALUES (?,?,?,?,?,?,?)',
+            (username, generate_password_hash(password), full_name, role, machine_outlet_code, current_machine_id, employee_id)
         )
         conn.commit()
         row = conn.execute(
-            'SELECT id, username, full_name, role, active, last_login, created_at, outlet_code FROM users WHERE id=?',
+            'SELECT id, username, full_name, role, active, last_login, created_at, outlet_code, employee_id FROM users WHERE id=?',
             (c.lastrowid,)
         ).fetchone()
         conn.close()
         result = dict(row)
         result['role_label'] = ROLE_LABELS.get(result['role'])
         outlet_info = f" for outlet {machine_outlet_code}" if machine_outlet_code else ""
-        log_activity('CREATE_USER', f"Created user @{username} ({full_name}) as {ROLE_LABELS.get(role, role)}{outlet_info}", 'users', c.lastrowid)
+        log_activity('CREATE_USER', f"Created user @{username} ({full_name}) with Emp ID {employee_id} as {ROLE_LABELS.get(role, role)}{outlet_info}", 'users', c.lastrowid)
         return ok(result, "User created"), 201
     except sqlite3.IntegrityError:
         conn.close()

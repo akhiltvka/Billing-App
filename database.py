@@ -527,6 +527,16 @@ def init_db():
     if 'machine_id' not in u_cols:
         try: c.execute("ALTER TABLE users ADD COLUMN machine_id TEXT DEFAULT NULL")
         except Exception: pass
+    if 'employee_id' not in u_cols:
+        try: c.execute("ALTER TABLE users ADD COLUMN employee_id TEXT DEFAULT NULL")
+        except Exception: pass
+
+    # Clean up old pre-seeded default staff accounts to avoid confusion
+    try:
+        c.execute("DELETE FROM users WHERE username COLLATE NOCASE IN ('md', 'manager', 'accountant', 'counter')")
+        conn.commit()
+    except Exception:
+        pass
 
     cat_cols = [r[1] for r in c.execute("PRAGMA table_info(categories)").fetchall()]
     if 'parent_category_id' not in cat_cols:
@@ -701,19 +711,15 @@ def init_db():
 
     # ── Default user accounts ────────────────────────────────────────────────
     default_users = [
-        ('admin',       'Admin@1234',     'Developer Superuser', 'admin'),
-        ('md',          'Md@1234',        'Managing Director',   'md'),
-        ('manager',     'Manager@1234',   'Store Manager',       'manager'),
-        ('accountant',  'Account@1234',   'Accountant',          'accountant'),
-        ('counter',     'Counter@1234',   'Counter Staff',       'counter_staff'),
-        ('tester',      'Tester@1234',    'Tester Staff (Demo)', 'tester'),
+        ('admin',       'Admin@1234',     'Developer Superuser', 'admin',         'DEV-001'),
+        ('tester',      'Tester@1234',    'Tester Staff (Demo)', 'tester',        'TEST-999'),
     ]
-    for username, password, full_name, role in default_users:
+    for username, password, full_name, role, emp_id in default_users:
         existing = c.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
         if not existing:
             c.execute(
-                'INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,?)',
-                (username, generate_password_hash(password), full_name, role)
+                'INSERT INTO users (username, password_hash, full_name, role, employee_id) VALUES (?,?,?,?,?)',
+                (username, generate_password_hash(password), full_name, role, emp_id)
             )
 
     # ── Sample supplier ──────────────────────────────────────────────────────

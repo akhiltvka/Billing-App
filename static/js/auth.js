@@ -628,7 +628,10 @@ const UsersAdmin = {
                   ${u.full_name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase()}
                 </div>
                 <div class="user-card-info">
-                  <div class="user-card-name">${u.full_name}</div>
+                  <div class="user-card-name" style="display:flex;align-items:center;gap:8px">
+                    <span>${u.full_name}</span>
+                    ${u.employee_id ? `<span style="font-size:11px;background:rgba(99,102,241,0.18);border:1px solid rgba(99,102,241,0.3);color:#A5B4FC;padding:1px 6px;border-radius:4px;font-family:monospace;font-weight:700">EMP ID: ${u.employee_id}</span>` : ''}
+                  </div>
                   <div class="user-card-username">@${u.username}</div>
                   <div style="margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                     <span class="role-badge role-${u.role}">${Auth.ROLE_LABELS[u.role]}</span>
@@ -731,6 +734,15 @@ const UsersAdmin = {
           <input class="form-control" value="@${u.username}" disabled style="opacity:0.6">
         </div>`}
         <div class="form-group">
+          <label class="form-label required">Employee ID</label>
+          ${!u ? `
+            <input class="form-control" id="u-empid" placeholder="e.g., EMP101, MPI-042" style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
+            <div class="form-hint">Mandatory unique identifier to differentiate employees.</div>
+          ` : `
+            <input class="form-control" value="${u.employee_id || '—'}" disabled style="opacity:0.6">
+          `}
+        </div>
+        <div class="form-group">
           <label class="form-label required">Full Name</label>
           <input class="form-control" id="u-fullname" value="${u?.full_name || ''}" placeholder="Full display name">
         </div>
@@ -783,9 +795,11 @@ const UsersAdmin = {
         App.toast(password ? 'User details & password updated' : 'User updated', 'success');
       } else {
         const username = document.getElementById('u-username').value.trim();
+        const employee_id = document.getElementById('u-empid').value.trim().toUpperCase();
         if (!username) { App.toast('Username required', 'error'); return; }
+        if (!employee_id) { App.toast('Employee ID is mandatory', 'error'); return; }
         if (!password || password.length < 6) { App.toast('Password must be at least 6 characters', 'error'); return; }
-        await App.api('/auth/users', 'POST', { username, full_name, role, password });
+        await App.api('/auth/users', 'POST', { username, full_name, role, password, employee_id });
         App.toast('User created successfully', 'success');
       }
       App.closeModal();
