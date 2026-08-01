@@ -19,15 +19,18 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db():
     if DATABASE_URL:
-        import psycopg2
-        import psycopg2.extras
-        conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
-        return conn
-    else:
-        db_file = os.path.join(os.path.dirname(__file__), "central_licenses.db")
-        conn = sqlite3.connect(db_file)
-        conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            import psycopg2
+            import psycopg2.extras
+            conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+            return conn
+        except Exception as e:
+            print(f"[DB Notice] PostgreSQL import/connection notice ({e}). Using SQLite storage fallback.")
+
+    db_file = os.path.join(os.path.dirname(__file__), "central_licenses.db")
+    conn = sqlite3.connect(db_file)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
     conn = get_db()
