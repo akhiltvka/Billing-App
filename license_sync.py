@@ -14,7 +14,7 @@ from database import get_db
 from license_manager import get_machine_id, SUBSCRIPTION_DAYS, GRACE_PERIOD_DAYS
 
 # Default Central License Server URL (Configurable in shop_settings or env)
-DEFAULT_CLOUD_SERVER_URL = os.environ.get('CLOUD_LICENSE_SERVER_URL', 'http://127.0.0.1:5001')
+DEFAULT_CLOUD_SERVER_URL = os.environ.get('CLOUD_LICENSE_SERVER_URL', 'https://mpi-license-server.onrender.com')
 
 def get_cloud_server_url():
     conn = get_db()
