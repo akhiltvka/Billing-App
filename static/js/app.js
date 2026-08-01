@@ -113,16 +113,30 @@ const App = {
   },
 
   // ── Modal ───────────────────────────────────────────────────────────────
-  showModal(html, id = 'main-modal') {
+  showModal(html, options = {}) {
+    // Handle legacy call with string id as second param
+    const id   = (typeof options === 'string') ? options : (options.id || 'main-modal');
+    const wide = (typeof options === 'object') && options.wide;
     const existing = document.getElementById(id);
     if (existing) existing.remove();
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.id = id;
     overlay.innerHTML = html;
-    overlay.addEventListener('click', e => { if (e.target === overlay) App.closeModal(id); });
-    document.getElementById('modals-container').appendChild(overlay);
-    requestAnimationFrame(() => overlay.classList.add('active'));
+    if (wide) {
+      // Apply wide class to the inner .modal div after insertion
+      overlay.addEventListener('click', e => { if (e.target === overlay) App.closeModal(id); });
+      document.getElementById('modals-container').appendChild(overlay);
+      requestAnimationFrame(() => {
+        overlay.classList.add('active');
+        const inner = overlay.querySelector('.modal, .modal-header')?.closest('[class*="modal"]') || overlay.firstElementChild;
+        if (inner) inner.style.maxWidth = '720px';
+      });
+    } else {
+      overlay.addEventListener('click', e => { if (e.target === overlay) App.closeModal(id); });
+      document.getElementById('modals-container').appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add('active'));
+    }
   },
 
   closeModal(id = 'main-modal') {
@@ -548,8 +562,10 @@ const App = {
     if (!settings) return;
     this.settings = { ...this.settings, ...settings };
     this.currency = this.settings.currency_symbol || '₹';
-    const shopName = this.settings.shop_name || 'Meat Products of India';
+    // Prefer outlet_name as the display name (set during MD registration)
+    const shopName    = this.settings.outlet_name || this.settings.shop_name || 'Meat Products of India';
     const shopTagline = this.settings.shop_tagline || 'Fresh. Pure. Delicious.';
+    const outletCity  = this.settings.outlet_city  || '';
 
     // 1. Update Login Brand Name & Tagline
     const loginBrand = document.getElementById('login-brand-name');
@@ -570,7 +586,11 @@ const App = {
     if (loginTagline) loginTagline.textContent = shopTagline;
 
     const loginSubtitle = document.getElementById('login-shop-subtitle');
-    if (loginSubtitle) loginSubtitle.textContent = `Sign in to ${shopName}`;
+    if (loginSubtitle) {
+      loginSubtitle.textContent = outletCity
+        ? `${shopName} — ${outletCity}`
+        : `Sign in to ${shopName}`;
+    }
 
     // 2. Update Sidebar Header & Footer Shop Names
     const sbName = document.getElementById('sidebar-shop-name');

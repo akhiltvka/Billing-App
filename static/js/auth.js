@@ -47,40 +47,97 @@ const Auth = {
 
   // ── MD/CEO Registration ────────────────────────────────────────────────────
   showMDRegisterModal() {
+    const INDIAN_STATES = ['Andaman & Nicobar','Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chandigarh','Chhattisgarh','Dadra & Nagar Haveli','Daman & Diu','Delhi','Goa','Gujarat','Haryana','Himachal Pradesh','Jammu & Kashmir','Jharkhand','Karnataka','Kerala','Ladakh','Lakshadweep','Madhya Pradesh','Maharashtra','Manipur','Meghalaya','Mizoram','Nagaland','Odisha','Puducherry','Punjab','Rajasthan','Sikkim','Tamil Nadu','Telangana','Tripura','Uttar Pradesh','Uttarakhand','West Bengal'];
     App.showModal(`
       <div class="modal-header">
         <h3 style="margin:0;display:flex;align-items:center;gap:10px">👑 Register Managing Director (MD / CEO)</h3>
       </div>
-      <div class="modal-body">
+      <div class="modal-body" style="max-height:72vh;overflow-y:auto;padding-right:4px">
+
+        <!-- Warning -->
         <div style="background:rgba(239,68,68,0.10);border:1px solid rgba(239,68,68,0.35);border-radius:var(--r-md);padding:14px;margin-bottom:18px">
           <div style="font-weight:700;color:#FCA5A5;font-size:13px;margin-bottom:6px">⚠️ IMPORTANT WARNING</div>
           <div style="font-size:12px;color:#FCA5A5;line-height:1.6">
-            This registration is <strong>STRICTLY RESERVED</strong> for the <strong>Managing Director / CEO / Business Owner</strong> of this outlet. The registered MD account will have full administrative authority including:<br>
-            &nbsp;• Creating and managing all staff accounts and passwords<br>
-            &nbsp;• Accessing all financial reports and settings<br>
-            &nbsp;• Approving stock transactions and viewing accounts<br><br>
-            <strong>⚠️ Registering as MD without authorization is a serious security violation.</strong>
+            Strictly for the <strong>Managing Director / CEO / Business Owner</strong> of this outlet.<br>
+            &nbsp;• Full authority to create &amp; manage all staff accounts<br>
+            &nbsp;• Access all financial reports, settings &amp; accounts<br>
+            &nbsp;• Each outlet requires a separate ₹5,000/year license.<br><br>
+            <strong>⚠️ Unauthorised registration is a serious security violation.</strong>
           </div>
         </div>
+
+        <!-- Section: MD Account -->
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--gold);margin:14px 0 10px;border-bottom:1px solid rgba(255,255,255,.08);padding-bottom:6px">👑 MD / CEO Account</div>
         <div class="form-group">
           <label class="form-label required">Full Name (MD/CEO)</label>
           <input class="form-control" id="md-fullname" type="text" placeholder="e.g. Rajesh Kumar" autocomplete="name">
         </div>
-        <div class="form-group">
-          <label class="form-label required">Username</label>
-          <input class="form-control" id="md-username" type="text" placeholder="e.g. rajesh_md" autocomplete="username">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group">
+            <label class="form-label required">Username</label>
+            <input class="form-control" id="md-username" type="text" placeholder="e.g. rajesh_md" autocomplete="username">
+          </div>
+          <div class="form-group">
+            <label class="form-label">MD Group / Business Name</label>
+            <input class="form-control" id="md-group-name" type="text" placeholder="e.g. Revathy Meats Pvt. Ltd.">
+            <div class="form-hint">Identifies your business across all outlets</div>
+          </div>
         </div>
-        <div class="form-group">
-          <label class="form-label required">Password</label>
-          <div style="position:relative">
-            <input class="form-control" id="md-password" type="password" placeholder="Minimum 6 characters" autocomplete="new-password">
-            <button onclick="const i=document.getElementById('md-password');i.type=i.type==='password'?'text':'password'" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text-muted)">👁️</button>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group">
+            <label class="form-label required">Password</label>
+            <div style="position:relative">
+              <input class="form-control" id="md-password" type="password" placeholder="Minimum 6 characters" autocomplete="new-password">
+              <button onclick="const i=document.getElementById('md-password');i.type=i.type==='password'?'text':'password'" style="position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--text-muted)">👁️</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Confirm Password</label>
+            <input class="form-control" id="md-password2" type="password" placeholder="Re-enter password" autocomplete="new-password">
+          </div>
+        </div>
+
+        <!-- Section: Outlet / Branch -->
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--gold);margin:14px 0 10px;border-bottom:1px solid rgba(255,255,255,.08);padding-bottom:6px">🏪 Outlet / Branch Details</div>
+        <div style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);border-radius:var(--r-sm);padding:10px;font-size:12px;color:#A5B4FC;margin-bottom:12px">
+          ℹ️ Each outlet (branch) runs on its own computer and is licensed separately at <strong>₹5,000/year</strong>. Fill in this outlet's details below.
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div class="form-group">
+            <label class="form-label required">Branch / Outlet Name</label>
+            <input class="form-control" id="md-outlet-name" type="text" placeholder="e.g. Main Branch, KK Nagar Outlet">
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Branch Phone Number</label>
+            <input class="form-control" id="md-outlet-phone" type="tel" placeholder="e.g. 9876543210">
           </div>
         </div>
         <div class="form-group">
-          <label class="form-label required">Confirm Password</label>
-          <input class="form-control" id="md-password2" type="password" placeholder="Re-enter password" autocomplete="new-password">
+          <label class="form-label required">Address Line 1</label>
+          <input class="form-control" id="md-addr1" type="text" placeholder="Door No., Street Name">
         </div>
+        <div class="form-group">
+          <label class="form-label">Address Line 2 <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+          <input class="form-control" id="md-addr2" type="text" placeholder="Area, Landmark (optional)">
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+          <div class="form-group">
+            <label class="form-label required">City</label>
+            <input class="form-control" id="md-city" type="text" placeholder="e.g. Chennai">
+          </div>
+          <div class="form-group">
+            <label class="form-label required">State</label>
+            <select class="form-control" id="md-state">
+              <option value="">Select state...</option>
+              ${INDIAN_STATES.map(s => `<option value="${s}">${s}</option>`).join('')}
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Pincode</label>
+            <input class="form-control" id="md-pincode" type="text" placeholder="6-digit pincode" maxlength="6">
+          </div>
+        </div>
+
         <div id="md-reg-error" style="display:none;padding:10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:var(--r-sm);font-size:12.5px;color:#FCA5A5;margin-top:8px"></div>
       </div>
       <div class="modal-footer">
@@ -89,23 +146,37 @@ const Auth = {
           👑 Register as Managing Director
         </button>
       </div>
-    `);
+    `, { wide: true });
   },
 
   async submitMDRegister() {
-    const full_name = (document.getElementById('md-fullname').value || '').trim();
-    const username  = (document.getElementById('md-username').value  || '').trim();
-    const password  = document.getElementById('md-password').value;
-    const password2 = document.getElementById('md-password2').value;
-    const errDiv    = document.getElementById('md-reg-error');
+    const full_name    = (document.getElementById('md-fullname').value    || '').trim();
+    const username     = (document.getElementById('md-username').value     || '').trim();
+    const group_name   = (document.getElementById('md-group-name').value   || '').trim();
+    const password     = document.getElementById('md-password').value;
+    const password2    = document.getElementById('md-password2').value;
+    const outlet_name  = (document.getElementById('md-outlet-name').value  || '').trim();
+    const outlet_phone = (document.getElementById('md-outlet-phone').value || '').trim();
+    const addr1        = (document.getElementById('md-addr1').value        || '').trim();
+    const addr2        = (document.getElementById('md-addr2').value        || '').trim();
+    const city         = (document.getElementById('md-city').value         || '').trim();
+    const state        = document.getElementById('md-state').value;
+    const pincode      = (document.getElementById('md-pincode').value      || '').trim();
+    const errDiv       = document.getElementById('md-reg-error');
 
-    const showErr = (msg) => { errDiv.textContent = '❌ ' + msg; errDiv.style.display = ''; };
+    const showErr = (msg) => { errDiv.textContent = '❌ ' + msg; errDiv.style.display = ''; errDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); };
     errDiv.style.display = 'none';
 
-    if (!full_name)        return showErr('Full Name is required.');
-    if (!username)         return showErr('Username is required.');
-    if (password.length < 6) return showErr('Password must be at least 6 characters.');
-    if (password !== password2)  return showErr('Passwords do not match. Please re-enter.');
+    if (!full_name)    return showErr('Full Name is required.');
+    if (!username)     return showErr('Username is required.');
+    if (password.length < 6)  return showErr('Password must be at least 6 characters.');
+    if (password !== password2)   return showErr('Passwords do not match. Please re-enter.');
+    if (!outlet_name)  return showErr('Branch / Outlet Name is required.');
+    if (!outlet_phone) return showErr('Branch Phone Number is required.');
+    if (!addr1)        return showErr('Address Line 1 is required.');
+    if (!city)         return showErr('City is required.');
+    if (!state)        return showErr('Please select your state.');
+    if (!/^\d{6}$/.test(pincode)) return showErr('Pincode must be exactly 6 digits.');
 
     const btn = document.getElementById('md-reg-btn');
     btn.disabled = true; btn.textContent = '⏳ Registering...';
@@ -114,12 +185,20 @@ const Auth = {
       const res = await fetch('/api/auth/register-md', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ full_name, username, password })
+        body: JSON.stringify({
+          full_name, username, password, group_name,
+          outlet_name, outlet_phone, addr1, addr2, city, state, pincode
+        })
       });
       const json = await res.json();
       if (json.status === 'ok') {
         App.closeModal();
-        App.toast('success', '👑 MD Account Registered! You can now sign in with your credentials.', 5000);
+        // Refresh settings so login screen shows outlet name
+        try {
+          const s = await App.api('/settings');
+          App.applySettings(s);
+        } catch(_) {}
+        App.toast('success', `👑 MD Registered! Outlet "${outlet_name}" configured. Sign in with your credentials.`, 6000);
       } else {
         showErr(json.message || 'Registration failed.');
         btn.disabled = false; btn.textContent = '👑 Register as Managing Director';
@@ -561,16 +640,23 @@ const UsersAdmin = {
     const u = userJson ? (typeof userJson === 'string' ? JSON.parse(userJson) : userJson) : null;
     const isSelf = u && u.id === Auth.currentUser?.id;
     const isManager = Auth.isRole('manager');
+    const outletName = App.settings?.outlet_name || App.settings?.shop_name || 'This Outlet';
 
     App.showModal(`
       <div class="modal">
         <div class="modal-header">
           <div class="modal-title">
             <span class="modal-title-icon">${u ? '✏️' : '➕'}</span>
-            ${u ? 'Edit User & Reset Password' : 'Add New User'}
+            ${u ? 'Edit User &amp; Reset Password' : 'Add New User'}
           </div>
           <button class="modal-close" onclick="App.closeModal()">✕</button>
         </div>
+        ${!u ? `
+        <div style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);border-radius:var(--r-sm);padding:10px 14px;font-size:12px;color:#A5B4FC;margin-bottom:12px;display:flex;align-items:flex-start;gap:8px">
+          <span style="font-size:16px;flex-shrink:0">🏪</span>
+          <div><strong>Outlet:</strong> ${outletName}<br>
+          <span style="opacity:.8">This user will only be able to sign in at <strong>${outletName}</strong>. They cannot access any other branch's data.</span></div>
+        </div>` : ''}
         ${!u ? `
         <div class="form-group">
           <label class="form-label required">Username</label>

@@ -483,15 +483,50 @@ def login():
 @app.route('/api/auth/register-md', methods=['POST'])
 def register_md():
     d = request.get_json() or {}
-    username = (d.get('username') or '').strip()
-    password = d.get('password') or ''
-    full_name = (d.get('full_name') or '').strip()
+    username   = (d.get('username')   or '').strip()
+    password   = d.get('password')    or ''
+    full_name  = (d.get('full_name')  or '').strip()
+    group_name = (d.get('group_name') or '').strip()
 
-    if not username: return err("Username required")
+    # Outlet address fields
+    outlet_name  = (d.get('outlet_name')  or '').strip()
+    outlet_phone = (d.get('outlet_phone') or '').strip()
+    addr1        = (d.get('addr1')        or '').strip()
+    addr2        = (d.get('addr2')        or '').strip()
+    city         = (d.get('city')         or '').strip()
+    state        = (d.get('state')        or '').strip()
+    pincode      = (d.get('pincode')      or '').strip()
+
+    if not username:  return err("Username required")
     if not full_name: return err("Managing Director Full Name required")
     if len(password) < 6: return err("Password must be at least 6 characters")
+    if not outlet_name: return err("Branch / Outlet Name is required")
+    if not city:        return err("City is required")
+    if not state:       return err("State is required")
+    if pincode and (not pincode.isdigit() or len(pincode) != 6):
+        return err("Pincode must be exactly 6 digits")
 
     conn = get_db()
+
+    # Save outlet address to shop_settings (also pre-fills invoice header)
+    full_address = ', '.join(filter(None, [addr1, addr2, city, state, pincode]))
+    outlet_settings = {
+        'shop_name':       outlet_name,
+        'md_group_name':   group_name or outlet_name,
+        'outlet_name':     outlet_name,
+        'outlet_phone':    outlet_phone,
+        'outlet_city':     city,
+        'outlet_state':    state,
+        'outlet_pincode':  pincode,
+        'shop_address':    full_address,
+        'shop_phone':      outlet_phone,
+    }
+    for k, v in outlet_settings.items():
+        conn.execute(
+            "INSERT INTO shop_settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (k, v)
+        )
+
     existing = conn.execute('SELECT id FROM users WHERE username=? COLLATE NOCASE', (username,)).fetchone()
     if existing:
         conn.execute(
@@ -499,14 +534,25 @@ def register_md():
             (generate_password_hash(password), full_name, existing['id'])
         )
         conn.commit(); conn.close()
-        return ok(message="Managing Director (MD/CEO) account updated successfully! You can now sign in.")
+        session['user_id']   = existing['id']
+        session['username']  = username
+        session['full_name'] = full_name
+        session['user_role'] = 'md'
+        log_activity('MD_REGISTER', f"MD/CEO account updated for outlet '{outlet_name}', {city}, {state}", 'users', existing['id'])
+        return ok(message=f"Managing Director account updated! Outlet '{outlet_name}' configured.")
     else:
-        conn.execute(
+        c = conn.execute(
             'INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,"md")',
             (username, generate_password_hash(password), full_name)
         )
+        uid = c.lastrowid
         conn.commit(); conn.close()
-        return ok(message="Managing Director (MD/CEO) account registered successfully! You can now sign in."), 201
+        session['user_id']   = uid
+        session['username']  = username
+        session['full_name'] = full_name
+        session['user_role'] = 'md'
+        log_activity('MD_REGISTER', f"MD/CEO registered for outlet '{outlet_name}', {city}, {state}", 'users', uid)
+        return ok(message=f"Managing Director registered! Outlet '{outlet_name}' configured. Sign in now."), 201
 
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():
