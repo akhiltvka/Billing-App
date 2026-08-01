@@ -65,6 +65,7 @@ const Settings = {
                     <input type="file" id="s-logo-file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="Settings.handleLogoUpload(this)">
                     <div style="display:flex;gap:8px;margin-bottom:4px">
                       <button class="btn btn-secondary btn-sm" onclick="document.getElementById('s-logo-file').click()">🖼️ Select PNG Logo</button>
+                      <button class="btn btn-secondary btn-sm" id="s-btn-resize-logo" onclick="Settings.reopenLogoResizer()">📐 Resize Logo</button>
                       ${settings.shop_logo ? '<button class="btn btn-danger btn-sm" onclick="Settings.removeLogo()">✕ Remove</button>' : ''}
                     </div>
                     <div class="text-muted" style="font-size:11px">Recommended: PNG image (12×12px up to 256×256px). Displays on Login, Titlebar, Sidebar &amp; Receipts.</div>
@@ -297,12 +298,15 @@ const Settings = {
     }
   },
 
+  _loadedLogoImg: null,
+  _tempResizedDataUrl: null,
+
   handleLogoUpload(input) {
     const file = input.files && input.files[0];
     if (!file) return;
 
-    if (file.size > 2 * 1024 * 1024) {
-      App.toast('Logo image file must be under 2MB', 'error');
+    if (file.size > 5 * 1024 * 1024) {
+      App.toast('Logo image file must be under 5MB', 'error');
       return;
     }
 
@@ -310,31 +314,251 @@ const Settings = {
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const maxDim = 256;
-        let w = img.width, h = img.height;
-        if (w > maxDim || h > maxDim) {
-          if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
-          else { w = Math.round((w * maxDim) / h); h = maxDim; }
-        }
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, w, h);
-
-        const dataUrl = canvas.toDataURL('image/png');
-        const logoInput = document.getElementById('s-shoplogo');
-        if (logoInput) logoInput.value = dataUrl;
-
-        const previewBox = document.getElementById('s-logo-preview-box');
-        if (previewBox) {
-          previewBox.innerHTML = `<img src="${dataUrl}" alt="Logo" style="width:100%;height:100%;object-fit:contain;">`;
-        }
-        App.toast('Logo selected! Click "Save Shop Details" to apply.', 'info');
+        this._loadedLogoImg = img;
+        this.openLogoResizerModal(e.target.result, img.width, img.height);
       };
       img.src = e.target.result;
     };
     reader.readAsDataURL(file);
+  },
+
+  reopenLogoResizer() {
+    const currentLogo = document.getElementById('s-shoplogo')?.value || App.settings?.shop_logo || '';
+    if (!currentLogo) {
+      App.toast('Please select an image file first', 'warning');
+      document.getElementById('s-logo-file')?.click();
+      return;
+    }
+
+    const img = new Image();
+    img.onload = () => {
+      this._loadedLogoImg = img;
+      this.openLogoResizerModal(currentLogo, img.width, img.height);
+    };
+    img.src = currentLogo;
+  },
+
+  openLogoResizerModal(src, origW, origH) {
+    let defaultW = 48, defaultH = 48;
+    if (origW && origH) {
+      if (origW >= origH) {
+        defaultW = 48;
+        defaultH = Math.max(8, Math.round((origH * 48) / origW));
+      } else {
+        defaultH = 48;
+        defaultW = Math.max(8, Math.round((origW * 48) / origH));
+      }
+    }
+
+    const html = `
+      <div class="modal" style="max-width:640px">
+        <div class="modal-header">
+          <div class="modal-title"><span class="modal-title-icon">📐</span> Logo Image Resizer &amp; Scaler Tool</div>
+          <button class="modal-close" onclick="App.closeModal()">✕</button>
+        </div>
+        <div class="modal-body">
+          <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-md);padding:12px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;font-size:12px">
+            <div>
+              <span class="text-muted">Original File Dimensions:</span>
+              <strong class="text-gold" style="font-family:monospace;font-size:13px;margin-left:6px">${origW} × ${origH} px</strong>
+            </div>
+            <span class="badge badge-info">Interactive Canvas Scaling</span>
+          </div>
+
+          <!-- Presets -->
+          <div class="form-group mb-16">
+            <label class="form-label" style="font-size:12px">Quick Dimension Presets:</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-secondary btn-sm" onclick="Settings.applyPreset(12, 12, ${origW}, ${origH})">12×12 (Micro Icon)</button>
+              <button class="btn btn-secondary btn-sm" onclick="Settings.applyPreset(24, 24, ${origW}, ${origH})">24×24 (Small Icon)</button>
+              <button class="btn btn-secondary btn-sm" onclick="Settings.applyPreset(48, 48, ${origW}, ${origH})">48×48 (Standard)</button>
+              <button class="btn btn-secondary btn-sm" onclick="Settings.applyPreset(64, 64, ${origW}, ${origH})">64×64 (Large)</button>
+              <button class="btn btn-secondary btn-sm" onclick="Settings.applyPreset(${origW}, ${origH}, ${origW}, ${origH})">Full Original</button>
+            </div>
+          </div>
+
+          <!-- Dimension Controls -->
+          <div class="grid-2 mb-16" style="gap:14px">
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <label class="form-label" style="margin:0">Width (px):</label>
+                <input type="number" id="res-w-num" min="8" max="512" value="${defaultW}" class="form-control form-control-sm" style="width:75px;font-family:monospace;text-align:center" oninput="Settings.onWidthNumChange(this.value, ${origW}, ${origH})">
+              </div>
+              <input type="range" id="res-w-range" min="8" max="256" value="${defaultW}" style="width:100%;accent-color:var(--gold)" oninput="Settings.onWidthRangeChange(this.value, ${origW}, ${origH})">
+            </div>
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <label class="form-label" style="margin:0">Height (px):</label>
+                <input type="number" id="res-h-num" min="8" max="512" value="${defaultH}" class="form-control form-control-sm" style="width:75px;font-family:monospace;text-align:center" oninput="Settings.onHeightNumChange(this.value, ${origW}, ${origH})">
+              </div>
+              <input type="range" id="res-h-range" min="8" max="256" value="${defaultH}" style="width:100%;accent-color:var(--gold)" oninput="Settings.onHeightRangeChange(this.value, ${origW}, ${origH})">
+            </div>
+          </div>
+
+          <div style="margin-bottom:16px">
+            <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px">
+              <input type="checkbox" id="res-aspect-lock" checked style="accent-color:var(--gold)">
+              <span>🔒 Lock Aspect Ratio</span>
+            </label>
+          </div>
+
+          <!-- Live Mockup Previews -->
+          <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--r-md);padding:14px">
+            <div class="form-label" style="font-size:12px;margin-bottom:10px">Live Output &amp; Interface Preview:</div>
+            
+            <div style="display:flex;gap:14px;align-items:center;justify-content:space-around;flex-wrap:wrap">
+              <!-- Output Box -->
+              <div style="text-align:center">
+                <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">Resized PNG Output</div>
+                <div style="width:64px;height:64px;background:#0F172A;border:1px dashed var(--gold);border-radius:8px;display:flex;align-items:center;justify-content:center;margin:0 auto">
+                  <canvas id="resizer-canvas" style="max-width:100%;max-height:100%;object-fit:contain"></canvas>
+                </div>
+                <div id="resizer-size-text" style="font-size:10px;font-family:monospace;color:var(--gold);margin-top:4px">${defaultW}×${defaultH} px</div>
+              </div>
+
+              <!-- Titlebar Mockup (16x16) -->
+              <div style="text-align:center">
+                <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">Titlebar (16px)</div>
+                <div style="background:#0F172A;border:1px solid var(--border);padding:4px 10px;border-radius:5px;display:flex;align-items:center;gap:6px">
+                  <img id="mock-titlebar-img" src="" style="width:16px;height:16px;object-fit:contain">
+                  <span style="font-size:11px;font-weight:bold;color:var(--gold)">Outlet Title</span>
+                </div>
+              </div>
+
+              <!-- Login Mockup (48x48) -->
+              <div style="text-align:center">
+                <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">Login Overlay</div>
+                <div style="background:#1E293B;border:1px solid var(--border);padding:6px;border-radius:8px;display:inline-block">
+                  <img id="mock-login-img" src="" style="width:36px;height:36px;object-fit:contain;border-radius:4px">
+                </div>
+              </div>
+
+              <!-- Bill Mockup -->
+              <div style="text-align:center">
+                <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">Bill Receipt</div>
+                <div style="background:#FFFFFF;color:#000000;padding:4px 10px;border-radius:4px;width:70px;text-align:center">
+                  <img id="mock-bill-img" src="" style="max-height:24px;max-width:100%;object-fit:contain;margin:0 auto;display:block">
+                  <div style="font-size:7px;font-weight:bold;margin-top:2px">BILL HEAD</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer" style="justify-content:space-between">
+          <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="Settings.confirmResizedLogo()">⚡ Apply &amp; Save Resized Logo</button>
+        </div>
+      </div>
+    `;
+
+    App.showModal(html);
+
+    setTimeout(() => {
+      this.updateResizerCanvas(defaultW, defaultH, origW, origH);
+    }, 60);
+  },
+
+  applyPreset(targetW, targetH, origW, origH) {
+    document.getElementById('res-w-num').value = targetW;
+    document.getElementById('res-w-range').value = Math.min(256, targetW);
+    document.getElementById('res-h-num').value = targetH;
+    document.getElementById('res-h-range').value = Math.min(256, targetH);
+    this.updateResizerCanvas(targetW, targetH, origW, origH);
+  },
+
+  onWidthNumChange(wVal, origW, origH) {
+    let w = parseInt(wVal) || 8;
+    w = Math.max(8, Math.min(512, w));
+    document.getElementById('res-w-range').value = Math.min(256, w);
+
+    let h = parseInt(document.getElementById('res-h-num').value) || 48;
+    if (document.getElementById('res-aspect-lock')?.checked && origW && origH) {
+      h = Math.max(8, Math.round((origH * w) / origW));
+      document.getElementById('res-h-num').value = h;
+      document.getElementById('res-h-range').value = Math.min(256, h);
+    }
+    this.updateResizerCanvas(w, h, origW, origH);
+  },
+
+  onWidthRangeChange(wVal, origW, origH) {
+    const w = parseInt(wVal) || 8;
+    document.getElementById('res-w-num').value = w;
+    let h = parseInt(document.getElementById('res-h-num').value) || 48;
+    if (document.getElementById('res-aspect-lock')?.checked && origW && origH) {
+      h = Math.max(8, Math.round((origH * w) / origW));
+      document.getElementById('res-h-num').value = h;
+      document.getElementById('res-h-range').value = Math.min(256, h);
+    }
+    this.updateResizerCanvas(w, h, origW, origH);
+  },
+
+  onHeightNumChange(hVal, origW, origH) {
+    let h = parseInt(hVal) || 8;
+    h = Math.max(8, Math.min(512, h));
+    document.getElementById('res-h-range').value = Math.min(256, h);
+
+    let w = parseInt(document.getElementById('res-w-num').value) || 48;
+    if (document.getElementById('res-aspect-lock')?.checked && origW && origH) {
+      w = Math.max(8, Math.round((origW * h) / origH));
+      document.getElementById('res-w-num').value = w;
+      document.getElementById('res-w-range').value = Math.min(256, w);
+    }
+    this.updateResizerCanvas(w, h, origW, origH);
+  },
+
+  onHeightRangeChange(hVal, origW, origH) {
+    const h = parseInt(hVal) || 8;
+    document.getElementById('res-h-num').value = h;
+    let w = parseInt(document.getElementById('res-w-num').value) || 48;
+    if (document.getElementById('res-aspect-lock')?.checked && origW && origH) {
+      w = Math.max(8, Math.round((origW * h) / origH));
+      document.getElementById('res-w-num').value = w;
+      document.getElementById('res-w-range').value = Math.min(256, w);
+    }
+    this.updateResizerCanvas(w, h, origW, origH);
+  },
+
+  updateResizerCanvas(w, h, origW, origH) {
+    const canvas = document.getElementById('resizer-canvas');
+    if (!canvas || !this._loadedLogoImg) return;
+
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(this._loadedLogoImg, 0, 0, w, h);
+
+    const dataUrl = canvas.toDataURL('image/png');
+    this._tempResizedDataUrl = dataUrl;
+
+    const textEl = document.getElementById('resizer-size-text');
+    if (textEl) textEl.textContent = `${w}×${h} px`;
+
+    const titlebarImg = document.getElementById('mock-titlebar-img');
+    if (titlebarImg) titlebarImg.src = dataUrl;
+
+    const loginImg = document.getElementById('mock-login-img');
+    if (loginImg) loginImg.src = dataUrl;
+
+    const billImg = document.getElementById('mock-bill-img');
+    if (billImg) billImg.src = dataUrl;
+  },
+
+  confirmResizedLogo() {
+    if (!this._tempResizedDataUrl) return;
+    const logoInput = document.getElementById('s-shoplogo');
+    if (logoInput) logoInput.value = this._tempResizedDataUrl;
+
+    const previewBox = document.getElementById('s-logo-preview-box');
+    if (previewBox) {
+      previewBox.innerHTML = `<img src="${this._tempResizedDataUrl}" alt="Logo" style="width:100%;height:100%;object-fit:contain;">`;
+    }
+
+    App.closeModal();
+    App.toast('Resized logo applied! Click "Save Shop Details" to save changes.', 'success');
   },
 
   removeLogo() {
