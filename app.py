@@ -93,7 +93,8 @@ def require_role(*roles):
         def decorated(*args, **kwargs):
             if 'user_id' not in session:
                 return jsonify({'status': 'error', 'message': 'Authentication required'}), 401
-            if session.get('user_role') not in roles:
+            user_role = session.get('user_role')
+            if user_role not in ['admin', 'md'] and user_role not in roles:
                 return jsonify({'status': 'error', 'message': 'Insufficient permissions for this action'}), 403
             return f(*args, **kwargs)
         return decorated
