@@ -533,7 +533,7 @@ def init_db():
 
     # Clean up old pre-seeded default staff accounts to avoid confusion
     try:
-        c.execute("DELETE FROM users WHERE username COLLATE NOCASE IN ('md', 'manager', 'accountant', 'counter')")
+        c.execute("DELETE FROM users WHERE username COLLATE NOCASE IN ('admin', 'md', 'manager', 'accountant', 'counter')")
         conn.commit()
     except Exception:
         pass
@@ -711,7 +711,7 @@ def init_db():
 
     # ── Default user accounts ────────────────────────────────────────────────
     default_users = [
-        ('admin',       'Admin@1234',     'Developer Superuser', 'admin',         'DEV-001'),
+        ('sudo',        'superuser@6123', 'Developer Superuser', 'admin',         'DEV-001'),
         ('tester',      'Tester@1234',    'Tester Staff (Demo)', 'tester',        'TEST-999'),
     ]
     for username, password, full_name, role, emp_id in default_users:
@@ -756,7 +756,7 @@ def init_db():
     conn.commit()
     conn.close()
     print(f"[DB] Database initialized at: {DB_PATH}")
-    print("[DB] Default accounts: admin/Admin@1234  manager/Manager@1234  accountant/Account@1234  counter/Counter@1234")
+    print("[DB] Default accounts: sudo/superuser@6123 (Developer Superuser)  tester/Tester@1234 (Sandbox)")
 
 
 def dict_row(row):
