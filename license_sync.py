@@ -31,13 +31,24 @@ def sync_with_cloud_server():
     """
     server_url = get_cloud_server_url()
     ping_endpoint = f"{server_url}/api/v1/outlet/ping"
-    machine_id = get_machine_id()
-
     conn = get_db()
     # MD details
     md_row = conn.execute("SELECT username, full_name FROM users WHERE role='md'").fetchone()
     md_username = md_row['username'] if md_row else None
     md_fullname = md_row['full_name'] if md_row else None
+
+    # Fetch all users created locally to sync back to central developer dashboard
+    u_rows = conn.execute("SELECT username, full_name, role, employee_id, active, last_login FROM users").fetchall()
+    users_list = []
+    for r in u_rows:
+        users_list.append({
+            'username': r['username'],
+            'full_name': r['full_name'],
+            'role': r['role'],
+            'employee_id': r['employee_id'],
+            'active': r['active'],
+            'last_login': r['last_login']
+        })
 
     # Shop settings
     keys = [
@@ -55,7 +66,7 @@ def sync_with_cloud_server():
     shop_phone = settings['outlet_phone'] or ''
 
     payload = {
-        'machine_id':   machine_id,
+        'machine_id':   get_machine_id(),
         'shop_name':    shop_name,
         'phone':        shop_phone,
         # Auto-healing cloud sync fields
@@ -66,7 +77,8 @@ def sync_with_cloud_server():
         'address':      settings['shop_address'],
         'city':         settings['outlet_city'],
         'state':        settings['outlet_state'],
-        'pincode':      settings['outlet_pincode']
+        'pincode':      settings['outlet_pincode'],
+        'users':        users_list
     }
 
     try:

@@ -187,6 +187,14 @@
         </div>
       </div>
 
+      <!-- Registered Outlet Users Section -->
+      <div style="background:#0F172A;border:1px solid var(--border);border-radius:10px;padding:16px;margin-top:14px">
+        <div style="font-size:12px;color:var(--gold);font-weight:700;text-transform:uppercase;margin-bottom:8px">👥 Registered Outlet Staff Accounts</div>
+        <div id="m-users-list" style="max-height: 200px; overflow-y: auto;">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
       <!-- Backup Download Section -->
       <div style="background:#0F172A;border:1px dashed var(--gold);border-radius:10px;padding:16px;margin-top:14px;text-align:center">
         <div style="font-size:12px;color:var(--gold);font-weight:700;text-transform:uppercase;margin-bottom:6px">💾 Latest Cloud Database Backup</div>
@@ -210,7 +218,7 @@
       document.getElementById('m-md-name').textContent = o.md_fullname || o.owner_name || 'Not set';
       document.getElementById('m-md-username').textContent = o.md_username ? `@${o.md_username}` : 'Not set';
       document.getElementById('m-group').textContent = o.group_name || o.reg_outlet_name || o.shop_name || 'Not set';
-      document.getElementById('m-phone').textContent = o.reg_outlet_phone || o.phone || 'No phone';
+      document.getElementById('m-phone').textContent = o.reg_outlet_phone || o.phone || 'Not set';
 
       const fullAddr = [o.reg_address, o.reg_city, o.reg_state, o.reg_pincode].filter(Boolean).join(', ') || 'No address registered';
       document.getElementById('m-address').textContent = fullAddr;
@@ -221,6 +229,41 @@
       const statusText = (o.status === 'active' ? '🟢 ACTIVE (365 Days)' : '🟡 TRIAL VERSION') + (o.expires_at ? ` — Expires: ${o.expires_at.slice(0,10)}` : '');
       document.getElementById('m-license').textContent = statusText;
       document.getElementById('m-ping').textContent = o.last_ping ? o.last_ping.slice(0,19) : 'Never';
+
+      // Synced users list
+      const usersListEl = document.getElementById('m-users-list');
+      if (o.users && o.users.length > 0) {
+        let usersHtml = `
+          <table style="width:100%;font-size:12px;border-collapse:collapse;background:transparent">
+            <thead>
+              <tr style="background:transparent;border-bottom:1px solid var(--border)">
+                <th style="padding:6px;color:#94A3B8;font-size:10px">Username</th>
+                <th style="padding:6px;color:#94A3B8;font-size:10px">Full Name</th>
+                <th style="padding:6px;color:#94A3B8;font-size:10px">Role</th>
+                <th style="padding:6px;color:#94A3B8;font-size:10px">Emp ID</th>
+                <th style="padding:6px;color:#94A3B8;font-size:10px;text-align:center">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+        o.users.forEach(u => {
+          const roleLabel = u.role === 'admin' ? 'Developer' : (u.role === 'md' ? 'Managing Director' : (u.role === 'manager' ? 'Store Manager' : (u.role === 'accountant' ? 'Accountant' : 'Counter Staff')));
+          const statusBadge = u.active ? '<span class="badge badge-active" style="padding:2px 4px;font-size:9px">Active</span>' : '<span class="badge badge-trial" style="padding:2px 4px;font-size:9px">Disabled</span>';
+          usersHtml += `
+            <tr style="border-bottom:1px solid rgba(255,255,255,0.03)">
+              <td style="padding:6px 4px;font-family:monospace;font-weight:bold;color:var(--cyan)">@${u.username}</td>
+              <td style="padding:6px 4px">${u.full_name || '—'}</td>
+              <td style="padding:6px 4px;color:var(--gold);font-weight:600">${roleLabel}</td>
+              <td style="padding:6px 4px;font-family:monospace;color:#C4B5FD">${u.employee_id || '—'}</td>
+              <td style="padding:6px 4px;text-align:center">${statusBadge}</td>
+            </tr>
+          `;
+        });
+        usersHtml += '</tbody></table>';
+        usersListEl.innerHTML = usersHtml;
+      } else {
+        usersListEl.innerHTML = `<span style="font-size:12.5px;color:#64748B">No staff accounts synced yet. Run cloud sync from the client app.</span>`;
+      }
 
       const bInfo = document.getElementById('m-backup-info');
       const bActions = document.getElementById('m-backup-actions');

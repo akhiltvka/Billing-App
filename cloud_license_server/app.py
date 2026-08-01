@@ -75,6 +75,20 @@ def init_db():
                     updated_at    TIMESTAMP DEFAULT NOW()
                 );
             """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS outlet_users (
+                    id           SERIAL PRIMARY KEY,
+                    machine_id   VARCHAR(64) NOT NULL,
+                    username     VARCHAR(255) NOT NULL,
+                    full_name    VARCHAR(255),
+                    role         VARCHAR(64),
+                    employee_id  VARCHAR(64),
+                    active       INTEGER,
+                    last_login   VARCHAR(64),
+                    updated_at   TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(machine_id, username)
+                );
+            """)
             conn.commit()
             conn.close()
         else:
@@ -109,6 +123,18 @@ def init_db():
                     pincode      TEXT,
                     registered_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     updated_at    TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS outlet_users (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    machine_id   TEXT NOT NULL,
+                    username     TEXT NOT NULL,
+                    full_name    TEXT,
+                    role         TEXT,
+                    employee_id  TEXT,
+                    active       INTEGER,
+                    last_login   TEXT,
+                    updated_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(machine_id, username)
                 );
             """)
             conn.commit()
@@ -297,6 +323,47 @@ def outlet_ping():
                     """, (outlet_code, machine_id, md_username, md_fullname, group_name, shop_name,
                           phone, addr, city, state, pincode, now_str, now_str))
                     conn.commit()
+
+        # Upsert the local users list sent in the ping payload
+        users_list = d.get('users') or []
+        for u in users_list:
+            u_username = (u.get('username') or '').strip()
+            u_fullname = (u.get('full_name') or '').strip()
+            u_role = (u.get('role') or '').strip()
+            u_empid = (u.get('employee_id') or '').strip().upper()
+            u_active = int(u.get('active')) if u.get('active') is not None else 1
+            u_last_login = u.get('last_login')
+
+            if u_username:
+                if is_pg:
+                    cur.execute("""
+                        INSERT INTO outlet_users (machine_id, username, full_name, role, employee_id, active, last_login, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                        ON CONFLICT (machine_id, username) DO UPDATE SET
+                            full_name = EXCLUDED.full_name,
+                            role = EXCLUDED.role,
+                            employee_id = EXCLUDED.employee_id,
+                            active = EXCLUDED.active,
+                            last_login = EXCLUDED.last_login,
+                            updated_at = NOW()
+                    """, (machine_id, u_username, u_fullname, u_role, u_empid, u_active, u_last_login))
+                else:
+                    conn.execute("""
+                        INSERT INTO outlet_users (machine_id, username, full_name, role, employee_id, active, last_login, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT (machine_id, username) DO UPDATE SET
+                            full_name = excluded.full_name,
+                            role = excluded.role,
+                            employee_id = excluded.employee_id,
+                            active = excluded.active,
+                            last_login = excluded.last_login,
+                            updated_at = excluded.updated_at
+                    """, (machine_id, u_username, u_fullname, u_role, u_empid, u_active, u_last_login, now_str))
+
+        if is_pg:
+            conn.commit()
+            # Refresh cursor
+            cur = conn.cursor()
 
         if is_pg:
             cur.execute("SELECT * FROM outlets WHERE machine_id = %s", (machine_id,))
@@ -489,6 +556,25 @@ def admin_portal():
             outlets = cur.fetchall()
         else:
             outlets = conn.execute(sql).fetchall()
+
+        # Query all users registered at outlets
+        users_by_machine = {}
+        try:
+            if is_pg:
+                c_users = conn.cursor()
+                c_users.execute("SELECT machine_id, username, full_name, role, employee_id, active, last_login FROM outlet_users ORDER BY username")
+                user_rows = c_users.fetchall()
+            else:
+                user_rows = conn.execute("SELECT machine_id, username, full_name, role, employee_id, active, last_login FROM outlet_users ORDER BY username").fetchall()
+            for ur in user_rows:
+                u_dict = dict(ur)
+                mid = u_dict['machine_id'].strip().upper()
+                if mid not in users_by_machine:
+                    users_by_machine[mid] = []
+                users_by_machine[mid].append(u_dict)
+        except Exception as ue:
+            print(f"[DB Error fetching users] {ue}")
+
         conn.close()
 
         outlets_list = []
@@ -497,6 +583,7 @@ def admin_portal():
         for o in outlets:
             d = dict(o)
             mid = (d.get('machine_id') or '').strip().upper()
+            d['users'] = users_by_machine.get(mid, [])
             outlet_dir = os.path.join(base_backup_dir, mid)
 
             d['has_backup'] = False
