@@ -773,9 +773,9 @@ const App = {
     const upiQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`upi://pay?pa=${info.upi_id}&pn=${encodeURIComponent(info.upi_name)}&am=${info.price_inr}&cu=INR`)}`;
 
     const html = `
-      <div class="modal-card" style="max-width:580px">
+      <div class="modal" style="max-width:580px">
         <div class="modal-header">
-          <h3>🔑 Software Activation &amp; Subscription Renewal</h3>
+          <div class="modal-title"><span class="modal-title-icon">🔑</span> Software Activation &amp; Subscription Renewal</div>
           <button class="modal-close" onclick="App.closeModal()">✕</button>
         </div>
         <div class="modal-body">
