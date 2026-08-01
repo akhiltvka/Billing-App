@@ -21,14 +21,20 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 
 def get_db():
     """Returns tuple: (connection_object, is_postgres_bool)"""
-    if DATABASE_URL:
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
         try:
             import psycopg2
             import psycopg2.extras
-            conn = psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+            conn = psycopg2.connect(db_url, cursor_factory=psycopg2.extras.RealDictCursor)
             return conn, True
         except Exception as e:
-            print(f"[DB Notice] PostgreSQL connection attempt error: {e}. Falling back to SQLite.")
+            import traceback
+            print(f"[DB Notice] PostgreSQL connection attempt error: {e}")
+            traceback.print_exc()
+            print("Falling back to SQLite central_licenses.db.")
 
     db_file = os.path.join(os.path.dirname(__file__), "central_licenses.db")
     conn = sqlite3.connect(db_file)
