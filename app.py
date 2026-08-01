@@ -414,7 +414,8 @@ def update_stock(conn, product_id, delta, tx_type, unit_price=0, ref=None,
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    is_desktop = os.environ.get('FLASK_DESKTOP') == '1'
+    return render_template('index.html', is_desktop=is_desktop)
 
 @app.route('/invoice/<int:bill_id>')
 def invoice_page(bill_id):

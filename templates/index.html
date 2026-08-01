@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/static/css/tally_inventory.css?v=2026b">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥩</text></svg>">
 </head>
-<body>
+<body class="{{ 'desktop-mode' if is_desktop else '' }}">
 
 <!-- ── Login Overlay ── -->
 <div id="login-overlay">
@@ -131,7 +131,7 @@
 </div>
 
 <!-- ── Windows 11 Custom Title Bar (Desktop App Mode Only) ── -->
-<div id="win-titlebar" style="display:none">
+<div id="win-titlebar" style="{{ 'display:flex' if is_desktop else 'display:none' }}">
   <div class="win-titlebar-drag">
     <span class="win-titlebar-icon">🥩</span>
     <!-- System ID Badge: outlet_code · machine_id — shown prominently -->

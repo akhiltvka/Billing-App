@@ -900,14 +900,16 @@ const App = {
 
     // ── Desktop App Mode Detection ─────────────────────────────────────────
     const checkDesktopMode = () => {
-      if (typeof window.pywebview !== 'undefined') {
+      if (typeof window.pywebview !== 'undefined' || document.body.classList.contains('desktop-mode')) {
         document.body.classList.add('desktop-mode');
         const bar = document.getElementById('win-titlebar');
         if (bar) bar.style.display = 'flex';
       }
     };
     checkDesktopMode();
-    setTimeout(checkDesktopMode, 400);
+    window.addEventListener('pywebviewready', checkDesktopMode);
+    setTimeout(checkDesktopMode, 200);
+    setTimeout(checkDesktopMode, 800);
 
     // ── Load System Info (outlet_code + machine_id) ────────────────────────
     // This runs immediately so the title bar always shows the hardware ID
