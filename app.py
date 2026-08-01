@@ -24,6 +24,14 @@ from license_sync import sync_with_cloud_server, notify_cloud_payment
 from cloud_backup import start_cloud_backup_scheduler, run_cloud_backup_job
 
 app = Flask(__name__)
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+
+@app.after_request
+def add_header(response):
+    response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 if not os.environ.get('APP_SECRET_KEY'):
     print("WARNING: using insecure default secret key — set APP_SECRET_KEY env var for production")
