@@ -55,6 +55,24 @@ const Settings = {
                   <input class="form-control" id="s-fssai" value="${settings.shop_fssai || ''}">
                 </div>
               </div>
+              <div class="form-group mb-16">
+                <label class="form-label">Outlet Logo (PNG / Image)</label>
+                <div style="display:flex;align-items:center;gap:14px;background:var(--bg-input);padding:12px;border-radius:var(--r-md);border:1px solid var(--border)">
+                  <div id="s-logo-preview-box" style="width:48px;height:48px;border-radius:6px;background:var(--bg-card);border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0">
+                    ${settings.shop_logo ? `<img src="${settings.shop_logo}" alt="Logo" style="width:100%;height:100%;object-fit:contain;">` : '<span style="font-size:24px">🥩</span>'}
+                  </div>
+                  <div style="flex:1">
+                    <input type="file" id="s-logo-file" accept="image/png,image/jpeg,image/webp" style="display:none" onchange="Settings.handleLogoUpload(this)">
+                    <div style="display:flex;gap:8px;margin-bottom:4px">
+                      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('s-logo-file').click()">🖼️ Select PNG Logo</button>
+                      ${settings.shop_logo ? '<button class="btn btn-danger btn-sm" onclick="Settings.removeLogo()">✕ Remove</button>' : ''}
+                    </div>
+                    <div class="text-muted" style="font-size:11px">Recommended: PNG image (12×12px up to 256×256px). Displays on Login, Titlebar, Sidebar &amp; Receipts.</div>
+                  </div>
+                </div>
+                <input type="hidden" id="s-shoplogo" value="${settings.shop_logo || ''}">
+              </div>
+
               <button class="btn btn-primary w-full" onclick="Settings.saveShop()">💾 Save Shop Details</button>
             </div>
 
@@ -279,6 +297,56 @@ const Settings = {
     }
   },
 
+  handleLogoUpload(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      App.toast('Logo image file must be under 2MB', 'error');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxDim = 256;
+        let w = img.width, h = img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) { h = Math.round((h * maxDim) / w); w = maxDim; }
+          else { w = Math.round((w * maxDim) / h); h = maxDim; }
+        }
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+
+        const dataUrl = canvas.toDataURL('image/png');
+        const logoInput = document.getElementById('s-shoplogo');
+        if (logoInput) logoInput.value = dataUrl;
+
+        const previewBox = document.getElementById('s-logo-preview-box');
+        if (previewBox) {
+          previewBox.innerHTML = `<img src="${dataUrl}" alt="Logo" style="width:100%;height:100%;object-fit:contain;">`;
+        }
+        App.toast('Logo selected! Click "Save Shop Details" to apply.', 'info');
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  },
+
+  removeLogo() {
+    const logoInput = document.getElementById('s-shoplogo');
+    if (logoInput) logoInput.value = '';
+    const previewBox = document.getElementById('s-logo-preview-box');
+    if (previewBox) {
+      previewBox.innerHTML = '<span style="font-size:24px">🥩</span>';
+    }
+    App.toast('Logo removed! Click "Save Shop Details" to save changes.', 'info');
+  },
+
   async saveShop() {
     const payload = {
       shop_name:    document.getElementById('s-shopname').value,
@@ -288,10 +356,11 @@ const Settings = {
       shop_email:   document.getElementById('s-email').value,
       shop_gstin:   document.getElementById('s-gstin').value,
       shop_fssai:   document.getElementById('s-fssai').value,
+      shop_logo:    document.getElementById('s-shoplogo')?.value || '',
     };
     try {
       await App.api('/settings', 'POST', payload);
-      App.toast('Shop details saved!', 'success');
+      App.toast('Shop details & logo saved!', 'success');
       App.applySettings(payload);
     } catch(e) { App.toast(e.message, 'error'); }
   },

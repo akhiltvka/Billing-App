@@ -90,6 +90,34 @@ def init_db():
                 );
             """)
             conn.commit()
+
+            # Dynamic migrations to add missing columns to existing PostgreSQL tables
+            try:
+                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'outlets'")
+                existing_cols = [r['column_name'].lower() for r in cur.fetchall()]
+                migrations = {
+                    'grace_expires_at': "ALTER TABLE outlets ADD COLUMN grace_expires_at TIMESTAMP",
+                    'payment_status': "ALTER TABLE outlets ADD COLUMN payment_status VARCHAR(32) DEFAULT 'UNPAID'",
+                    'utr_number': "ALTER TABLE outlets ADD COLUMN utr_number VARCHAR(64)"
+                }
+                for col, sql_cmd in migrations.items():
+                    if col not in existing_cols:
+                        cur.execute(sql_cmd)
+                        conn.commit()
+            except Exception as me:
+                conn.rollback()
+                print(f"[Migration Warning] outlets columns: {me}")
+
+            try:
+                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'outlet_registrations'")
+                reg_cols = [r['column_name'].lower() for r in cur.fetchall()]
+                if 'machine_id' not in reg_cols:
+                    cur.execute("ALTER TABLE outlet_registrations ADD COLUMN machine_id VARCHAR(64)")
+                    conn.commit()
+            except Exception as me:
+                conn.rollback()
+                print(f"[Migration Warning] registrations columns: {me}")
+
             conn.close()
         else:
             conn.executescript("""
@@ -138,6 +166,30 @@ def init_db():
                 );
             """)
             conn.commit()
+
+            # Dynamic migrations to add missing columns to existing SQLite tables
+            try:
+                cursor = conn.cursor()
+                cursor.execute("PRAGMA table_info(outlets)")
+                existing_cols = [r[1].lower() for r in cursor.fetchall()]
+                migrations = {
+                    'grace_expires_at': "ALTER TABLE outlets ADD COLUMN grace_expires_at TEXT",
+                    'payment_status': "ALTER TABLE outlets ADD COLUMN payment_status TEXT DEFAULT 'UNPAID'",
+                    'utr_number': "ALTER TABLE outlets ADD COLUMN utr_number TEXT"
+                }
+                for col, sql_cmd in migrations.items():
+                    if col not in existing_cols:
+                        conn.execute(sql_cmd)
+                        conn.commit()
+
+                cursor.execute("PRAGMA table_info(outlet_registrations)")
+                reg_cols = [r[1].lower() for r in cursor.fetchall()]
+                if 'machine_id' not in reg_cols:
+                    conn.execute("ALTER TABLE outlet_registrations ADD COLUMN machine_id TEXT")
+                    conn.commit()
+            except Exception as me:
+                print(f"[Migration Warning] SQLite columns: {me}")
+
             conn.close()
     except Exception as e:
         print(f"[DB Init Error] {e}")

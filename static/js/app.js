@@ -941,6 +941,59 @@ const App = {
     }
   },
 
+  applySettings(settings) {
+    if (!settings) return;
+    this.settings = settings;
+    if (settings.currency_symbol) this.currency = settings.currency_symbol;
+
+    const shopName = settings.shop_name || 'Meat Products of India';
+    const sidebarShopEl = document.getElementById('sidebar-shop-name');
+    if (sidebarShopEl) sidebarShopEl.textContent = shopName;
+
+    const loginBrandEl = document.getElementById('login-brand-name');
+    if (loginBrandEl && settings.shop_name) {
+      loginBrandEl.innerHTML = settings.shop_name;
+    }
+
+    const titlebarTitleEl = document.getElementById('win-titlebar-title');
+    if (titlebarTitleEl) {
+      titlebarTitleEl.textContent = `${shopName} — Billing & Inventory`;
+    }
+
+    this.applyShopLogo(settings.shop_logo);
+  },
+
+  applyShopLogo(logoUrl) {
+    const logo = logoUrl || this.settings?.shop_logo || '';
+
+    const loginLogoEl = document.getElementById('login-logo');
+    if (loginLogoEl) {
+      if (logo) {
+        loginLogoEl.innerHTML = `<img src="${logo}" alt="Logo" style="width:48px;height:48px;object-fit:contain;border-radius:6px;">`;
+      } else {
+        loginLogoEl.innerHTML = '🥩';
+      }
+    }
+
+    const titlebarIcons = document.querySelectorAll('.win-titlebar-icon');
+    titlebarIcons.forEach(el => {
+      if (logo) {
+        el.innerHTML = `<img src="${logo}" alt="Logo" style="width:16px;height:16px;object-fit:contain;vertical-align:middle;">`;
+      } else {
+        el.innerHTML = '🥩';
+      }
+    });
+
+    const brandIconEls = document.querySelectorAll('.brand-icon');
+    brandIconEls.forEach(el => {
+      if (logo) {
+        el.innerHTML = `<img src="${logo}" alt="Logo" style="width:28px;height:28px;object-fit:contain;border-radius:4px;">`;
+      } else {
+        el.innerHTML = '🥩';
+      }
+    });
+  },
+
   // ── System ID Badge Injection ───────────────────────────────────────────
   injectSystemIdBadge(info) {
     const badge = document.getElementById('win-sys-id-text');

@@ -199,6 +199,7 @@
       email:   s.shop_email   || '',
       gstin:   isGstGlobal ? (s.shop_gstin || '') : '',
       fssai:   s.shop_fssai   || '',
+      logo:    s.shop_logo    || '',
     };
     const items = data.items || [];
 
@@ -224,6 +225,7 @@
     document.getElementById('invoice-content').innerHTML = `
       <!-- Shop Header -->
       <div class="shop-header">
+        ${shop.logo ? `<img src="${shop.logo}" alt="Logo" style="max-height:48px;max-width:90%;object-fit:contain;margin:0 auto 6px auto;display:block;border-radius:4px;">` : ''}
         <div class="shop-name">${shop.name}</div>
         <div class="shop-tagline">${shop.tagline}</div>
         <div class="shop-info">
