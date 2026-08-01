@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>👑 Developer License Portal — MPI Billing</title>
+  <style>
+    :root {
+      --bg: #0F172A; --card: #1E293B; --border: #334155; --text: #F8FAFC;
+      --gold: #F59E0B; --green: #10B981; --red: #EF4444; --cyan: #06B6D4;
+    }
+    body { background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 24px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+    h1 { margin: 0; font-size: 24px; color: var(--gold); }
+    .btn { background: #3B82F6; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block; }
+    .btn-success { background: var(--green); }
+    .btn-danger { background: var(--red); }
+    .badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 700; }
+    .badge-active { background: rgba(16,185,129,0.2); color: var(--green); border: 1px solid var(--green); }
+    .badge-trial { background: rgba(245,158,11,0.2); color: var(--gold); border: 1px solid var(--gold); }
+    .badge-sub { background: rgba(6,182,212,0.2); color: var(--cyan); border: 1px solid var(--cyan); }
+    table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 8px; overflow: hidden; border: 1px solid var(--border); }
+    th, td { padding: 14px 16px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14px; }
+    th { background: #0F172A; color: var(--gold); font-size: 12px; text-transform: uppercase; }
+    tr:hover { background: rgba(255,255,255,0.02); }
+    .mono { font-family: monospace; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div>
+      <h1>👑 Developer License Portal</h1>
+      <div style="font-size:13px;color:#94A3B8;margin-top:4px">Manage MPI Billing Software Outlets, UPI Payments &amp; Auto-Activations</div>
+    </div>
+    <div>
+      <a href="/logout" class="btn btn-danger">Sign Out</a>
+    </div>
+  </div>
+
+  <div style="margin-bottom:16px;font-size:14px;color:#94A3B8">
+    Registered Outlets: <strong>{{ outlets|length }}</strong> | Annual Rate: <strong style="color:var(--gold)">₹5,000 / Outlet / Year</strong>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Shop Name &amp; Contact</th>
+        <th>Machine Hardware ID</th>
+        <th>License Status</th>
+        <th>UPI Payment Status</th>
+        <th>Valid Until</th>
+        <th>Last Online Check</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if not outlets %}
+      <tr><td colspan="8" style="text-align:center;color:#94A3B8">No outlets have connected to the central server yet.</td></tr>
+      {% endif %}
+      {% for o in outlets %}
+      <tr>
+        <td>#{{ o.id }}</td>
+        <td>
+          <div style="font-weight:700">{{ o.shop_name or 'Walk-in Shop' }}</div>
+          <div style="font-size:12px;color:#94A3B8">{{ o.phone or 'No phone' }}</div>
+        </td>
+        <td class="mono" style="color:var(--cyan)">{{ o.machine_id }}</td>
+        <td>
+          {% if o.status == 'active' %}
+            <span class="badge badge-active">ACTIVE (365 DAYS)</span>
+          {% else %}
+            <span class="badge badge-trial">TRIAL VERSION</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if o.payment_status == 'VERIFIED_BY_DEV' %}
+            <span class="badge badge-active">✅ ₹5000 PAID</span>
+          {% elif o.payment_status == 'SUBMITTED' %}
+            <span class="badge badge-sub">📩 UTR: {{ o.utr_number or 'Submitted' }}</span>
+          {% else %}
+            <span style="color:#94A3B8;font-size:12px">UNPAID</span>
+          {% endif %}
+        </td>
+        <td>{{ o.expires_at[:10] if o.expires_at else '—' }}</td>
+        <td style="font-size:12px;color:#94A3B8">{{ o.last_ping[:19] if o.last_ping else '—' }}</td>
+        <td>
+          <form action="/admin/approve/{{ o.id }}" method="POST" style="margin:0">
+            <button class="btn btn-success" type="submit" onclick="return confirm('Confirm ₹5,000 UPI Payment Received for {{ o.shop_name }}? This will activate 1-Year subscription for 365 days!')">
+              {% if o.status == 'active' %}🔄 Extend +1 Year{% else %}⚡ Approve 1 Year (₹5000){% endif %}
+            </button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+</body>
+</html>

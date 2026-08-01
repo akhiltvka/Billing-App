@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Local Database & Test Data
+data/*.db
+data/*.sqlite
+data/backups/
+cloud_license_server/central_licenses.db
+cloud_license_server/cloud_backups/
+
+# Environment Variables
+.env
+.venv/
+env/
+venv/

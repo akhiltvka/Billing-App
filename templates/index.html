@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meat Products of India — Billing & Inventory</title>
+  <meta name="description" content="Professional billing and inventory management for Meat Products of India retail outlet.">
+  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="/static/css/tally_inventory.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥩</text></svg>">
+</head>
+<body>
+
+<!-- ── Login Overlay ── -->
+<div id="login-overlay">
+
+  <!-- Left: Brand Panel -->
+  <div class="login-brand-panel">
+
+    <!-- Animated particle canvas layer -->
+    <canvas id="login-particles" class="login-particles-canvas"></canvas>
+
+    <!-- Floating ambient orbs -->
+    <div class="login-orb login-orb-1"></div>
+    <div class="login-orb login-orb-2"></div>
+    <div class="login-orb login-orb-3"></div>
+
+    <!-- Content (above canvas) -->
+    <div class="login-brand-content">
+      <div class="login-logo" id="login-logo">🥩</div>
+
+      <div class="login-brand-name" id="login-brand-name">Meat Products<br><span>of India</span></div>
+      <div class="login-brand-tagline" id="login-brand-tagline">
+        <span class="tagline-text"></span><span class="tagline-cursor">|</span>
+      </div>
+
+      <div class="login-brand-divider">
+        <div class="login-divider-line"></div>
+        <div class="login-divider-gem">✦</div>
+        <div class="login-divider-line"></div>
+      </div>
+
+      <div class="login-features">
+        <div class="login-feature-item" style="--fi:0">
+          <div class="login-feature-icon">🧾</div>
+          <span>GST Billing &amp; Invoicing</span>
+        </div>
+        <div class="login-feature-item" style="--fi:1">
+          <div class="login-feature-icon">📦</div>
+          <span>Real-Time Inventory Tracking</span>
+        </div>
+        <div class="login-feature-item" style="--fi:2">
+          <div class="login-feature-icon">📊</div>
+          <span>Sales &amp; GST Reports</span>
+        </div>
+        <div class="login-feature-item" style="--fi:3">
+          <div class="login-feature-icon">👥</div>
+          <span>Role-Based User Access</span>
+        </div>
+        <div class="login-feature-item" style="--fi:4">
+          <div class="login-feature-icon">🔒</div>
+          <span>Secure Local Database</span>
+        </div>
+      </div>
+
+      <!-- Animated status badge -->
+      <div class="login-status-badge">
+        <span class="login-status-dot"></span>
+        System Online &amp; Ready
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Login Form -->
+  <div class="login-form-panel">
+
+    <!-- Subtle background grid -->
+    <div class="login-form-bg-grid"></div>
+
+    <div class="login-card">
+      <div class="login-card-header">
+        <div class="login-greeting">Welcome back 👋</div>
+        <div class="login-subtitle" id="login-shop-subtitle">Sign in to Meat Products of India</div>
+      </div>
+
+      <div id="login-error" style="display:none" class="login-error">
+        ❌ <span id="login-error-msg">Invalid credentials</span>
+      </div>
+
+      <div class="login-form">
+        <div class="form-group login-field" style="--lf:0">
+          <label class="form-label required">Username</label>
+          <div class="login-input-wrap">
+            <span class="login-input-icon">👤</span>
+            <input class="form-control" id="login-username" type="text"
+              placeholder="Enter your username" autocomplete="username"
+              onkeydown="if(event.key==='Enter') document.getElementById('login-password').focus()">
+          </div>
+        </div>
+        <div class="form-group login-field" style="--lf:1">
+          <label class="form-label required">Password</label>
+          <div class="login-input-wrap" style="position:relative">
+            <span class="login-input-icon">🔒</span>
+            <input class="form-control" id="login-password" type="password"
+              placeholder="Enter your password" autocomplete="current-password"
+              onkeydown="if(event.key==='Enter') Auth.login()">
+            <button onclick="Auth.togglePwd()" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px" id="pwd-toggle">👁️</button>
+          </div>
+        </div>
+
+        <div class="login-field" style="--lf:2">
+          <button class="btn btn-primary login-btn" id="login-btn" onclick="Auth.login()">
+            <span class="login-btn-text">🔑 Sign In</span>
+            <span class="login-btn-shine"></span>
+          </button>
+        </div>
+      </div>
+
+      <div class="login-footer login-field" style="--lf:3">
+        <strong style="color:var(--text-secondary)">Default Accounts</strong><br>
+        admin / Admin@1234 &nbsp;|&nbsp; manager / Manager@1234<br>
+        accountant / Account@1234 &nbsp;|&nbsp; counter / Counter@1234<br>
+        <span style="color:var(--gold)">🧪 tester / Tester@1234 (Demo / Auto-cleanup)</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Windows 11 Custom Title Bar (Desktop App Mode Only) ── -->
+<div id="win-titlebar" style="display:none">
+  <div class="win-titlebar-drag">
+    <span class="win-titlebar-icon">🥩</span>
+    <span class="win-titlebar-title" id="win-titlebar-title">Meat Products of India — Billing &amp; Inventory</span>
+  </div>
+  <div class="win-titlebar-controls">
+    <button class="win-ctrl win-ctrl-minimize" id="btn-win-minimize" title="Minimize"        onclick="App.windowAction('minimize')">&#x2013;</button>
+    <button class="win-ctrl win-ctrl-maximize" id="btn-win-maximize" title="Restore"         onclick="App.windowAction('maximize')" data-maximized="true">&#x2750;</button>
+    <button class="win-ctrl win-ctrl-close"    id="btn-win-close"    title="Close"           onclick="App.windowAction('close')">&#x2715;</button>
+  </div>
+</div>
+
+<div id="app-shell">
+  <!-- ── Sidebar ── -->
+  <aside id="sidebar">
+    <div class="sidebar-brand">
+      <div class="brand-icon">🥩</div>
+      <div class="brand-text">
+        <div class="brand-name" id="sidebar-shop-name">Meat Products of India</div>
+        <div class="brand-tagline">Fresh. Pure. Delicious.</div>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section-label">Main</div>
+      <div class="nav-item active" data-page="dashboard" onclick="App.navigate('dashboard')">
+        <span class="nav-icon">📊</span>
+        <span>Dashboard</span>
+      </div>
+      <div class="nav-item" data-page="billing" onclick="App.navigate('billing')">
+        <span class="nav-icon">🧾</span>
+        <span>New Bill / POS</span>
+      </div>
+      <div class="nav-item" data-page="bills" onclick="App.navigate('bills')">
+        <span class="nav-icon">📋</span>
+        <span>Bill History</span>
+      </div>
+
+      <div class="nav-section-label">Inventory</div>
+      <div class="nav-item" data-page="inventory" onclick="App.navigate('inventory')">
+        <span class="nav-icon">📦</span>
+        <span>Products</span>
+      </div>
+      <div class="nav-item" data-page="stock-in" onclick="App.navigate('stock-in')">
+        <span class="nav-icon">⬆️</span>
+        <span>Stock In</span>
+      </div>
+      <div class="nav-item" data-page="purchase-orders" onclick="App.navigate('purchase-orders')">
+        <span class="nav-icon">🛒</span>
+        <span>Purchase Orders</span>
+      </div>
+      <div class="nav-item" data-page="categories" onclick="App.navigate('categories')">
+        <span class="nav-icon">🏷️</span>
+        <span>Categories</span>
+      </div>
+
+      <div class="nav-section-label">People</div>
+      <div class="nav-item" data-page="customers" onclick="App.navigate('customers')">
+        <span class="nav-icon">👥</span>
+        <span>Customers</span>
+      </div>
+      <div class="nav-item" data-page="suppliers" onclick="App.navigate('suppliers')">
+        <span class="nav-icon">🚚</span>
+        <span>Suppliers</span>
+      </div>
+
+      <div class="nav-section-label">Finance</div>
+      <div class="nav-item" data-page="expenses" onclick="App.navigate('expenses')">
+        <span class="nav-icon">💸</span>
+        <span>Income &amp; Expenses</span>
+      </div>
+      <div class="nav-item" data-page="accounts" onclick="App.navigate('accounts')">
+        <span class="nav-icon">📒</span>
+        <span>Chart of Accounts</span>
+      </div>
+      <div class="nav-item" data-page="reports" onclick="App.navigate('reports')">
+        <span class="nav-icon">📈</span>
+        <span>Reports</span>
+      </div>
+
+      <div class="nav-section-label">System</div>
+      <div class="nav-item" data-page="settings" onclick="App.navigate('settings')">
+        <span class="nav-icon">⚙️</span>
+        <span>Settings</span>
+      </div>
+      <div class="nav-item" data-page="users" onclick="App.navigate('users')" id="nav-users" style="display:none">
+        <span class="nav-icon">👤</span>
+        <span>User Management</span>
+      </div>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div id="sidebar-footer-shop-name" style="color:var(--gold);font-weight:600;margin-bottom:2px;">Meat Products of India</div>
+      <div id="sidebar-clock" style="font-size:12px;"></div>
+    </div>
+  </aside>
+
+  <!-- ── Main Content ── -->
+  <div id="main-content">
+    <!-- License / Subscription Banner -->
+    <div id="license-banner-bar"></div>
+
+    <!-- Top Bar -->
+    <header id="topbar">
+      <div style="flex:1">
+        <div id="topbar-title">Dashboard</div>
+        <div id="topbar-subtitle" class="text-muted text-sm"></div>
+      </div>
+      <div class="topbar-actions">
+        <div class="topbar-date" id="topbar-date"></div>
+        <button class="btn btn-primary" id="quick-bill-btn" onclick="App.navigate('billing')">
+          ➕ New Bill
+        </button>
+        <!-- Notification button for Managing Director -->
+        <button class="btn btn-secondary btn-icon" id="notif-btn" onclick="Auth.showNotificationsModal()" style="display:none;position:relative" title="Password Audit Notifications">
+          🔔
+          <span id="notif-badge" class="nav-badge" style="position:absolute;top:-4px;right:-4px;display:none;background:var(--danger)">0</span>
+        </button>
+        <!-- User widget -->
+        <div class="topbar-user" id="topbar-user-btn" onclick="Auth.toggleDropdown()">
+          <div class="topbar-user-avatar" id="topbar-avatar">A</div>
+          <div>
+            <div class="topbar-user-name" id="topbar-user-name">User</div>
+            <div class="topbar-user-role" id="topbar-user-role">Loading…</div>
+          </div>
+          <div class="user-dropdown" id="user-dropdown">
+            <div class="user-dropdown-item" onclick="Auth.showProfileModal(event)">👤 My Profile</div>
+            <div class="user-dropdown-item" onclick="Auth.showChangePwdModal(event)">🔑 Change Password</div>
+            <div class="user-dropdown-sep"></div>
+            <div class="user-dropdown-item danger" onclick="Auth.logout(event)">🚪 Sign Out</div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Page Content -->
+    <main id="page-content">
+      <div class="loading-overlay">
+        <div class="spinner"></div>
+        <div>Loading...</div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ── Toast Container ── -->
+<div id="toast-container"></div>
+
+<!-- ── Modals Container ── -->
+<div id="modals-container"></div>
+
+<!-- ── Scripts ── -->
+<script src="/static/js/auth.js"></script>
+<script src="/static/js/billing.js"></script>
+<script src="/static/js/tally_inventory.js"></script>
+<script src="/static/js/inventory.js"></script>
+<script src="/static/js/customers.js"></script>
+<script src="/static/js/suppliers.js"></script>
+<script src="/static/js/accounts.js"></script>
+<script src="/static/js/reports.js"></script>
+<script src="/static/js/settings.js"></script>
+<script src="/static/js/app.js"></script>
+
+</body>
+</html>

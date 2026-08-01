@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Developer Login — License Portal</title>
+  <style>
+    body { background: #0F172A; color: #F8FAFC; font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+    .card { background: #1E293B; border: 1px solid #334155; padding: 32px; border-radius: 12px; width: 320px; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+    h2 { color: #F59E0B; margin-top: 0; font-size: 20px; }
+    input { width: 100%; padding: 10px; margin: 12px 0 20px 0; border-radius: 6px; border: 1px solid #334155; background: #0F172A; color: #fff; box-sizing: border-box; }
+    button { width: 100%; padding: 12px; background: #10B981; border: none; color: #fff; font-weight: bold; border-radius: 6px; cursor: pointer; }
+    .error { color: #EF4444; font-size: 13px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>👑 Developer License Portal</h2>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <form action="/login" method="POST">
+      <label style="font-size:13px;color:#94A3B8">Developer Password:</label>
+      <input type="password" name="password" placeholder="Enter password..." required autofocus>
+      <button type="submit">Sign In to Dashboard</button>
+    </form>
+  </div>
+</body>
+</html>
