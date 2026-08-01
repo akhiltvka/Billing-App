@@ -34,17 +34,39 @@ def sync_with_cloud_server():
     machine_id = get_machine_id()
 
     conn = get_db()
-    shop_row = conn.execute("SELECT value FROM shop_settings WHERE key = 'shop_name'").fetchone()
-    phone_row = conn.execute("SELECT value FROM shop_settings WHERE key = 'shop_phone'").fetchone()
+    # MD details
+    md_row = conn.execute("SELECT username, full_name FROM users WHERE role='md'").fetchone()
+    md_username = md_row['username'] if md_row else None
+    md_fullname = md_row['full_name'] if md_row else None
+
+    # Shop settings
+    keys = [
+        'outlet_code', 'md_group_name', 'outlet_name', 
+        'outlet_phone', 'shop_address', 'outlet_city', 
+        'outlet_state', 'outlet_pincode'
+    ]
+    settings = {}
+    for key in keys:
+        row = conn.execute("SELECT value FROM shop_settings WHERE key=?", (key,)).fetchone()
+        settings[key] = row['value'].strip() if row and row['value'] else None
     conn.close()
 
-    shop_name = shop_row['value'] if shop_row else 'Meat Products Outlet'
-    shop_phone = phone_row['value'] if phone_row else ''
+    shop_name = settings['outlet_name'] or 'Meat Products Outlet'
+    shop_phone = settings['outlet_phone'] or ''
 
     payload = {
-        'machine_id': machine_id,
-        'shop_name': shop_name,
-        'phone': shop_phone
+        'machine_id':   machine_id,
+        'shop_name':    shop_name,
+        'phone':        shop_phone,
+        # Auto-healing cloud sync fields
+        'outlet_code':  settings['outlet_code'],
+        'md_username':  md_username,
+        'md_fullname':  md_fullname,
+        'group_name':   settings['md_group_name'],
+        'address':      settings['shop_address'],
+        'city':         settings['outlet_city'],
+        'state':        settings['outlet_state'],
+        'pincode':      settings['outlet_pincode']
     }
 
     try:

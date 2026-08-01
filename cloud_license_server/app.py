@@ -261,7 +261,42 @@ def outlet_ping():
         now_str = str(datetime.now())[:19]
 
         conn, is_pg = get_db()
-        cur = conn.cursor()
+        cur = conn.cursor() if is_pg else None
+
+        # Auto-heal / rebuild registration details if missing on cloud DB
+        outlet_code = (d.get('outlet_code') or '').strip().upper()
+        if outlet_code:
+            md_username = (d.get('md_username') or '').strip()
+            md_fullname = (d.get('md_fullname') or '').strip()
+            group_name = (d.get('group_name') or '').strip()
+            addr = (d.get('address') or '').strip()
+            city = (d.get('city') or '').strip()
+            state = (d.get('state') or '').strip()
+            pincode = (d.get('pincode') or '').strip()
+
+            if is_pg:
+                cur.execute("SELECT id FROM outlet_registrations WHERE machine_id = %s", (machine_id,))
+                reg_exists = cur.fetchone()
+                if not reg_exists:
+                    cur.execute("""
+                        INSERT INTO outlet_registrations
+                            (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
+                             outlet_phone, address, city, state, pincode, registered_at, updated_at)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
+                    """, (outlet_code, machine_id, md_username, md_fullname, group_name, shop_name,
+                          phone, addr, city, state, pincode))
+                    conn.commit()
+            else:
+                reg_exists = conn.execute("SELECT id FROM outlet_registrations WHERE machine_id = ?", (machine_id,)).fetchone()
+                if not reg_exists:
+                    conn.execute("""
+                        INSERT INTO outlet_registrations
+                            (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
+                             outlet_phone, address, city, state, pincode, registered_at, updated_at)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """, (outlet_code, machine_id, md_username, md_fullname, group_name, shop_name,
+                          phone, addr, city, state, pincode, now_str, now_str))
+                    conn.commit()
 
         if is_pg:
             cur.execute("SELECT * FROM outlets WHERE machine_id = %s", (machine_id,))
