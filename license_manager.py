@@ -170,8 +170,8 @@ def get_license_info():
             'active_key': format_key(active_key),
             'machine_id': machine_id,
             'price_inr': YEARLY_PRICE_INR,
-            'upi_id': 'mpi.billing@upi',
-            'upi_name': 'Meat Products of India Billing App'
+            'upi_id': '9809840548@axisb',
+            'upi_name': 'MPI Billing Software'
         }
 
     else:
@@ -198,8 +198,8 @@ def get_license_info():
             'active_key': None,
             'machine_id': machine_id,
             'price_inr': YEARLY_PRICE_INR,
-            'upi_id': 'mpi.billing@upi',
-            'upi_name': 'Meat Products of India Billing App'
+            'upi_id': '9809840548@axisb',
+            'upi_name': 'MPI Billing Software'
         }
 
 MASTER_DEVELOPER_KEY = "Revathyr@j6123"
