@@ -547,29 +547,30 @@ def outlet_ping():
 
             if u_username:
                 if is_pg:
-                    cur.execute("""
-                        INSERT INTO outlet_users (machine_id, username, full_name, role, employee_id, active, last_login, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
-                        ON CONFLICT (machine_id, username) DO UPDATE SET
-                            full_name = EXCLUDED.full_name,
-                            role = EXCLUDED.role,
-                            employee_id = EXCLUDED.employee_id,
-                            active = EXCLUDED.active,
-                            last_login = EXCLUDED.last_login,
-                            updated_at = NOW()
-                    """, (machine_id, u_username, u_fullname, u_role, u_empid, u_active, u_last_login))
+                    cur.execute("SELECT id FROM outlet_users WHERE UPPER(machine_id) = %s AND UPPER(username) = %s LIMIT 1", (machine_id, u_username.upper()))
+                    u_row = cur.fetchone()
+                    if u_row:
+                        cur.execute("""
+                            UPDATE outlet_users SET full_name = %s, role = %s, employee_id = %s, active = %s, last_login = %s, updated_at = NOW()
+                            WHERE UPPER(machine_id) = %s AND UPPER(username) = %s
+                        """, (u_fullname, u_role, u_empid, u_active, u_last_login, machine_id, u_username.upper()))
+                    else:
+                        cur.execute("""
+                            INSERT INTO outlet_users (machine_id, username, full_name, role, employee_id, active, last_login, updated_at)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())
+                        """, (machine_id, u_username, u_fullname, u_role, u_empid, u_active, u_last_login))
                 else:
-                    conn.execute("""
-                        INSERT INTO outlet_users (machine_id, username, full_name, role, employee_id, active, last_login, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        ON CONFLICT (machine_id, username) DO UPDATE SET
-                            full_name = excluded.full_name,
-                            role = excluded.role,
-                            employee_id = excluded.employee_id,
-                            active = excluded.active,
-                            last_login = excluded.last_login,
-                            updated_at = excluded.updated_at
-                    """, (machine_id, u_username, u_fullname, u_role, u_empid, u_active, u_last_login, now_str))
+                    u_row = conn.execute("SELECT id FROM outlet_users WHERE UPPER(machine_id) = ? AND UPPER(username) = ? LIMIT 1", (machine_id, u_username.upper())).fetchone()
+                    if u_row:
+                        conn.execute("""
+                            UPDATE outlet_users SET full_name = ?, role = ?, employee_id = ?, active = ?, last_login = ?, updated_at = ?
+                            WHERE UPPER(machine_id) = ? AND UPPER(username) = ?
+                        """, (u_fullname, u_role, u_empid, u_active, u_last_login, now_str, machine_id, u_username.upper()))
+                    else:
+                        conn.execute("""
+                            INSERT INTO outlet_users (machine_id, username, full_name, role, employee_id, active, last_login, updated_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (machine_id, u_username, u_fullname, u_role, u_empid, u_active, u_last_login, now_str))
 
         if is_pg:
             conn.commit()
@@ -1119,22 +1120,27 @@ def delete_outlet(machine_id):
             cur.execute("DELETE FROM outlet_registrations WHERE UPPER(machine_id) = %s", (mid,))
             cur.execute("DELETE FROM outlet_users WHERE UPPER(machine_id) = %s", (mid,))
             cur.execute("DELETE FROM activation_keys WHERE UPPER(machine_id) = %s", (mid,))
-            # ── Mark as deleted so next ping signals the local app to re-register ──
-            cur.execute("""
-                INSERT INTO revoked_outlets (machine_id, outlet_code, revoked_at, reason)
-                VALUES (%s, %s, NOW(), 'Deleted by developer — re-registration required')
-                ON CONFLICT (machine_id) DO UPDATE SET revoked_at = NOW(), reason = 'Deleted by developer — re-registration required'
-            """, (mid, outlet_code_for_reset))
+            cur.execute("SELECT machine_id FROM revoked_outlets WHERE UPPER(machine_id) = %s LIMIT 1", (mid,))
+            if cur.fetchone():
+                cur.execute("UPDATE revoked_outlets SET revoked_at = NOW(), reason = 'Deleted by developer — re-registration required' WHERE UPPER(machine_id) = %s", (mid,))
+            else:
+                cur.execute("""
+                    INSERT INTO revoked_outlets (machine_id, outlet_code, revoked_at, reason)
+                    VALUES (%s, %s, NOW(), 'Deleted by developer — re-registration required')
+                """, (mid, outlet_code_for_revoke))
         else:
             conn.execute("DELETE FROM outlets WHERE UPPER(machine_id) = ?", (mid,))
             conn.execute("DELETE FROM outlet_registrations WHERE UPPER(machine_id) = ?", (mid,))
             conn.execute("DELETE FROM outlet_users WHERE UPPER(machine_id) = ?", (mid,))
             conn.execute("DELETE FROM activation_keys WHERE UPPER(machine_id) = ?", (mid,))
-            # ── Mark as deleted so next ping signals the local app to re-register ──
-            conn.execute("""
-                INSERT OR REPLACE INTO revoked_outlets (machine_id, outlet_code, revoked_at, reason)
-                VALUES (?, ?, CURRENT_TIMESTAMP, 'Deleted by developer — re-registration required')
-            """, (mid, outlet_code_for_reset))
+            rev_row = conn.execute("SELECT machine_id FROM revoked_outlets WHERE UPPER(machine_id) = ? LIMIT 1", (mid,)).fetchone()
+            if rev_row:
+                conn.execute("UPDATE revoked_outlets SET revoked_at = CURRENT_TIMESTAMP, reason = 'Deleted by developer — re-registration required' WHERE UPPER(machine_id) = ?", (mid,))
+            else:
+                conn.execute("""
+                    INSERT INTO revoked_outlets (machine_id, outlet_code, revoked_at, reason)
+                    VALUES (?, ?, CURRENT_TIMESTAMP, 'Deleted by developer — re-registration required')
+                """, (mid, outlet_code_for_reset))
 
         conn.commit()
         conn.close()
