@@ -470,9 +470,16 @@ def login():
     if not username or not password:
         return err("Username and password required")
 
-    # ── Re-Registration Check (ALL roles including MD) ─────────────────────────
-    # If developer deleted this outlet from the admin portal, the local app cleared
-    # registration data. Block login and prompt user to re-register.
+    # ── Re-Registration & Cloud Sync Check (ALL roles including MD) ────────────
+    # Ping central server first to verify status and sync user/outlet details.
+    # If developer deleted this outlet from the admin portal, the server returns
+    # needs_reregister, which clears local settings and sets status='needs_reregister'.
+    try:
+        from license_sync import sync_with_cloud_server as _login_sync
+        _login_sync()
+    except Exception:
+        pass
+
     try:
         from license_manager import get_license_info as _get_lic
         _lic = _get_lic()
@@ -730,6 +737,12 @@ def register_md():
                 log_activity('MD_REGISTER', f"MD account updated. Outlet: '{outlet_name}' ({outlet_code}), Machine: {machine_id[:8]}", 'users', existing['id'])
             except Exception:
                 pass
+            # Sync newly created MD user & outlet details to central developer portal immediately
+            try:
+                from license_sync import sync_with_cloud_server as _reg_sync
+                _reg_sync()
+            except Exception:
+                pass
             msg = f"MD account updated! Outlet Code: {outlet_code}"
             if cloud_error: msg += f" (offline fallback — sync when online)"
             return ok({'outlet_code': outlet_code, 'machine_id': machine_id}, message=msg)
@@ -746,6 +759,12 @@ def register_md():
             session['user_role'] = 'md'
             try:
                 log_activity('MD_REGISTER', f"MD registered. Outlet: '{outlet_name}' ({outlet_code}), Machine: {machine_id[:8]}", 'users', uid)
+            except Exception:
+                pass
+            # Sync newly created MD user & outlet details to central developer portal immediately
+            try:
+                from license_sync import sync_with_cloud_server as _reg_sync
+                _reg_sync()
             except Exception:
                 pass
             msg = f"Managing Director registered! Outlet Code: {outlet_code}"

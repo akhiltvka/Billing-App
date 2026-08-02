@@ -326,7 +326,7 @@ def register_outlet():
             serial += 1
             outlet_code = f"{prefix}{serial:02d}"
 
-        # Insert the outlet registration
+        # Insert/upsert the outlet registration
         now_str = str(datetime.now())[:19]
         if is_pg:
             cur = conn.cursor()
@@ -349,6 +349,18 @@ def register_outlet():
                     updated_at = NOW()
             """, (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
                   outlet_phone, address, city, state, pincode))
+
+            # Also ensure a row exists in outlets table so status/last_ping is tracked
+            cur.execute("""
+                INSERT INTO outlets (machine_id, shop_name, phone, owner_name, status, last_ping)
+                VALUES (%s, %s, %s, %s, 'trial', NOW())
+                ON CONFLICT (machine_id) DO UPDATE SET
+                    shop_name = EXCLUDED.shop_name,
+                    phone = EXCLUDED.phone,
+                    owner_name = EXCLUDED.owner_name,
+                    last_ping = NOW()
+            """, (machine_id, outlet_name, outlet_phone, md_fullname))
+
             # Clear from revoked list so future pings work normally
             cur.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = %s", (machine_id,))
         else:
@@ -371,6 +383,18 @@ def register_outlet():
                     updated_at = excluded.updated_at
             """, (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
                   outlet_phone, address, city, state, pincode, now_str, now_str))
+
+            # Also ensure a row exists in outlets table so status/last_ping is tracked
+            conn.execute("""
+                INSERT INTO outlets (machine_id, shop_name, phone, owner_name, status, last_ping)
+                VALUES (?, ?, ?, ?, 'trial', CURRENT_TIMESTAMP)
+                ON CONFLICT (machine_id) DO UPDATE SET
+                    shop_name = excluded.shop_name,
+                    phone = excluded.phone,
+                    owner_name = excluded.owner_name,
+                    last_ping = CURRENT_TIMESTAMP
+            """, (machine_id, outlet_name, outlet_phone, md_fullname))
+
             # Clear from revoked list so future pings work normally
             conn.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = ?", (machine_id,))
 
@@ -823,9 +847,9 @@ def admin_portal():
             SELECT 
                 COALESCE(o.id, r.id) as id,
                 COALESCE(o.machine_id, r.machine_id) as machine_id,
-                COALESCE(o.shop_name, r.outlet_name) as shop_name,
-                COALESCE(o.phone, r.outlet_phone) as phone,
-                COALESCE(o.owner_name, r.md_fullname) as owner_name,
+                COALESCE(o.shop_name, r.outlet_name, 'Registered Outlet') as shop_name,
+                COALESCE(o.phone, r.outlet_phone, '') as phone,
+                COALESCE(o.owner_name, r.md_fullname, '') as owner_name,
                 COALESCE(o.status, 'trial') as status,
                 o.activated_at,
                 o.expires_at,
@@ -846,7 +870,34 @@ def admin_portal():
                 r.registered_at as reg_date
             FROM outlet_registrations r
             LEFT JOIN outlets o ON UPPER(r.machine_id) = UPPER(o.machine_id)
-            ORDER BY r.id DESC
+            UNION
+            SELECT 
+                COALESCE(o.id, r.id) as id,
+                COALESCE(o.machine_id, r.machine_id) as machine_id,
+                COALESCE(o.shop_name, r.outlet_name, 'Registered Outlet') as shop_name,
+                COALESCE(o.phone, r.outlet_phone, '') as phone,
+                COALESCE(o.owner_name, r.md_fullname, '') as owner_name,
+                COALESCE(o.status, 'trial') as status,
+                o.activated_at,
+                o.expires_at,
+                o.grace_expires_at,
+                COALESCE(o.payment_status, 'UNPAID') as payment_status,
+                o.utr_number,
+                o.last_ping,
+                r.outlet_code,
+                r.md_username,
+                r.md_fullname,
+                r.group_name,
+                r.outlet_name as reg_outlet_name,
+                r.outlet_phone as reg_outlet_phone,
+                r.address as reg_address,
+                r.city as reg_city,
+                r.state as reg_state,
+                r.pincode as reg_pincode,
+                r.registered_at as reg_date
+            FROM outlets o
+            LEFT JOIN outlet_registrations r ON UPPER(o.machine_id) = UPPER(r.machine_id)
+            ORDER BY id DESC
         """
         if is_pg:
             cur = conn.cursor()
