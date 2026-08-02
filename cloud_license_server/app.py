@@ -749,7 +749,18 @@ def admin_portal():
         conn, is_pg = get_db()
         sql = """
             SELECT 
-                o.*,
+                COALESCE(o.id, r.id) as id,
+                COALESCE(o.machine_id, r.machine_id) as machine_id,
+                COALESCE(o.shop_name, r.outlet_name) as shop_name,
+                COALESCE(o.phone, r.outlet_phone) as phone,
+                COALESCE(o.owner_name, r.md_fullname) as owner_name,
+                COALESCE(o.status, 'trial') as status,
+                o.activated_at,
+                o.expires_at,
+                o.grace_expires_at,
+                COALESCE(o.payment_status, 'UNPAID') as payment_status,
+                o.utr_number,
+                o.last_ping,
                 r.outlet_code,
                 r.md_username,
                 r.md_fullname,
@@ -761,9 +772,9 @@ def admin_portal():
                 r.state as reg_state,
                 r.pincode as reg_pincode,
                 r.registered_at as reg_date
-            FROM outlets o
-            LEFT JOIN outlet_registrations r ON UPPER(o.machine_id) = UPPER(r.machine_id)
-            ORDER BY o.id DESC
+            FROM outlet_registrations r
+            LEFT JOIN outlets o ON UPPER(r.machine_id) = UPPER(o.machine_id)
+            ORDER BY r.id DESC
         """
         if is_pg:
             cur = conn.cursor()
