@@ -457,83 +457,66 @@ def outlet_ping():
 
         outlet_code = (d.get('outlet_code') or '').strip().upper()
 
-        # Check if machine_id was deleted from server
+        # Auto-clear revocation if local app pings so user details restore automatically
         if is_pg:
-            cur.execute("SELECT machine_id FROM revoked_outlets WHERE UPPER(machine_id) = %s LIMIT 1", (machine_id,))
-            was_deleted = cur.fetchone()
+            cur.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = %s", (machine_id,))
+            conn.commit()
         else:
-            was_deleted = conn.execute("SELECT machine_id FROM revoked_outlets WHERE UPPER(machine_id) = ? LIMIT 1", (machine_id,)).fetchone()
+            conn.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = ?", (machine_id,))
+            conn.commit()
 
-        # If deleted BUT ping payload has an outlet_code (local app is registered and syncing),
-        # auto-restore the outlet and clear the revocation record so details update on the server!
-        if was_deleted:
-            if outlet_code:
-                if is_pg:
-                    cur.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = %s", (machine_id,))
-                    conn.commit()
-                else:
-                    conn.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = ?", (machine_id,))
-                    conn.commit()
-            else:
-                conn.close()
-                return jsonify({
-                    'status': 'ok',
-                    'data': {
-                        'machine_id': machine_id,
-                        'license_status': 'needs_reregister',
-                        'payment_status': 'UNPAID',
-                        'activated_at': '',
-                        'expires_at': '',
-                        'grace_expires_at': '',
-                        'message': '⚠️ This outlet was deleted from the central server. Please re-register on this system to continue.'
-                    }
-                })
-        if outlet_code:
-            md_username = (d.get('md_username') or '').strip()
-            md_fullname = (d.get('md_fullname') or '').strip()
-            group_name = (d.get('group_name') or '').strip()
-            addr = (d.get('address') or '').strip()
-            city = (d.get('city') or '').strip()
-            state = (d.get('state') or '').strip()
-            pincode = (d.get('pincode') or '').strip()
+        md_username = (d.get('md_username') or '').strip()
+        md_fullname = (d.get('md_fullname') or '').strip()
+        group_name  = (d.get('group_name') or '').strip()
+        addr        = (d.get('address') or '').strip()
+        city        = (d.get('city') or '').strip()
+        state       = (d.get('state') or '').strip()
+        pincode     = (d.get('pincode') or '').strip()
 
-            if is_pg:
-                cur.execute("SELECT id FROM outlet_registrations WHERE UPPER(machine_id) = %s LIMIT 1", (machine_id,))
-                reg_row = cur.fetchone()
-                if reg_row:
-                    cur.execute("""
-                        UPDATE outlet_registrations SET
-                            outlet_code = %s, md_username = %s, md_fullname = %s, group_name = %s,
-                            outlet_name = %s, outlet_phone = %s, address = %s, city = %s,
-                            state = %s, pincode = %s, updated_at = NOW()
-                        WHERE UPPER(machine_id) = %s
-                    """, (outlet_code, md_username, md_fullname, group_name, shop_name, phone, addr, city, state, pincode, machine_id))
-                else:
-                    cur.execute("""
-                        INSERT INTO outlet_registrations
-                            (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
-                             outlet_phone, address, city, state, pincode, registered_at, updated_at)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
-                    """, (outlet_code, machine_id, md_username, md_fullname, group_name, shop_name, phone, addr, city, state, pincode))
-                conn.commit()
+        # If outlet_code is empty, auto-generate one so registration record always exists
+        if not outlet_code:
+            prefix = ''.join(c for c in shop_name.upper() if c.isalpha())[:2]
+            if len(prefix) < 2:
+                prefix = (prefix + 'MP')[:2]
+            outlet_code = f"{prefix}01"
+
+        if is_pg:
+            cur.execute("SELECT id FROM outlet_registrations WHERE UPPER(machine_id) = %s LIMIT 1", (machine_id,))
+            reg_row = cur.fetchone()
+            if reg_row:
+                cur.execute("""
+                    UPDATE outlet_registrations SET
+                        outlet_code = %s, md_username = %s, md_fullname = %s, group_name = %s,
+                        outlet_name = %s, outlet_phone = %s, address = %s, city = %s,
+                        state = %s, pincode = %s, updated_at = NOW()
+                    WHERE UPPER(machine_id) = %s
+                """, (outlet_code, md_username, md_fullname, group_name, shop_name, phone, addr, city, state, pincode, machine_id))
             else:
-                reg_row = conn.execute("SELECT id FROM outlet_registrations WHERE UPPER(machine_id) = ? LIMIT 1", (machine_id,)).fetchone()
-                if reg_row:
-                    conn.execute("""
-                        UPDATE outlet_registrations SET
-                            outlet_code = ?, md_username = ?, md_fullname = ?, group_name = ?,
-                            outlet_name = ?, outlet_phone = ?, address = ?, city = ?,
-                            state = ?, pincode = ?, updated_at = ?
-                        WHERE UPPER(machine_id) = ?
-                    """, (outlet_code, md_username, md_fullname, group_name, shop_name, phone, addr, city, state, pincode, now_str, machine_id))
-                else:
-                    conn.execute("""
-                        INSERT INTO outlet_registrations
-                            (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
-                             outlet_phone, address, city, state, pincode, registered_at, updated_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    """, (outlet_code, machine_id, md_username, md_fullname, group_name, shop_name, phone, addr, city, state, pincode, now_str, now_str))
-                conn.commit()
+                cur.execute("""
+                    INSERT INTO outlet_registrations
+                        (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
+                         outlet_phone, address, city, state, pincode, registered_at, updated_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
+                """, (outlet_code, machine_id, md_username, md_fullname, group_name, shop_name, phone, addr, city, state, pincode))
+            conn.commit()
+        else:
+            reg_row = conn.execute("SELECT id FROM outlet_registrations WHERE UPPER(machine_id) = ? LIMIT 1", (machine_id,)).fetchone()
+            if reg_row:
+                conn.execute("""
+                    UPDATE outlet_registrations SET
+                        outlet_code = ?, md_username = ?, md_fullname = ?, group_name = ?,
+                        outlet_name = ?, outlet_phone = ?, address = ?, city = ?,
+                        state = ?, pincode = ?, updated_at = ?
+                    WHERE UPPER(machine_id) = ?
+                """, (outlet_code, md_username, md_fullname, group_name, shop_name, phone, addr, city, state, pincode, now_str, machine_id))
+            else:
+                conn.execute("""
+                    INSERT INTO outlet_registrations
+                        (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
+                         outlet_phone, address, city, state, pincode, registered_at, updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, (outlet_code, machine_id, md_username, md_fullname, group_name, shop_name, phone, addr, city, state, pincode, now_str, now_str))
+            conn.commit()
 
         # Upsert the local users list sent in the ping payload
         users_list = d.get('users') or []
@@ -574,38 +557,39 @@ def outlet_ping():
 
         if is_pg:
             conn.commit()
-            # Refresh cursor
             cur = conn.cursor()
 
+        owner_name_to_save = md_fullname or md_username or shop_name
+
         if is_pg:
-            cur.execute("SELECT * FROM outlets WHERE machine_id = %s", (machine_id,))
+            cur.execute("SELECT * FROM outlets WHERE UPPER(machine_id) = %s", (machine_id,))
             outlet = cur.fetchone()
             if not outlet:
                 cur.execute("""
-                    INSERT INTO outlets (machine_id, shop_name, phone, status, last_ping)
-                    VALUES (%s, %s, %s, 'trial', NOW())
+                    INSERT INTO outlets (machine_id, shop_name, phone, owner_name, status, last_ping)
+                    VALUES (%s, %s, %s, %s, 'trial', NOW())
                     RETURNING *
-                """, (machine_id, shop_name, phone))
+                """, (machine_id, shop_name, phone, owner_name_to_save))
                 conn.commit()
                 outlet = cur.fetchone()
             else:
                 cur.execute("""
-                    UPDATE outlets SET shop_name = %s, phone = %s, last_ping = NOW() WHERE machine_id = %s
-                """, (shop_name, phone, machine_id))
+                    UPDATE outlets SET shop_name = %s, phone = %s, owner_name = %s, last_ping = NOW() WHERE UPPER(machine_id) = %s
+                """, (shop_name, phone, owner_name_to_save, machine_id))
                 conn.commit()
         else:
-            outlet = conn.execute("SELECT * FROM outlets WHERE machine_id = ?", (machine_id,)).fetchone()
+            outlet = conn.execute("SELECT * FROM outlets WHERE UPPER(machine_id) = ?", (machine_id,)).fetchone()
             if not outlet:
                 conn.execute("""
-                    INSERT INTO outlets (machine_id, shop_name, phone, status, last_ping)
-                    VALUES (?, ?, ?, 'trial', ?)
-                """, (machine_id, shop_name, phone, now_str))
+                    INSERT INTO outlets (machine_id, shop_name, phone, owner_name, status, last_ping)
+                    VALUES (?, ?, ?, ?, 'trial', ?)
+                """, (machine_id, shop_name, phone, owner_name_to_save, now_str))
                 conn.commit()
-                outlet = conn.execute("SELECT * FROM outlets WHERE machine_id = ?", (machine_id,)).fetchone()
+                outlet = conn.execute("SELECT * FROM outlets WHERE UPPER(machine_id) = ?", (machine_id,)).fetchone()
             else:
                 conn.execute("""
-                    UPDATE outlets SET shop_name = ?, phone = ?, last_ping = ? WHERE machine_id = ?
-                """, (shop_name, phone, now_str, machine_id))
+                    UPDATE outlets SET shop_name = ?, phone = ?, owner_name = ?, last_ping = ? WHERE UPPER(machine_id) = ?
+                """, (shop_name, phone, owner_name_to_save, now_str, machine_id))
                 conn.commit()
 
         conn.close()
