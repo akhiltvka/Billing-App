@@ -715,6 +715,8 @@ def register_md():
             'shop_phone':      outlet_phone,
             'outlet_code':     outlet_code,
             'system_machine_id': machine_id,
+            'outlet_needs_reregister': '0',
+            'outlet_revoked':  '0',
         }
         for k, v in outlet_settings.items():
             conn.execute(

@@ -130,6 +130,13 @@ def sync_with_cloud_server():
             return False, f"NEEDS_REREGISTER: {msg}"
 
         if resp_status == 200 and res_json.get('status') == 'ok':
+            # Clear any stale re-register / revocation flags since server returned 200 OK
+            conn = get_db()
+            conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_needs_reregister', '0')")
+            conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_revoked', '0')")
+            conn.commit()
+            conn.close()
+
             data = res_json.get('data', {})
             cloud_lic_status = data.get('license_status')
             
@@ -156,17 +163,13 @@ def sync_with_cloud_server():
                     'subscription_days': SUBSCRIPTION_DAYS
                 }
 
-                conn = get_db()
                 conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('active_license_json', ?)", (json.dumps(lic_payload),))
-                # Clear any stale re-register flag
-                conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_needs_reregister', '0')")
-                conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_revoked', '0')")
                 conn.commit()
                 conn.close()
                 return True, f"Cloud Auto-Activation Verified! Active until {exp_str}."
             
             status_display = str(cloud_lic_status).upper() if cloud_lic_status else "UNKNOWN"
-            return False, f"Cloud sync complete. License status: {status_display}"
+            return True, f"Cloud sync complete. License status: {status_display}"
     except Exception as e:
         return False, f"Cloud server connection offline/unreachable: {str(e)}"
 
