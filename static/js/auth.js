@@ -63,7 +63,7 @@ const Auth = {
             Strictly for the <strong>Managing Director / CEO / Business Owner</strong> of this outlet.<br>
             &nbsp;• Full authority to create &amp; manage all staff accounts<br>
             &nbsp;• Access all financial reports, settings &amp; accounts<br>
-            &nbsp;• Each outlet requires a separate ₹5,000/year license.<br><br>
+            &nbsp;• Each outlet requires a separate ₹12,000/year license.<br><br>
             <strong>⚠️ Unauthorised registration is a serious security violation.</strong>
           </div>
         </div>
@@ -102,7 +102,7 @@ const Auth = {
         <!-- Section: Outlet / Branch -->
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--gold);margin:14px 0 10px;border-bottom:1px solid rgba(255,255,255,.08);padding-bottom:6px">🏪 Outlet / Branch Details</div>
         <div style="background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);border-radius:var(--r-sm);padding:10px;font-size:12px;color:#A5B4FC;margin-bottom:12px">
-          ℹ️ Each outlet (branch) runs on its own computer and is licensed separately at <strong>₹5,000/year</strong>. Fill in this outlet's details below.
+          ℹ️ Each outlet (branch) runs on its own computer and is licensed separately at <strong>₹12,000/year</strong>. Fill in this outlet's details below.
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <div class="form-group">
@@ -346,8 +346,75 @@ const Auth = {
     // Clear password field
     document.getElementById('login-password').value = '';
 
+    if (user.must_change_password) {
+      Auth.showMandatoryChangePwdModal();
+      return;
+    }
+
     // Init the main app
     App.postAuthInit(user);
+  },
+
+  showMandatoryChangePwdModal() {
+    App.showModal(`
+      <div class="modal">
+        <div class="modal-header">
+          <div class="modal-title"><span class="modal-title-icon">🔐</span> Mandatory Password Change</div>
+        </div>
+        <div style="padding:16px">
+          <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:var(--r-sm);padding:12px;font-size:13px;color:#FCA5A5;margin-bottom:14px">
+            ⚠️ <strong>Security Requirement:</strong> You are using a temporary or seeded initial password. You must set a new password before accessing system features.
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Current (Initial) Password</label>
+            <input class="form-control" id="m-cpwd-current" type="password" placeholder="••••••••">
+          </div>
+          <div class="form-group">
+            <label class="form-label required">New Password</label>
+            <input class="form-control" id="m-cpwd-new" type="password" placeholder="Min 6 characters">
+          </div>
+          <div class="form-group">
+            <label class="form-label required">Confirm New Password</label>
+            <input class="form-control" id="m-cpwd-confirm" type="password" placeholder="Repeat new password">
+          </div>
+          <div id="m-cpwd-error" style="display:none;color:#FCA5A5;font-size:12px;padding:4px 0"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" style="width:100%" onclick="Auth.submitMandatoryPasswordChange()">💾 Update Password &amp; Continue</button>
+        </div>
+      </div>`);
+  },
+
+  async submitMandatoryPasswordChange() {
+    const current = document.getElementById('m-cpwd-current').value;
+    const newPwd  = document.getElementById('m-cpwd-new').value;
+    const confirm = document.getElementById('m-cpwd-confirm').value;
+    const errEl   = document.getElementById('m-cpwd-error');
+    if (!current) { errEl.textContent = 'Enter current password'; errEl.style.display = 'block'; return; }
+    if (newPwd.length < 6) { errEl.textContent = 'New password must be at least 6 characters'; errEl.style.display = 'block'; return; }
+    if (newPwd !== confirm) { errEl.textContent = 'Passwords do not match'; errEl.style.display = 'block'; return; }
+
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ current_password: current, new_password: newPwd }),
+      });
+      const json = await res.json();
+      if (json.status !== 'ok') {
+        errEl.textContent = json.message || 'Password update failed';
+        errEl.style.display = 'block';
+        return;
+      }
+      if (Auth.currentUser) Auth.currentUser.must_change_password = false;
+      App.closeModal();
+      App.toast('Password updated successfully! Welcome.', 'success');
+      App.postAuthInit(Auth.currentUser);
+    } catch(e) {
+      errEl.textContent = 'Error: ' + e.message;
+      errEl.style.display = 'block';
+    }
   },
 
   // ── Restore session on page load ───────────────────────────────────────────

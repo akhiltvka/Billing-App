@@ -82,6 +82,13 @@ def require_auth(f):
     def decorated(*args, **kwargs):
         if 'user_id' not in session:
             return jsonify({'status': 'error', 'message': 'Authentication required'}), 401
+        if session.get('must_change_password'):
+            if request.endpoint not in ('change_password', 'logout', 'get_me'):
+                return jsonify({
+                    'status': 'error',
+                    'must_change_password': True,
+                    'message': 'Password change required before accessing system features'
+                }), 403
         return f(*args, **kwargs)
     return decorated
 
@@ -93,6 +100,12 @@ def require_role(*roles):
         def decorated(*args, **kwargs):
             if 'user_id' not in session:
                 return jsonify({'status': 'error', 'message': 'Authentication required'}), 401
+            if session.get('must_change_password'):
+                return jsonify({
+                    'status': 'error',
+                    'must_change_password': True,
+                    'message': 'Password change required before accessing system features'
+                }), 403
             user_role = session.get('user_role')
             if user_role not in ['admin', 'md'] and user_role not in roles:
                 return jsonify({'status': 'error', 'message': 'Insufficient permissions for this action'}), 403
@@ -528,28 +541,43 @@ def login():
                 f"Contact your Managing Director if you believe this is an error.", 403
             )
 
+    must_change = bool(dict(user).get('must_change_password', 0))
     session.clear()
-    session['user_id']    = user['id']
-    session['username']   = user['username']
-    session['full_name']  = user['full_name']
-    session['user_role']  = user['role']
-    session['outlet_code'] = (user['outlet_code'] or '') if user['outlet_code'] else ''
-    session.permanent     = True
+    session['user_id']              = user['id']
+    session['username']             = user['username']
+    session['full_name']            = user['full_name']
+    session['user_role']            = user['role']
+    session['outlet_code']          = (user['outlet_code'] or '') if user['outlet_code'] else ''
+    session['must_change_password'] = must_change
+    session.permanent               = True
 
     resp_data = {
-        'id':          user['id'],
-        'username':    user['username'],
-        'full_name':   user['full_name'],
-        'role':        user['role'],
-        'role_label':  ROLE_LABELS.get(user['role'], user['role']),
-        'pages':       ROLE_PAGES.get(user['role'], []),
-        'outlet_code': user['outlet_code'] or '',
-        'machine_id':  (user['machine_id'] or '')[:8],
+        'id':                   user['id'],
+        'username':             user['username'],
+        'full_name':            user['full_name'],
+        'role':                 user['role'],
+        'role_label':           ROLE_LABELS.get(user['role'], user['role']),
+        'pages':                ROLE_PAGES.get(user['role'], []),
+        'outlet_code':          user['outlet_code'] or '',
+        'machine_id':           (user['machine_id'] or '')[:8],
+        'must_change_password': must_change,
     }
     return ok(resp_data, "Login successful")
 
 @app.route('/api/auth/register-md', methods=['POST'])
 def register_md():
+    # ── First-Run Gate Check ──────────────────────────────────────────────────
+    # Check if an MD or Admin owner account has already been registered.
+    # NOTE: Ownership transfer to a new MD (e.g. if outlet changes hands) must go
+    # through a separate, properly authenticated admin/MD-only route if requested later.
+    conn = get_db()
+    existing_owner = conn.execute(
+        "SELECT id FROM users WHERE (role = 'md' OR role = 'admin') AND username != 'sudo' LIMIT 1"
+    ).fetchone()
+    conn.close()
+    if existing_owner:
+        return err("An owner account has already been registered on this system. Contact support to transfer ownership.", 403)
+
     import json as _json
     import urllib.request as _urllib_req
 
@@ -701,14 +729,16 @@ def me():
     if not user or not user['active']:
         session.clear()
         return err("Session expired", 401)
+    must_change = bool(dict(user).get('must_change_password', 0))
     return ok({
-        'id':        user['id'],
-        'username':  user['username'],
-        'full_name': user['full_name'],
-        'role':      user['role'],
-        'role_label': ROLE_LABELS.get(user['role'], user['role']),
-        'pages':     ROLE_PAGES.get(user['role'], []),
-        'last_login': user['last_login'],
+        'id':                   user['id'],
+        'username':             user['username'],
+        'full_name':            user['full_name'],
+        'role':                 user['role'],
+        'role_label':           ROLE_LABELS.get(user['role'], user['role']),
+        'pages':                ROLE_PAGES.get(user['role'], []),
+        'last_login':           user['last_login'],
+        'must_change_password': must_change,
     })
 
 @app.route('/api/auth/change-password', methods=['POST'])
@@ -726,10 +756,11 @@ def change_password():
     if len(new_pwd) < 6:
         conn.close()
         return err("New password must be at least 6 characters")
-    conn.execute('UPDATE users SET password_hash=? WHERE id=?',
+    conn.execute('UPDATE users SET password_hash=?, must_change_password=0 WHERE id=?',
                  (generate_password_hash(new_pwd), session['user_id']))
     conn.commit(); conn.close()
-    return ok(message="Password changed successfully")
+    session['must_change_password'] = False
+    return ok(data={'must_change_password': False}, message="Password changed successfully")
 
 # ─── User Management & Role Administration ────────────────────────────────────
 

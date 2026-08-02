@@ -42,7 +42,7 @@ def main():
     print("=================================================================")
     print(" [KEY GENERATOR] MPI BILLING SOFTWARE - 12-DIGIT ACTIVATION KEY")
     print(" Subscription Duration: 365 Days + 10 Days Grace Period")
-    print(" Yearly Price: Rs 5,000 / Outlet")
+    print(" Yearly Price: Rs 12,000 / Outlet (Custom developer discounts may apply)")
     if args.note:
         print(f" Outlet / Client: {args.note}")
     print("=================================================================")

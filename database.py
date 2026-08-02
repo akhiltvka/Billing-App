@@ -223,14 +223,15 @@ def init_db():
 
         -- User accounts for role-based access
         CREATE TABLE IF NOT EXISTS users (
-            id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            password_hash TEXT NOT NULL,
-            full_name     TEXT NOT NULL,
-            role          TEXT NOT NULL CHECK(role IN ('admin','md','manager','accountant','counter_staff','tester')),
-            active        INTEGER DEFAULT 1,
-            last_login    TEXT,
-            created_at    TEXT DEFAULT CURRENT_TIMESTAMP
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            username              TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            password_hash         TEXT NOT NULL,
+            full_name             TEXT NOT NULL,
+            role                  TEXT NOT NULL CHECK(role IN ('admin','md','manager','accountant','counter_staff','tester')),
+            active                INTEGER DEFAULT 1,
+            must_change_password  INTEGER DEFAULT 0,
+            last_login            TEXT,
+            created_at            TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
         -- Audit & Notification logs (e.g., password changes by managers)
@@ -711,16 +712,39 @@ def init_db():
         )
 
     # ── Default user accounts ────────────────────────────────────────────────
-    default_users = [
-        ('sudo',        'superuser@6123', 'Developer Superuser', 'admin',         'DEV-001'),
-        ('tester',      'Tester@1234',    'Tester Staff (Demo)', 'tester',        'TEST-999'),
-    ]
-    for username, password, full_name, role, emp_id in default_users:
-        existing = c.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
-        if not existing:
+    import secrets
+    import string
+
+    # Ensure must_change_password column exists on legacy databases
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0")
+    except Exception:
+        pass
+
+    # 1. Seed 'sudo' (admin) with a randomly generated 16-character password if not present
+    existing_sudo = c.execute('SELECT id FROM users WHERE username=?', ('sudo',)).fetchone()
+    if not existing_sudo:
+        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+        raw_sudo_pw = ''.join(secrets.choice(alphabet) for _ in range(16))
+        c.execute(
+            '''INSERT INTO users (username, password_hash, full_name, role, employee_id, must_change_password)
+               VALUES (?, ?, ?, ?, ?, 1)''',
+            ('sudo', generate_password_hash(raw_sudo_pw), 'Developer Superuser', 'admin', 'DEV-001')
+        )
+        print("\n" + "=" * 75)
+        print(" [SECURITY] Initial admin ('sudo') password (save this now, it will not be shown again):")
+        print(f" >>> {raw_sudo_pw} <<<")
+        print("=" * 75 + "\n")
+
+    # 2. Seed 'tester' account if enabled via SEED_TESTER_ACCOUNT env var (default: enabled = 1)
+    seed_tester = os.environ.get('SEED_TESTER_ACCOUNT', '1').strip().lower() not in ('0', 'false', 'no', 'off')
+    if seed_tester:
+        existing_tester = c.execute('SELECT id FROM users WHERE username=?', ('tester',)).fetchone()
+        if not existing_tester:
             c.execute(
-                'INSERT INTO users (username, password_hash, full_name, role, employee_id) VALUES (?,?,?,?,?)',
-                (username, generate_password_hash(password), full_name, role, emp_id)
+                '''INSERT INTO users (username, password_hash, full_name, role, employee_id, must_change_password)
+                   VALUES (?, ?, ?, ?, ?, 1)''',
+                ('tester', generate_password_hash('Tester@1234'), 'Tester Staff (Demo)', 'tester', 'TEST-999')
             )
 
     # ── Sample supplier ──────────────────────────────────────────────────────
@@ -757,7 +781,7 @@ def init_db():
     conn.commit()
     conn.close()
     print(f"[DB] Database initialized at: {DB_PATH}")
-    print("[DB] Default accounts: sudo/superuser@6123 (Developer Superuser)  tester/Tester@1234 (Sandbox)")
+    print("[DB] Initial user accounts configured.")
 
 
 def dict_row(row):

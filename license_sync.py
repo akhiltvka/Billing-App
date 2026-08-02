@@ -64,9 +64,10 @@ def sync_with_cloud_server():
 
     shop_name = settings['outlet_name'] or 'Meat Products Outlet'
     shop_phone = settings['outlet_phone'] or ''
+    machine_id = get_machine_id()
 
     payload = {
-        'machine_id':   get_machine_id(),
+        'machine_id':   machine_id,
         'shop_name':    shop_name,
         'phone':        shop_phone,
         # Auto-healing cloud sync fields
@@ -100,9 +101,9 @@ def sync_with_cloud_server():
                     if cloud_lic_status == 'active' and data.get('expires_at'):
                         # ⚡ Developer approved payment! Auto-activate local database!
                         conn = get_db()
-                        exp_str = data['expires_at'][:10]
-                        act_str = data.get('activated_at', str(date.today()))[:10]
-                        grace_str = data.get('grace_expires_at', '')[:10]
+                        exp_str = str(data['expires_at'])[:10]
+                        act_str = str(data.get('activated_at') or date.today())[:10]
+                        grace_str = str(data.get('grace_expires_at') or '')[:10]
                         
                         if not grace_str:
                             try:
@@ -125,7 +126,8 @@ def sync_with_cloud_server():
                         conn.close()
                         return True, f"Cloud Auto-Activation Verified! Active until {exp_str}."
                     
-                    return False, f"Cloud sync complete. License status: {cloud_lic_status.upper()}"
+                    status_display = str(cloud_lic_status).upper() if cloud_lic_status else "UNKNOWN"
+                    return False, f"Cloud sync complete. License status: {status_display}"
     except Exception as e:
         return False, f"Cloud server connection offline/unreachable: {str(e)}"
 

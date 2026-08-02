@@ -27,8 +27,8 @@ This central server manages outlet auto-activations, machine pings, and payment 
 ---
 
 ## 3. How to Use:
-1. When a customer pays ₹5,000 via UPI, open your Render URL (e.g., `https://mpi-license-server.onrender.com`).
+1. When a customer pays ₹12,000 (or negotiated discounted rate) via UPI, open your Render URL (e.g., `https://mpi-license-server.onrender.com`).
 2. Log in with your `ADMIN_PASSWORD`.
 3. Locate the customer's outlet name / Machine ID in the table.
-4. Click **`⚡ Approve 1 Year (₹5000)`**.
+4. Click **`⚡ Approve 1 Year (₹12,000)`**.
 5. As soon as the customer's desktop app connects online, it will automatically detect your approval and activate for 365 days!

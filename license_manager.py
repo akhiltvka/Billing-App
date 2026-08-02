@@ -32,12 +32,31 @@ def get_machine_id():
         return "DEFAULT-MACHINE-ID-01"
 
 def check_internet_connection():
-    """Verify active internet connectivity required for key activation."""
-    endpoints = [
+    """
+    Verify active internet connectivity required for key activation.
+    Primary check: Pings central license server reachability.
+    Fallback: Checks third-party endpoints if central server is unreachable.
+    """
+    primary_endpoints = []
+    try:
+        from license_sync import get_cloud_server_url
+        cloud_url = get_cloud_server_url()
+        if cloud_url:
+            primary_endpoints = [
+                f"{cloud_url}/health",
+                f"{cloud_url}/api/v1/outlet/ping",
+                cloud_url,
+            ]
+    except Exception:
+        pass
+
+    fallback_endpoints = [
         "http://httpbin.org/ip",
         "https://1.1.1.1",
         "https://www.google.com"
     ]
+
+    endpoints = primary_endpoints + fallback_endpoints
     for url in endpoints:
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'MPI-Billing-App/1.0'})
@@ -56,27 +75,15 @@ def clean_key(key_str):
 
 def verify_12digit_key(raw_key_str):
     """
-    Validate a 12-digit alphanumeric key using HMAC signature & checksum verification.
-    Key format: 12 uppercase chars [A-Z0-9]{12} (e.g. A9K2-M7W3-P4X8).
-    First 8 chars = Payload, Last 4 chars = HMAC Signature Checksum.
+    Format sanity check for 12-digit key (12 uppercase chars [A-Z0-9]{12}).
+    NOTE: This function performs format validation only. The central cloud server
+    (/api/v1/outlet/activate-key) is the sole authority for key validity.
     """
     clean = clean_key(raw_key_str)
     if len(clean) != 12:
         return False, "Activation key must be 12 alphanumeric characters (e.g. A9K2-M7W3-P4X8)"
 
-    payload = clean[:8]
-    checksum = clean[8:]
-
-    expected_sig = hmac.new(
-        LICENSE_SECRET_SALT.encode('utf-8'),
-        payload.encode('utf-8'),
-        hashlib.sha256
-    ).hexdigest()[:4].upper()
-
-    if checksum != expected_sig:
-        return False, "Invalid activation key signature"
-
-    return True, "Key signature valid"
+    return True, "Key format valid"
 
 def format_key(raw_key_str):
     """Format key into XXXX-XXXX-XXXX for readable UI display."""
@@ -98,7 +105,7 @@ def get_license_info():
       - grace_expires_at: string YYYY-MM-DD
       - active_key: string or None
       - machine_id: string
-      - price_inr: 5000
+      - price_inr: 12000
     """
     conn = get_db()
     today_dt = date.today()
@@ -202,83 +209,95 @@ def get_license_info():
             'upi_name': 'MPI Billing Software'
         }
 
-MASTER_DEVELOPER_KEY = "Revathyr@j6123"
+# NOTE: The hardcoded Master Developer Secret Key offline bypass has been removed for security.
+# If a secure per-machine emergency activation path is required for support, a proper signature-based offline mechanism can be implemented upon request.
 
 def activate_subscription(raw_key_str):
     """
-    Redeem a 12-digit activation key online OR Master Developer Secret Key offline.
-    Extends subscription by 365 days + sets 10-day grace period.
+    Redeem a 12-digit activation key online via Central Cloud License Server.
+    Server Contract: POST {cloud_url}/api/v1/outlet/activate-key with { "key": clean_k, "machine_id": machine_id }
+    Returns: { "valid": true/false, "already_used": true/false, "expires_at": "YYYY-MM-DD", "message": "..." }
     """
-    raw_clean = (raw_key_str or '').strip()
-
-    # ── 1. Check Master Developer Secret Key (100% Offline Activation) ───────
-    if raw_clean == MASTER_DEVELOPER_KEY:
-        today_dt = date.today()
-        exp_dt = today_dt + timedelta(days=SUBSCRIPTION_DAYS)
-        grace_exp_dt = exp_dt + timedelta(days=GRACE_PERIOD_DAYS)
-
-        lic_payload = {
-            'key': 'MASTER-DEV-OFFLINE-BYPASS',
-            'activated_at': str(today_dt),
-            'expires_at': str(exp_dt),
-            'grace_expires_at': str(grace_exp_dt),
-            'machine_id': get_machine_id(),
-            'subscription_days': SUBSCRIPTION_DAYS
-        }
-
-        conn = get_db()
-        import json
-        conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('active_license_json', ?)", (json.dumps(lic_payload),))
-        conn.commit()
-        conn.close()
-
-        return True, f"Master Developer Key Accepted! Subscription activated offline for 365 days until {str(exp_dt)}."
-
-    # ── 2. Require Internet Connection for 12-Digit Key Online Verification ──
-    if not check_internet_connection():
-        return False, "Internet connection is required to verify and activate subscription online. Please connect to the internet and try again."
-
-    # 2. Validate 12-digit Key Format & Signature
+    # 1. Format Sanity Check (Length & Allowed Characters)
     valid, msg = verify_12digit_key(raw_key_str)
     if not valid:
         return False, msg
 
     clean_k = clean_key(raw_key_str)
+    machine_id = get_machine_id()
 
-    # 3. Check if key was already redeemed on this DB
-    conn = get_db()
-    row_used = conn.execute("SELECT value FROM shop_settings WHERE key = 'used_keys_json'").fetchone()
-    import json
-    used_keys = []
-    if row_used and row_used['value']:
-        try:
-            used_keys = json.loads(row_used['value'])
-        except Exception:
-            used_keys = []
+    # 2. Check Internet / Server Connectivity
+    if not check_internet_connection():
+        return False, "Internet connection is required to verify and activate subscription online. Please connect to the internet and try again."
 
-    if clean_k in used_keys:
-        conn.close()
-        return False, "This activation key has already been redeemed on this outlet."
+    # 3. Request Verification from Central Cloud License Server
+    try:
+        import json as _json
+        import urllib.request as _req
+        from license_sync import get_cloud_server_url
+        cloud_url = get_cloud_server_url()
+        activate_endpoint = f"{cloud_url}/api/v1/outlet/activate-key"
 
-    # 4. Calculate subscription dates (365 days active + 10 days grace)
-    today_dt = date.today()
-    exp_dt = today_dt + timedelta(days=SUBSCRIPTION_DAYS)
-    grace_exp_dt = exp_dt + timedelta(days=GRACE_PERIOD_DAYS)
+        payload_bytes = _json.dumps({
+            'key': clean_k,
+            'machine_id': machine_id
+        }).encode('utf-8')
 
+        request_obj = _req.Request(
+            activate_endpoint,
+            data=payload_bytes,
+            headers={'Content-Type': 'application/json', 'User-Agent': 'MPI-Billing-App/1.0'},
+            method='POST'
+        )
+
+        with _req.urlopen(request_obj, timeout=8) as resp:
+            resp_data = _json.loads(resp.read().decode('utf-8'))
+    except Exception as e:
+        return False, f"Could not reach cloud activation server: {str(e)}"
+
+    # 4. Handle Server Response Contract
+    # { "valid": true/false, "already_used": true/false, "expires_at": "YYYY-MM-DD", "message": "..." }
+    is_valid = resp_data.get('valid') is True or resp_data.get('status') == 'ok'
+    already_used = resp_data.get('already_used') is True
+    server_msg = resp_data.get('message') or ("Key verified and activated!" if is_valid else "Invalid activation key")
+
+    if not is_valid or already_used:
+        return False, server_msg
+
+    exp_str = str(resp_data.get('expires_at') or (date.today() + timedelta(days=SUBSCRIPTION_DAYS)))[:10]
+    act_str = str(date.today())
+
+    try:
+        exp_dt = datetime.strptime(exp_str, "%Y-%m-%d").date()
+        grace_str = str(exp_dt + timedelta(days=GRACE_PERIOD_DAYS))
+    except Exception:
+        grace_str = exp_str
+
+    # 5. Store Activated License & Update Local Database
     lic_payload = {
         'key': clean_k,
-        'activated_at': str(today_dt),
-        'expires_at': str(exp_dt),
-        'grace_expires_at': str(grace_exp_dt),
-        'machine_id': get_machine_id(),
+        'activated_at': act_str,
+        'expires_at': exp_str,
+        'grace_expires_at': grace_str,
+        'machine_id': machine_id,
         'subscription_days': SUBSCRIPTION_DAYS
     }
 
-    used_keys.append(clean_k)
+    conn = get_db()
+    row_used = conn.execute("SELECT value FROM shop_settings WHERE key = 'used_keys_json'").fetchone()
+    used_keys = []
+    if row_used and row_used['value']:
+        try:
+            used_keys = _json.loads(row_used['value'])
+        except Exception:
+            used_keys = []
 
-    conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('active_license_json', ?)", (json.dumps(lic_payload),))
-    conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('used_keys_json', ?)", (json.dumps(used_keys),))
+    if clean_k not in used_keys:
+        used_keys.append(clean_k)
+
+    conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('active_license_json', ?)", (_json.dumps(lic_payload),))
+    conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('used_keys_json', ?)", (_json.dumps(used_keys),))
     conn.commit()
     conn.close()
 
-    return True, f"Subscription successfully activated! Valid for 365 days until {str(exp_dt)}."
+    return True, server_msg

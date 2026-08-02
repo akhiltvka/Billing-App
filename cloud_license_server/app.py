@@ -25,16 +25,37 @@ def get_db():
     if db_url:
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
+        # Ensure sslmode=require for Supabase cloud PostgreSQL connections
+        if "sslmode=" not in db_url.lower():
+            db_url += ("&sslmode=require" if "?" in db_url else "?sslmode=require")
+
+        # 1. Try psycopg2
         try:
             import psycopg2
             import psycopg2.extras
             conn = psycopg2.connect(db_url, cursor_factory=psycopg2.extras.RealDictCursor)
             return conn, True
-        except Exception as e:
-            import traceback
-            print(f"[DB Notice] PostgreSQL connection attempt error: {e}")
-            traceback.print_exc()
-            print("Falling back to SQLite central_licenses.db.")
+        except Exception as e1:
+            # 2. Try pure-Python pg8000 (fixes Python 3.14 C-extension _PyInterpreterState_Get error)
+            try:
+                import urllib.parse
+                import pg8000.dbapi
+                parsed = urllib.parse.urlparse(db_url)
+                db_name = (parsed.path or '/postgres').lstrip('/')
+                conn = pg8000.dbapi.connect(
+                    user=urllib.parse.unquote(parsed.username or 'postgres'),
+                    password=urllib.parse.unquote(parsed.password or ''),
+                    host=parsed.hostname or 'localhost',
+                    port=parsed.port or 5432,
+                    database=db_name,
+                    ssl_context=True
+                )
+                return conn, True
+            except Exception as e2:
+                import traceback
+                print(f"[DB Notice] PostgreSQL connection error (psycopg2 & pg8000): {e1} | {e2}")
+                traceback.print_exc()
+                print("Falling back to SQLite central_licenses.db.")
 
     db_file = os.path.join(os.path.dirname(__file__), "central_licenses.db")
     conn = sqlite3.connect(db_file)
@@ -93,6 +114,12 @@ def init_db():
                     last_login   VARCHAR(64),
                     updated_at   TIMESTAMP DEFAULT NOW(),
                     UNIQUE(machine_id, username)
+                );
+                CREATE TABLE IF NOT EXISTS activation_keys (
+                    id           SERIAL PRIMARY KEY,
+                    key          VARCHAR(32) UNIQUE NOT NULL,
+                    machine_id   VARCHAR(64),
+                    redeemed_at  TIMESTAMP DEFAULT NOW()
                 );
             """)
             conn.commit()
@@ -169,6 +196,12 @@ def init_db():
                     last_login   TEXT,
                     updated_at   TEXT DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE(machine_id, username)
+                );
+                CREATE TABLE IF NOT EXISTS activation_keys (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    key          TEXT UNIQUE NOT NULL,
+                    machine_id   TEXT,
+                    redeemed_at  TEXT DEFAULT CURRENT_TIMESTAMP
                 );
             """)
             conn.commit()
@@ -495,13 +528,137 @@ def notify_payment():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+# ─── 12-Digit Activation Key Verification ──────────────────────────────────
+LICENSE_SECRET_SALT = "MPI_MEATSHOP_SUB_KEY_SALT_2025_SECRET_#99!"
+
+@app.route('/api/v1/outlet/activate-key', methods=['POST'])
+def activate_key():
+    """
+    Online key verification endpoint called by client desktop app.
+    Payload: { "key": "XXXX-XXXX-XXXX", "machine_id": "16-CHAR-ID" }
+    Contract: { "valid": true/false, "already_used": true/false, "expires_at": "YYYY-MM-DD", "message": "..." }
+    """
+    try:
+        init_db()
+        d = request.get_json() or {}
+        raw_key = (d.get('key') or '').strip().upper()
+        machine_id = (d.get('machine_id') or '').strip().upper()
+
+        clean_k = ''.join(c for c in raw_key if c.isalnum())
+        if len(clean_k) != 12:
+            return jsonify({
+                'status': 'error',
+                'valid': False,
+                'already_used': False,
+                'message': 'Activation key must be 12 alphanumeric characters.'
+            }), 400
+
+        if not machine_id:
+            return jsonify({
+                'status': 'error',
+                'valid': False,
+                'already_used': False,
+                'message': 'Machine ID is required for key activation.'
+            }), 400
+
+        # Cryptographic Signature Verification
+        payload = clean_k[:8]
+        checksum = clean_k[8:]
+        expected_sig = hmac.new(
+            LICENSE_SECRET_SALT.encode('utf-8'),
+            payload.encode('utf-8'),
+            hashlib.sha256
+        ).hexdigest()[:4].upper()
+
+        if checksum != expected_sig:
+            return jsonify({
+                'status': 'error',
+                'valid': False,
+                'already_used': False,
+                'message': 'Invalid activation key signature. Check key and try again.'
+            }), 200
+
+        conn, is_pg = get_db()
+
+        # Check if key was already redeemed
+        if is_pg:
+            cur = conn.cursor()
+            cur.execute("SELECT machine_id FROM activation_keys WHERE key = %s", (clean_k,))
+            key_row = cur.fetchone()
+        else:
+            key_row = conn.execute("SELECT machine_id FROM activation_keys WHERE key = ?", (clean_k,)).fetchone()
+
+        if key_row:
+            existing_mid = key_row['machine_id'] if is_pg else key_row[0]
+            if existing_mid and existing_mid != machine_id:
+                conn.close()
+                return jsonify({
+                    'status': 'error',
+                    'valid': False,
+                    'already_used': True,
+                    'message': 'This activation key has already been redeemed on a different computer.'
+                }), 200
+
+        today_dt = date.today()
+        exp_dt = today_dt + timedelta(days=365)
+        grace_exp_dt = exp_dt + timedelta(days=10)
+
+        # Record activation key binding & update outlet status
+        if is_pg:
+            cur.execute("""
+                INSERT INTO activation_keys (key, machine_id, redeemed_at)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (key) DO UPDATE SET machine_id = EXCLUDED.machine_id
+            """, (clean_k, machine_id, str(today_dt)))
+
+            cur.execute("""
+                INSERT INTO outlets (machine_id, status, payment_status, activated_at, expires_at, grace_expires_at)
+                VALUES (%s, 'active', 'VERIFIED_KEY', %s, %s, %s)
+                ON CONFLICT (machine_id) DO UPDATE SET
+                    status = 'active', payment_status = 'VERIFIED_KEY',
+                    activated_at = EXCLUDED.activated_at, expires_at = EXCLUDED.expires_at, grace_expires_at = EXCLUDED.grace_expires_at
+            """, (machine_id, str(today_dt), str(exp_dt), str(grace_exp_dt)))
+        else:
+            conn.execute("""
+                INSERT INTO activation_keys (key, machine_id, redeemed_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET machine_id = excluded.machine_id
+            """, (clean_k, machine_id, str(today_dt)))
+
+            conn.execute("""
+                INSERT INTO outlets (machine_id, status, payment_status, activated_at, expires_at, grace_expires_at)
+                VALUES (?, 'active', 'VERIFIED_KEY', ?, ?, ?)
+                ON CONFLICT(machine_id) DO UPDATE SET
+                    status = 'active', payment_status = 'VERIFIED_KEY',
+                    activated_at = excluded.activated_at, expires_at = excluded.expires_at, grace_expires_at = excluded.grace_expires_at
+            """, (machine_id, str(today_dt), str(exp_dt), str(grace_exp_dt)))
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({
+            'status': 'ok',
+            'valid': True,
+            'already_used': False,
+            'expires_at': str(exp_dt),
+            'message': f'Activation successful! Subscription active for 365 days until {exp_dt}.'
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'valid': False,
+            'already_used': False,
+            'message': f'Server error verifying key: {str(e)}'
+        }), 500
+
 # ─── Automated Webhook & Auto-Activation ────────────────────────────────────
 
 @app.route('/api/v1/webhook/payment', methods=['POST'])
 def webhook_payment():
     """
     Automated Webhook endpoint for Payment Gateways (Razorpay/Cashfree/Instamojo).
-    Automatically activates subscription for 365 days upon successful ₹5,000 UPI payment.
+    Automatically activates subscription for 365 days upon successful ₹12,000 UPI payment.
     """
     try:
         init_db()
