@@ -1286,8 +1286,8 @@ def create_product():
         pid = c.lastrowid
         role = session.get('user_role')
         username = session.get('username')
-        st_status = 'approved' if role in ('admin', 'manager') else 'pending_verification'
-        st_approver = username if role in ('admin', 'manager') else None
+        st_status = 'approved' if role in ('admin', 'md', 'manager') else 'pending_verification'
+        st_approver = username if role in ('admin', 'md', 'manager') else None
 
         if d.get('current_stock', 0) > 0:
             update_stock(conn, pid, d['current_stock'], 'in', d.get('purchase_price', 0),
@@ -2905,8 +2905,9 @@ def create_bill():
             amount = round(item_taxable + cgst_amt + sgst_amt + igst_amt, 2)
 
         item_cost_price = None
+        prod = None
         if it.get('product_id'):
-            prod = conn.execute('SELECT conversion_factor, purchase_price FROM products WHERE id=?', (it['product_id'],)).fetchone()
+            prod = conn.execute('SELECT name, conversion_factor, purchase_price FROM products WHERE id=?', (it['product_id'],)).fetchone()
             conv = float(prod['conversion_factor'] or 1.0) if prod else 1.0
             qty_purchase = round(qty / conv, 4)
             unit_cost_purchase = update_stock(conn, it['product_id'], -qty_purchase, 'out', price, bill_no)
@@ -2915,12 +2916,14 @@ def create_bill():
             else:
                 item_cost_price = round(float(prod['purchase_price'] or 0) * conv, 4) if prod else None
 
+        prod_name = (it.get('product_name') or (prod['name'] if prod else 'Item')).strip()
+
         conn.execute(
             '''INSERT INTO bill_items
                (bill_id, product_id, product_name, hsn_code, unit, quantity,
                 unit_price, gst_rate, discount, taxable_amt, cgst_amt, sgst_amt, igst_amt, amount, cost_price)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (bill_id, it.get('product_id'), it['product_name'], it.get('hsn_code', ''),
+            (bill_id, it.get('product_id'), prod_name, it.get('hsn_code', ''),
              it.get('unit', 'kg'), qty, price, gst_rate, discount_pct,
              item_taxable, cgst_amt, sgst_amt, igst_amt, amount, item_cost_price)
         )

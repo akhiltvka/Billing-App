@@ -92,7 +92,7 @@
           <label class="form-label required">Username</label>
           <div class="login-input-wrap">
             <span class="login-input-icon">👤</span>
-            <input class="form-control" id="login-username" type="text"
+            <input class="form-control" id="login-username" type="text" value="akhil"
               placeholder="Enter your username" autocomplete="username"
               onkeydown="if(event.key==='Enter') document.getElementById('login-password').focus()">
           </div>
@@ -101,7 +101,7 @@
           <label class="form-label required">Password</label>
           <div class="login-input-wrap" style="position:relative">
             <span class="login-input-icon">🔒</span>
-            <input class="form-control" id="login-password" type="password"
+            <input class="form-control" id="login-password" type="password" value="Admin@1234"
               placeholder="Enter your password" autocomplete="current-password"
               onkeydown="if(event.key==='Enter') Auth.login()">
             <button onclick="Auth.togglePwd()" style="position:absolute;right:14px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px" id="pwd-toggle">👁️</button>
