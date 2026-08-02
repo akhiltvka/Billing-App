@@ -54,8 +54,8 @@ def sync_with_cloud_server():
 
     # Shop settings
     keys = [
-        'outlet_code', 'md_group_name', 'outlet_name', 
-        'outlet_phone', 'shop_address', 'outlet_city', 
+        'outlet_code', 'md_group_name', 'outlet_name', 'shop_name',
+        'outlet_phone', 'shop_phone', 'shop_address', 'outlet_city', 
         'outlet_state', 'outlet_pincode'
     ]
     settings = {}
@@ -64,8 +64,8 @@ def sync_with_cloud_server():
         settings[key] = row['value'].strip() if row and row['value'] else None
     conn.close()
 
-    shop_name = settings['outlet_name'] or 'Meat Products Outlet'
-    shop_phone = settings['outlet_phone'] or ''
+    shop_name = settings.get('shop_name') or settings.get('outlet_name') or 'Meat Products Outlet'
+    shop_phone = settings.get('outlet_phone') or settings.get('shop_phone') or ''
     machine_id = get_machine_id()
 
     payload = {
@@ -205,7 +205,7 @@ def re_register_with_cloud():
         conn.close()
         return False, "No MD account found — re-registration skipped."
 
-    keys = ['outlet_code', 'md_group_name', 'outlet_name', 'outlet_phone',
+    keys = ['outlet_code', 'md_group_name', 'outlet_name', 'shop_name', 'outlet_phone', 'shop_phone',
             'shop_address', 'outlet_city', 'outlet_state', 'outlet_pincode']
     settings = {}
     for key in keys:
@@ -213,16 +213,16 @@ def re_register_with_cloud():
         settings[key] = row['value'].strip() if row and row['value'] else ''
     conn.close()
 
-    if not settings.get('outlet_name'):
-        return False, "No outlet name found — re-registration skipped."
+    outlet_name = settings.get('shop_name') or settings.get('outlet_name') or 'Meat Products Outlet'
+    outlet_phone = settings.get('outlet_phone') or settings.get('shop_phone') or ''
 
     payload = {
         'machine_id':   machine_id,
         'md_username':  md_row['username'],
         'md_fullname':  md_row['full_name'],
-        'group_name':   settings.get('md_group_name', ''),
-        'outlet_name':  settings.get('outlet_name', ''),
-        'outlet_phone': settings.get('outlet_phone', ''),
+        'group_name':   settings.get('md_group_name', '') or outlet_name,
+        'outlet_name':  outlet_name,
+        'outlet_phone': outlet_phone,
         'address':      settings.get('shop_address', ''),
         'city':         settings.get('outlet_city', ''),
         'state':        settings.get('outlet_state', ''),
