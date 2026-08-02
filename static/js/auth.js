@@ -193,8 +193,14 @@ const Auth = {
           outlet_name, outlet_phone, addr1, addr2, city, state, pincode
         })
       });
-      const json = await res.json();
-      if (json.status === 'ok') {
+      let json = {};
+      try {
+        json = await res.json();
+      } catch(_) {
+        json = { status: 'error', message: `Server error (${res.status}).` };
+      }
+
+      if (res.ok && json.status === 'ok') {
         App.closeModal();
         // Refresh settings so login screen shows outlet name
         try {
@@ -215,7 +221,7 @@ const Auth = {
         btn.disabled = false; btn.textContent = '👑 Register as Managing Director';
       }
     } catch (e) {
-      showErr('Network error. Please try again.');
+      showErr(e.message || 'Network error. Please try again.');
       btn.disabled = false; btn.textContent = '👑 Register as Managing Director';
     }
   },

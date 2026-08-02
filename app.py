@@ -670,8 +670,8 @@ def register_md():
     existing = conn.execute('SELECT id FROM users WHERE username=? COLLATE NOCASE', (username,)).fetchone()
     if existing:
         conn.execute(
-            'UPDATE users SET password_hash=?, full_name=?, role="md", active=1, outlet_code=?, machine_id=? WHERE id=?',
-            (generate_password_hash(password), full_name, outlet_code, machine_id, existing['id'])
+            'UPDATE users SET password_hash=?, full_name=?, role="md", active=1 WHERE id=?',
+            (generate_password_hash(password), full_name, existing['id'])
         )
         conn.commit(); conn.close()
         session['user_id']   = existing['id']
@@ -684,8 +684,8 @@ def register_md():
         return ok({'outlet_code': outlet_code, 'machine_id': machine_id}, message=msg)
     else:
         c = conn.execute(
-            'INSERT INTO users (username, password_hash, full_name, role, outlet_code, machine_id) VALUES (?,?,?,"md",?,?)',
-            (username, generate_password_hash(password), full_name, outlet_code, machine_id)
+            'INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,"md")',
+            (username, generate_password_hash(password), full_name)
         )
         uid = c.lastrowid
         conn.commit(); conn.close()
