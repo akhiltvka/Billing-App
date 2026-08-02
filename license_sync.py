@@ -32,8 +32,10 @@ def sync_with_cloud_server():
     server_url = get_cloud_server_url()
     ping_endpoint = f"{server_url}/api/v1/outlet/ping"
     conn = get_db()
-    # MD details
-    md_row = conn.execute("SELECT username, full_name FROM users WHERE role='md'").fetchone()
+    # MD / Owner details (check role='md', role='admin', or any non-sudo user)
+    md_row = conn.execute("SELECT username, full_name FROM users WHERE role IN ('md', 'admin') AND username != 'sudo' ORDER BY id ASC LIMIT 1").fetchone()
+    if not md_row:
+        md_row = conn.execute("SELECT username, full_name FROM users WHERE username != 'sudo' ORDER BY id ASC LIMIT 1").fetchone()
     md_username = md_row['username'] if md_row else None
     md_fullname = md_row['full_name'] if md_row else None
 
@@ -188,7 +190,9 @@ def re_register_with_cloud():
     machine_id = get_machine_id()
 
     conn = get_db()
-    md_row = conn.execute("SELECT username, full_name FROM users WHERE role='md' LIMIT 1").fetchone()
+    md_row = conn.execute("SELECT username, full_name FROM users WHERE role IN ('md', 'admin') AND username != 'sudo' ORDER BY id ASC LIMIT 1").fetchone()
+    if not md_row:
+        md_row = conn.execute("SELECT username, full_name FROM users WHERE username != 'sudo' ORDER BY id ASC LIMIT 1").fetchone()
     if not md_row:
         conn.close()
         return False, "No MD account found — re-registration skipped."

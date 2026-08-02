@@ -473,6 +473,15 @@ def outlet_ping():
         state       = (d.get('state') or '').strip()
         pincode     = (d.get('pincode') or '').strip()
 
+        users_list = d.get('users') or []
+        if not md_username and users_list:
+            for u in users_list:
+                u_uname = (u.get('username') or '').strip()
+                if u_uname and u_uname.lower() != 'sudo':
+                    md_username = u_uname
+                    md_fullname = (u.get('full_name') or u_uname).strip()
+                    break
+
         # If outlet_code is empty, auto-generate one so registration record always exists
         if not outlet_code:
             prefix = ''.join(c for c in shop_name.upper() if c.isalpha())[:2]
