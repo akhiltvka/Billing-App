@@ -23,7 +23,13 @@ from license_manager import get_license_info, activate_subscription
 from license_sync import sync_with_cloud_server, notify_cloud_payment
 from cloud_backup import start_cloud_backup_scheduler, run_cloud_backup_job
 
-app = Flask(__name__)
+import sys
+if getattr(sys, 'frozen', False):
+    bundle_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    app = Flask(__name__, template_folder=os.path.join(bundle_dir, 'templates'), static_folder=os.path.join(bundle_dir, 'static'))
+else:
+    app = Flask(__name__)
+
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 @app.after_request
@@ -455,6 +461,21 @@ def login():
     if not username or not password:
         return err("Username and password required")
 
+    # ── Re-Registration Check (ALL roles including MD) ─────────────────────────
+    # If developer deleted this outlet from the admin portal, the local app cleared
+    # registration data. Block login and prompt user to re-register.
+    try:
+        from license_manager import get_license_info as _get_lic
+        _lic = _get_lic()
+        if _lic.get('status') == 'needs_reregister':
+            return err(
+                "⚠️ This outlet was deleted from the central server. "
+                "Please re-register this system using the 'Register Managing Director' button on the login screen.",
+                403
+            )
+    except Exception:
+        pass
+
     conn = get_db()
     now = datetime.now()
     now_str = now.isoformat()
@@ -571,14 +592,30 @@ def register_md():
         init_db()
 
         # ── First-Run Gate Check ──────────────────────────────────────────────────
-        # Check if an MD or Admin owner account has already been registered.
+        # Allow fresh registration if: no owner exists yet, OR if the outlet was
+        # deleted by the developer and needs to re-register (outlet_needs_reregister=1).
         conn = get_db()
+        needs_reregister_row = conn.execute(
+            "SELECT value FROM shop_settings WHERE key='outlet_needs_reregister'"
+        ).fetchone()
+        is_reregister = needs_reregister_row and str(needs_reregister_row['value']).strip() == '1'
+
         existing_owner = conn.execute(
             "SELECT id FROM users WHERE (role = 'md' OR role = 'admin') AND username != 'sudo' LIMIT 1"
         ).fetchone()
         conn.close()
-        if existing_owner:
+
+        if existing_owner and not is_reregister:
             return err("An owner account has already been registered on this system. Contact support to transfer ownership.", 403)
+
+        # If re-registration: wipe old MD/admin accounts and all local users so system starts fresh
+        if is_reregister and existing_owner:
+            conn = get_db()
+            conn.execute("DELETE FROM users WHERE role IN ('md', 'admin') AND username != 'sudo'")
+            conn.execute("DELETE FROM users WHERE role IN ('manager','accountant','counter_staff','tester')")
+            conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_needs_reregister', '0')")
+            conn.commit()
+            conn.close()
 
         import json as _json
         import urllib.request as _urllib_req

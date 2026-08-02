@@ -755,6 +755,15 @@ const App = {
           </div>
         </div>`;
       bar.style.display = 'block';
+    } else if (info.status === 'needs_reregister') {
+      bar.innerHTML = `
+        <div style="background:linear-gradient(90deg, #4C0519, #1a0008);border-bottom:2px solid #FB7185;color:#FFE4E6;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;">
+          <div>⚠️ <strong style="color:#FB7185">RE-REGISTRATION REQUIRED:</strong> This outlet was deleted from the central server. Please re-register using the MD registration form.</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button onclick="Auth.showMDRegisterModal()" style="background:#9F1239;color:#fff;border:none;border-radius:4px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">👑 Re-Register Now</button>
+          </div>
+        </div>`;
+      bar.style.display = 'block';
     } else if (info.status === 'active' && info.days_left <= 30) {
       bar.innerHTML = `
         <div style="background:linear-gradient(90deg, #064E3B, #022C22);border-bottom:1px solid #059669;color:#ECFDF5;padding:8px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;cursor:pointer" onclick="App.showActivationModal()">
@@ -997,12 +1006,22 @@ const App = {
   // ── System ID Badge Injection ───────────────────────────────────────────
   injectSystemIdBadge(info) {
     const badge = document.getElementById('win-sys-id-text');
-    if (!badge) return;
-    const oc  = info.outlet_code || '——';
-    const mid = (info.machine_id_short || info.machine_id || '????????').toUpperCase().slice(0,8);
-    badge.textContent = `${oc} · ${mid}`;
+    if (badge) {
+      const oc  = info.outlet_code || '——';
+      const mid = (info.machine_id_short || info.machine_id || '????????').toUpperCase().slice(0,8);
+      badge.textContent = `${oc} · ${mid}`;
+    }
+
+    // Populate the login-screen Hardware ID card (always visible)
+    const hwEl = document.getElementById('login-hwid-value');
+    if (hwEl && info.machine_id) {
+      hwEl.textContent = info.machine_id.toUpperCase();
+      hwEl.title = info.machine_id.toUpperCase();
+    }
 
     // Also add a subtle system ID indicator on the login screen (below brand panel)
+    const oc  = info.outlet_code || '——';
+    const mid = (info.machine_id_short || info.machine_id || '????????').toUpperCase().slice(0,8);
     let loginSys = document.getElementById('login-sys-id-badge');
     if (!loginSys) {
       loginSys = document.createElement('div');
@@ -1024,7 +1043,50 @@ const App = {
 document.addEventListener('DOMContentLoaded', () => {
   App.init();
   LoginAnimations.start();
+
+  // Auto-load Hardware ID into the login-screen card
+  (async () => {
+    try {
+      const r = await fetch('/api/license/system-info');
+      const j = await r.json();
+      const mid = (j.data?.machine_id || j.machine_id || '').toUpperCase();
+      const hwEl = document.getElementById('login-hwid-value');
+      if (hwEl && mid) {
+        hwEl.textContent = mid;
+        hwEl.title = mid;
+      }
+    } catch(_) {}
+  })();
 });
+
+// ── Global: Copy Hardware ID to clipboard ─────────────────────────────────────
+function _copyHwId() {
+  const val = (document.getElementById('login-hwid-value')?.textContent || '').trim();
+  if (!val || val === 'Loading\u2026') return;
+  navigator.clipboard.writeText(val).then(() => {
+    const btn = document.getElementById('hwid-copy-btn');
+    if (btn) {
+      const orig = btn.textContent;
+      btn.textContent = '\u2705 Copied!';
+      btn.style.background = 'rgba(16,185,129,0.3)';
+      btn.style.color = '#6EE7B7';
+      setTimeout(() => {
+        btn.textContent = orig;
+        btn.style.background = 'rgba(99,102,241,0.3)';
+        btn.style.color = '#A5B4FC';
+      }, 2200);
+    }
+  }).catch(() => {
+    // Fallback for older browsers: select text manually
+    const el = document.getElementById('login-hwid-value');
+    if (el) {
+      const range = document.createRange();
+      range.selectNode(el);
+      window.getSelection()?.removeAllRanges();
+      window.getSelection()?.addRange(range);
+    }
+  });
+}
 
 // ── Login Screen Animations ───────────────────────────────────────────────────
 const LoginAnimations = {

@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Invoice</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      color: #1a1a1a;
+      background: #f0f0f0;
+    }
+
+    .page {
+      width: 80mm; /* Standard thermal receipt width */
+      margin: 0 auto;
+      background: #fff;
+      padding: 16px 14px;
+    }
+
+    @media print {
+      body { background: white; }
+      .page { width: 100%; margin: 0; padding: 12px; box-shadow: none; }
+      .no-print { display: none !important; }
+      @page { margin: 0; size: 80mm auto; }
+    }
+
+    /* A4 mode */
+    body.a4-mode .page {
+      width: 210mm;
+      min-height: 297mm;
+      padding: 20mm;
+      font-size: 14px;
+    }
+
+    /* Header */
+    .shop-header { text-align: center; border-bottom: 2px solid #1a1a1a; padding-bottom: 10px; margin-bottom: 10px; }
+    .shop-name { font-size: 18px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #047857; }
+    .shop-tagline { font-size: 11px; color: #555; font-style: italic; margin-bottom: 4px; }
+    .shop-info { font-size: 11px; color: #333; line-height: 1.6; }
+    .shop-gstin { font-size: 10px; font-weight: 700; color: #1a1a1a; margin-top: 4px; }
+    .shop-fssai { font-size: 10px; color: #555; }
+
+    /* Invoice title */
+    .invoice-title {
+      text-align: center;
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      border: 1px solid #1a1a1a;
+      padding: 4px;
+      margin: 10px 0;
+    }
+
+    /* Bill info */
+    .bill-meta { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; }
+    .bill-meta-block { line-height: 1.8; }
+    .bill-meta-label { color: #555; font-size: 10px; text-transform: uppercase; }
+    .bill-meta-value { font-weight: 600; }
+
+    /* Customer section */
+    .section-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: #555; margin-bottom: 4px; border-bottom: 1px dashed #ccc; padding-bottom: 2px; }
+    .customer-name { font-weight: 700; font-size: 14px; }
+    .customer-info { font-size: 11px; color: #333; margin-bottom: 8px; }
+
+    /* Items table */
+    .items-table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 12px; }
+    .items-table th {
+      background: #1a1a1a;
+      color: #fff;
+      padding: 5px 6px;
+      text-align: left;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .items-table td { padding: 6px 6px; border-bottom: 1px dashed #ddd; }
+    .items-table tr:last-child td { border-bottom: none; }
+    .items-table .text-right { text-align: right; }
+    .items-table .item-name { font-weight: 600; }
+    .items-table .item-detail { font-size: 10px; color: #666; }
+
+    /* Totals */
+    .totals-section { margin-top: 10px; border-top: 2px solid #1a1a1a; padding-top: 8px; }
+    .total-row { display: flex; justify-content: space-between; padding: 3px 0; font-size: 12px; }
+    .total-row.final { font-size: 16px; font-weight: 800; color: #047857; border-top: 2px solid #1a1a1a; margin-top: 6px; padding-top: 6px; }
+    .total-label { color: #333; }
+    .total-value { font-weight: 600; }
+
+    /* GST breakdown */
+    .gst-table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 11px; border: 1px solid #ccc; }
+    .gst-table th { background: #f5f5f5; padding: 4px 6px; text-align: center; font-size: 10px; font-weight: 700; border: 1px solid #ccc; }
+    .gst-table td { padding: 4px 6px; text-align: center; border: 1px solid #ccc; }
+
+    /* Payment */
+    .payment-section { margin: 10px 0; padding: 8px; background: #f9f9f9; border-radius: 4px; }
+    .payment-mode { font-weight: 700; font-size: 13px; text-transform: uppercase; }
+    .amount-paid-row { display: flex; justify-content: space-between; font-size: 12px; }
+    .change-due { font-weight: 700; color: #10B981; }
+
+    /* Footer */
+    .invoice-footer { text-align: center; margin-top: 16px; padding-top: 10px; border-top: 1px dashed #ccc; font-size: 11px; color: #555; line-height: 1.8; }
+    .thank-you { font-size: 14px; font-weight: 700; color: #047857; margin-bottom: 4px; }
+
+    /* Amount in words */
+    .amount-words { font-style: italic; font-size: 11px; color: #555; margin: 6px 0; }
+
+    /* Print button */
+    .no-print { position: fixed; top: 20px; right: 20px; display: flex; gap: 10px; z-index: 999; }
+    .print-btn {
+      padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer;
+      font-family: Inter, sans-serif; font-weight: 600; font-size: 13px;
+    }
+    .print-btn.primary { background: #047857; color: white; }
+    .print-btn.secondary { background: #fff; color: #333; border: 1px solid #ccc; }
+  </style>
+</head>
+<body>
+
+<div class="no-print">
+  <button class="print-btn secondary" onclick="toggleA4()">Toggle A4 / Receipt</button>
+  <button class="print-btn primary" onclick="window.print()">🖨️ Print</button>
+  <button class="print-btn secondary" onclick="window.close()">✕ Close</button>
+</div>
+
+<div class="page" id="invoice-page">
+  <div id="invoice-content">
+    <div style="text-align:center;padding:40px;color:#555">Loading invoice…</div>
+  </div>
+</div>
+
+<script>
+  const billId = parseInt(window.location.pathname.split('/').pop());
+  let billData = null;
+
+  function toggleA4() {
+    document.body.classList.toggle('a4-mode');
+  }
+
+  function numberToWords(num) {
+    if (num === 0) return 'Zero';
+    const ones = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine',
+      'Ten','Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen'];
+    const tens = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety'];
+    function convert(n) {
+      if (n < 20) return ones[n];
+      if (n < 100) return tens[Math.floor(n/10)] + (n%10 ? ' '+ones[n%10] : '');
+      if (n < 1000) return ones[Math.floor(n/100)] + ' Hundred' + (n%100 ? ' and '+convert(n%100) : '');
+      if (n < 100000) return convert(Math.floor(n/1000)) + ' Thousand' + (n%1000 ? ' '+convert(n%1000) : '');
+      if (n < 10000000) return convert(Math.floor(n/100000)) + ' Lakh' + (n%100000 ? ' '+convert(n%100000) : '');
+      return convert(Math.floor(n/10000000)) + ' Crore' + (n%10000000 ? ' '+convert(n%10000000) : '');
+    }
+    const intPart = Math.floor(num);
+    const decPart = Math.round((num - intPart) * 100);
+    let result = convert(intPart) + ' Rupees';
+    if (decPart > 0) result += ' and ' + convert(decPart) + ' Paise';
+    return result + ' Only';
+  }
+
+  function fmt(n, d=2) { return parseFloat(n||0).toFixed(d); }
+  function fmtDate(dt) {
+    if (!dt) return '';
+    const d = new Date(dt);
+    return d.toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'});
+  }
+  function fmtTime(dt) {
+    if (!dt) return '';
+    return new Date(dt).toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
+  }
+
+  async function loadInvoice() {
+    try {
+      const res = await fetch('/api/bills/' + billId);
+      const json = await res.json();
+      if (json.status === 'error') throw new Error(json.message);
+      billData = json.data;
+      renderInvoice(billData);
+      setTimeout(() => {
+        if (billData.settings && billData.settings.print_after_bill === 'true') window.print();
+      }, 500);
+    } catch(e) {
+      document.getElementById('invoice-content').innerHTML = '<div style="text-align:center;padding:40px;color:red">Error: ' + e.message + '</div>';
+    }
+  }
+
+  function renderInvoice(data) {
+    const s = data.settings || {};
+    const isGstGlobal = s.gst_enabled !== 'false' && s.gst_enabled !== false;
+    const shop = {
+      name:    s.shop_name    || 'Meat Products of India',
+      tagline: s.shop_tagline || 'Fresh. Pure. Delicious.',
+      address: s.shop_address || '',
+      phone:   s.shop_phone   || '',
+      email:   s.shop_email   || '',
+      gstin:   isGstGlobal ? (s.shop_gstin || '') : '',
+      fssai:   s.shop_fssai   || '',
+      logo:    s.shop_logo    || '',
+    };
+    const items = data.items || [];
+
+    // Group GST rates for breakdown
+    const gstGroups = {};
+    if (isGstGlobal) {
+      items.forEach(i => {
+        const rate = i.gst_rate;
+        if (rate > 0) {
+          if (!gstGroups[rate]) gstGroups[rate] = { taxable: 0, cgst: 0, sgst: 0, igst: 0 };
+          gstGroups[rate].taxable += i.taxable_amt || 0;
+          gstGroups[rate].cgst += i.cgst_amt || 0;
+          gstGroups[rate].sgst += i.sgst_amt || 0;
+          gstGroups[rate].igst += i.igst_amt || 0;
+        }
+      });
+    }
+    const hasGST = isGstGlobal && Object.keys(gstGroups).length > 0;
+    const isInterstate = data.is_interstate == 1 || data.is_interstate === true;
+
+    const payIcon = {cash:'Cash (₹)', upi:'UPI / Online', card:'Credit/Debit Card'}[data.payment_mode] || data.payment_mode;
+
+    document.getElementById('invoice-content').innerHTML = `
+      <!-- Shop Header -->
+      <div class="shop-header">
+        ${shop.logo ? `<img src="${shop.logo}" alt="Logo" style="max-height:48px;max-width:90%;object-fit:contain;margin:0 auto 6px auto;display:block;border-radius:4px;">` : ''}
+        <div class="shop-name">${shop.name}</div>
+        <div class="shop-tagline">${shop.tagline}</div>
+        <div class="shop-info">
+          ${shop.address}<br>
+          📞 ${shop.phone}${shop.email ? ' | ✉ ' + shop.email : ''}
+        </div>
+        ${shop.gstin ? `<div class="shop-gstin">GSTIN: ${shop.gstin}</div>` : ''}
+        ${shop.fssai ? `<div class="shop-fssai">FSSAI: ${shop.fssai}</div>` : ''}
+      </div>
+
+      <div class="invoice-title">${isGstGlobal ? 'Tax Invoice' : 'Cash Memo / Sale Bill'}</div>
+
+      <!-- Bill Meta -->
+      <div class="bill-meta">
+        <div class="bill-meta-block">
+          <div class="bill-meta-label">Bill No</div>
+          <div class="bill-meta-value">${data.bill_no}</div>
+          <div class="bill-meta-label" style="margin-top:4px">Date</div>
+          <div class="bill-meta-value">${fmtDate(data.date)}</div>
+        </div>
+        <div class="bill-meta-block" style="text-align:right">
+          <div class="bill-meta-label">Time</div>
+          <div class="bill-meta-value">${fmtTime(data.date)}</div>
+          <div class="bill-meta-label" style="margin-top:4px">Payment</div>
+          <div class="bill-meta-value">${payIcon}</div>
+        </div>
+      </div>
+
+      <!-- Customer -->
+      <div class="section-label">Bill To</div>
+      <div class="customer-name">${data.customer_name || 'Walk-in Customer'}</div>
+      <div class="customer-info">
+        ${data.customer_phone ? '📞 ' + data.customer_phone : ''}
+        ${isGstGlobal && data.customer_gstin ? '<br>GSTIN: ' + data.customer_gstin : ''}
+        ${data.place_of_supply ? '<br>State Code / POS: ' + data.place_of_supply : ''}
+      </div>
+
+      <!-- Items Table -->
+      <table class="items-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Item Description</th>
+            ${isGstGlobal ? '<th>HSN</th>' : ''}
+            <th style="text-align:right">Qty</th>
+            <th style="text-align:right">Rate</th>
+            ${hasGST ? '<th style="text-align:right">GST%</th>' : ''}
+            <th style="text-align:right">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map((item, i) => `
+            <tr>
+              <td>${i+1}</td>
+              <td>
+                <div class="item-name">${item.product_name}</div>
+                <div class="item-detail">${item.unit || ''}</div>
+              </td>
+              ${isGstGlobal ? `<td style="font-size:10px">${item.hsn_code || '—'}</td>` : ''}
+              <td class="text-right">${fmt(item.quantity, 3)}</td>
+              <td class="text-right">₹${fmt(item.unit_price)}</td>
+              ${hasGST ? `<td class="text-right">${item.gst_rate}%</td>` : ''}
+              <td class="text-right font-weight:700">₹${fmt(item.amount)}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+
+      <!-- GST Breakdown (if applicable) -->
+      ${hasGST ? `
+        <div class="section-label">GST Breakdown</div>
+        <table class="gst-table">
+          <thead>
+            <tr>
+              <th>GST Rate</th>
+              <th>Taxable Amt</th>
+              ${isInterstate ? '<th>IGST</th>' : '<th>CGST</th><th>SGST</th>'}
+              <th>Total Tax</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${Object.entries(gstGroups).map(([rate, g]) => `
+              <tr>
+                <td>${rate}%</td>
+                <td>₹${fmt(g.taxable)}</td>
+                ${isInterstate ? `<td>₹${fmt(g.igst)}</td>` : `<td>₹${fmt(g.cgst)}</td><td>₹${fmt(g.sgst)}</td>`}
+                <td>₹${fmt(isInterstate ? g.igst : (g.cgst + g.sgst))}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>` : ''}
+
+      <!-- Totals -->
+      <div class="totals-section">
+        <div class="total-row">
+          <span class="total-label">Subtotal</span>
+          <span class="total-value">₹${fmt(data.subtotal)}</span>
+        </div>
+        ${data.discount_amount > 0 ? `
+          <div class="total-row">
+            <span class="total-label">Discount (${fmt(data.discount_percent)}%)</span>
+            <span class="total-value" style="color:#e74c3c">− ₹${fmt(data.discount_amount)}</span>
+          </div>` : ''}
+        ${hasGST ? (isInterstate ? `
+          <div class="total-row">
+            <span class="total-label">IGST</span>
+            <span class="total-value">₹${fmt(data.igst)}</span>
+          </div>` : `
+          <div class="total-row">
+            <span class="total-label">CGST</span>
+            <span class="total-value">₹${fmt(data.cgst)}</span>
+          </div>
+          <div class="total-row">
+            <span class="total-label">SGST</span>
+            <span class="total-value">₹${fmt(data.sgst)}</span>
+          </div>`) : ''}
+        <div class="total-row final">
+          <span>GRAND TOTAL</span>
+          <span>₹${fmt(data.grand_total)}</span>
+        </div>
+      </div>
+
+      <!-- Amount in Words -->
+      <div class="amount-words">Amount in words: ${numberToWords(data.grand_total)}</div>
+
+      <!-- Payment Section -->
+      <div class="payment-section">
+        <div class="amount-paid-row">
+          <span>Received (${payIcon})</span>
+          <span class="font-weight:600">₹${fmt(data.amount_paid)}</span>
+        </div>
+        <div class="amount-paid-row">
+          <span>Change Due</span>
+          <span class="change-due">₹${fmt(Math.max(data.change_amount || 0, 0))}</span>
+        </div>
+      </div>
+
+      ${data.notes ? `<div style="font-size:11px;color:#555;margin-top:8px;padding:6px;background:#f9f9f9;border-radius:4px">📝 ${data.notes}</div>` : ''}
+
+      <!-- Footer -->
+      <div class="invoice-footer">
+        <div class="thank-you">🥩 Thank You for Shopping!</div>
+        <div>Visit us again for fresh meat products.</div>
+        <div style="margin-top:8px;font-size:10px;color:#888">
+          This is a computer-generated invoice. No signature required.<br>
+          Goods once sold will not be taken back. Subject to local jurisdiction.
+        </div>
+      </div>`;
+  }
+
+  loadInvoice();
+</script>
+</body>
+</html>

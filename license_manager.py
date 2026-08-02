@@ -23,13 +23,115 @@ SUBSCRIPTION_DAYS = 365
 GRACE_PERIOD_DAYS = 10
 YEARLY_PRICE_INR = 12000
 
-def get_machine_id():
-    """Generate a deterministic 16-character hardware ID for single-outlet machine locking."""
+def _get_hwid_cache_path():
+    """Return a system-wide or user-wide persistent path for machine ID caching."""
+    base_dir = os.environ.get('PROGRAMDATA') or os.environ.get('APPDATA') or os.path.expanduser('~')
+    app_dir = os.path.join(base_dir, 'MPI_Billing_App')
+    return os.path.join(app_dir, 'system_hwid.dat')
+
+def _get_cached_machine_id():
+    """Retrieve cached machine hardware ID if available."""
     try:
-        raw_id = f"{platform.node()}-{uuid.getnode()}-{platform.processor()}"
-        return hashlib.sha256(raw_id.encode('utf-8')).hexdigest()[:16].upper()
+        path = _get_hwid_cache_path()
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as f:
+                val = f.read().strip().upper()
+                if len(val) == 16 and val.isalnum():
+                    return val
     except Exception:
-        return "DEFAULT-MACHINE-ID-01"
+        pass
+    return None
+
+def _save_cached_machine_id(hwid):
+    """Save generated machine hardware ID to persistent cache file."""
+    try:
+        path = _get_hwid_cache_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(hwid)
+    except Exception:
+        pass
+
+def get_machine_id():
+    """
+    Generate a deterministic, immutable 16-character hardware ID for single-outlet machine locking.
+    Guarantees the exact same ID on the same physical system across reinstalls, folder changes,
+    python environment changes, and network adapter state changes (WiFi/Ethernet/VPN/offline).
+    """
+    components = []
+
+    # 1. Windows Registry MachineGuid & C: Drive Volume Serial Number
+    if platform.system() == 'Windows':
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography")
+            guid, _ = winreg.QueryValueEx(key, "MachineGuid")
+            if guid and len(str(guid).strip()) > 5:
+                components.append(f"WIN_GUID:{str(guid).strip()}")
+        except Exception:
+            pass
+
+        try:
+            import ctypes
+            serial = ctypes.c_ulong()
+            if ctypes.windll.kernel32.GetVolumeInformationW("C:\\", None, 0, ctypes.byref(serial), None, None, None, 0):
+                components.append(f"VOL_SERIAL:{hex(serial.value)}")
+        except Exception:
+            pass
+
+    # 2. Linux Machine ID (/etc/machine-id or /var/lib/dbus/machine-id)
+    elif platform.system() == 'Linux':
+        for path in ['/etc/machine-id', '/var/lib/dbus/machine-id', '/sys/class/dmi/id/product_uuid']:
+            try:
+                if os.path.exists(path):
+                    with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                        val = f.read().strip()
+                        if val:
+                            components.append(f"LINUX_ID:{val}")
+                            break
+            except Exception:
+                pass
+
+    # 3. macOS System UUID (IOPlatformUUID)
+    elif platform.system() == 'Darwin':
+        try:
+            import subprocess
+            cmd = "ioreg -rd1 -c IOPlatformExpertDevice | grep IOPlatformUUID"
+            out = subprocess.check_output(cmd, shell=True).decode('utf-8', errors='ignore').strip()
+            if out:
+                components.append(f"MAC_UUID:{out}")
+        except Exception:
+            pass
+
+    # 4. CPU / Processor details (stable hardware spec)
+    try:
+        processor = platform.processor() or os.environ.get('PROCESSOR_IDENTIFIER', '')
+        if processor:
+            components.append(f"PROC:{processor.strip()}")
+    except Exception:
+        pass
+
+    # 5. Computer Node Name (Hostname)
+    try:
+        node = platform.node()
+        if node:
+            components.append(f"NODE:{node.strip()}")
+    except Exception:
+        pass
+
+    if components:
+        raw_id = "|".join(components)
+        computed_id = hashlib.sha256(raw_id.encode('utf-8')).hexdigest()[:16].upper()
+        # Save to persistent cache file for extra anchor stability
+        _save_cached_machine_id(computed_id)
+        return computed_id
+
+    # Fallback to cached ID if hardware queries unexpectedly returned empty
+    cached_id = _get_cached_machine_id()
+    if cached_id:
+        return cached_id
+
+    return "DEFAULT-MACHINE-ID-01"
 
 def check_internet_connection():
     """
@@ -96,9 +198,9 @@ def get_license_info():
     """
     Compute current subscription state:
     Returns dict:
-      - status: 'trial' | 'active' | 'grace' | 'expired'
+      - status: 'trial' | 'active' | 'grace' | 'expired' | 'revoked'
       - days_left: int
-      - is_locked: bool (True if expired & grace period over)
+      - is_locked: bool (True if expired & grace period over, or if revoked)
       - installed_at: string YYYY-MM-DD
       - activated_at: string YYYY-MM-DD or None
       - expires_at: string YYYY-MM-DD
@@ -135,7 +237,28 @@ def get_license_info():
         except Exception:
             lic_data = None
 
+    # 2b. Check re-registration flag (set when server signals outlet was deleted)
+    row_rereg = conn.execute("SELECT value FROM shop_settings WHERE key = 'outlet_needs_reregister'").fetchone()
+    needs_reregister = row_rereg and str(row_rereg['value']).strip() == '1'
+
     machine_id = get_machine_id()
+
+    if needs_reregister:
+        conn.close()
+        return {
+            'status': 'needs_reregister',
+            'days_left': 0,
+            'is_locked': True,
+            'installed_at': inst_str,
+            'activated_at': None,
+            'expires_at': '',
+            'grace_expires_at': '',
+            'active_key': None,
+            'machine_id': machine_id,
+            'price_inr': YEARLY_PRICE_INR,
+            'upi_id': '9809840548@axisb',
+            'upi_name': 'MPI Billing Software'
+        }
 
     if lic_data and lic_data.get('expires_at'):
         # ── ACTIVE / GRACE / EXPIRED ─────────────────────────────────────

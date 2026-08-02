@@ -22,6 +22,8 @@
     .badge-trial { background: rgba(245,158,11,0.2); color: var(--gold); border: 1px solid var(--gold); }
     .badge-sub { background: rgba(6,182,212,0.2); color: var(--cyan); border: 1px solid var(--cyan); }
     .badge-code { background: rgba(139,92,246,0.2); color: #C4B5FD; border: 1px solid rgba(139,92,246,0.4); font-family: monospace; letter-spacing: 1px; }
+    .btn-migrate { background: linear-gradient(135deg,#6366F1,#4F46E5); color:#fff; font-size:12px; padding:5px 9px; }
+    .form-input { background:#0F172A; border:1px solid var(--border); border-radius:6px; color:#F8FAFC; padding:8px 12px; width:100%; font-size:13px; box-sizing:border-box; font-family:monospace; letter-spacing:1px; }
 
     table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
     th, td { padding: 14px 16px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13.5px; }
@@ -135,10 +137,9 @@
               </button>
             </form>
             <form action="/admin/delete/{{ o.machine_id }}" method="POST" style="margin:0">
-              <button class="btn btn-danger" type="submit" style="padding:6px 10px;font-size:12px;background:#EF4444;border-radius:6px;color:#fff;border:none;cursor:pointer" onclick="return confirm('Are you sure you want to delete outlet {{ o.reg_outlet_name or o.shop_name }} ({{ o.machine_id[:8] }})?')">
-                🗑️ Delete
-              </button>
+              <button class="btn btn-danger" type="submit" style="padding:6px 10px;font-size:12px;background:#EF4444;border-radius:6px;color:#fff;border:none;cursor:pointer" onclick="return confirm('Are you sure you want to delete outlet {{ o.reg_outlet_name or o.shop_name }} ({{ o.machine_id[:8] }})? The system will be prompted to re-register.')">🗑️ Delete</button>
             </form>
+            <button class="btn btn-migrate" onclick="openMigrateModal('{{ o.outlet_code }}','{{ o.machine_id }}')" title="Transfer this outlet\'s subscription to a new machine">🔄 Migrate</button>
           </div>
         </td>
       </tr>
@@ -223,6 +224,42 @@
     </div>
   </div>
 
+  <!-- Migration Modal -->
+  <div class="modal-overlay" id="migrate-modal" onclick="if(event.target===this) closeMigrateModal()">
+    <div class="modal" style="max-width:520px">
+      <div class="modal-header">
+        <div class="modal-title">🔄 Migrate Outlet to New System</div>
+        <button class="close-btn" onclick="closeMigrateModal()">✕</button>
+      </div>
+      <div style="font-size:13px;color:#94A3B8;margin-bottom:18px;line-height:1.6">
+        Transfer an existing subscription and registration from the <strong style="color:#fff">old machine</strong> to a <strong style="color:var(--gold)">new machine</strong>.
+        The new machine's Hardware ID can be copied from the login screen of the app.
+      </div>
+      <form action="/admin/migrate-outlet" method="POST" onsubmit="return confirmMigrate()">
+        <div style="margin-bottom:14px">
+          <div class="info-label" style="margin-bottom:6px">🔐 Outlet Code</div>
+          <input class="form-input" id="migrate-outlet-code" name="outlet_code" placeholder="e.g. KK01" maxlength="8"
+            style="text-transform:uppercase;font-size:16px;letter-spacing:3px" oninput="this.value=this.value.toUpperCase()">
+          <div style="font-size:11px;color:#64748B;margin-top:4px">The 4-character outlet code assigned to this branch.</div>
+        </div>
+        <div style="margin-bottom:18px">
+          <div class="info-label" style="margin-bottom:6px">💻 New System Hardware ID</div>
+          <input class="form-input" id="migrate-machine-id" name="new_machine_id" placeholder="e.g. 12793D4357FB6807"
+            maxlength="64" oninput="this.value=this.value.toUpperCase()">
+          <div style="font-size:11px;color:#64748B;margin-top:4px">16-character Hardware ID shown on the new machine's login screen.</div>
+        </div>
+        <div style="background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);border-radius:8px;padding:12px;font-size:12px;color:#FCD34D;margin-bottom:18px">
+          ⚠️ <strong>Warning:</strong> This will transfer the subscription, outlet registration and all staff accounts to the new machine. The old machine will no longer be recognized.
+        </div>
+        <div id="migrate-error" style="display:none;color:#FCA5A5;font-size:12px;margin-bottom:12px"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end">
+          <button type="button" class="btn" style="background:#334155" onclick="closeMigrateModal()">Cancel</button>
+          <button type="submit" class="btn btn-migrate" style="padding:9px 18px;font-size:13px">🔄 Confirm Migration</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
     const OUTLETS_DATA = {{ outlets|tojson }};
 
@@ -304,6 +341,26 @@
 
     function closeModal() {
       document.getElementById('details-modal').classList.remove('active');
+    }
+
+    function openMigrateModal(outletCode, machineId) {
+      document.getElementById('migrate-outlet-code').value = outletCode || '';
+      document.getElementById('migrate-machine-id').value = '';
+      document.getElementById('migrate-error').style.display = 'none';
+      document.getElementById('migrate-modal').classList.add('active');
+    }
+
+    function closeMigrateModal() {
+      document.getElementById('migrate-modal').classList.remove('active');
+    }
+
+    function confirmMigrate() {
+      const oc = document.getElementById('migrate-outlet-code').value.trim().toUpperCase();
+      const mid = document.getElementById('migrate-machine-id').value.trim().toUpperCase();
+      const errEl = document.getElementById('migrate-error');
+      if (!oc) { errEl.textContent = '❌ Outlet Code is required.'; errEl.style.display='block'; return false; }
+      if (!mid || mid.length < 8) { errEl.textContent = '❌ Hardware ID must be at least 8 characters.'; errEl.style.display='block'; return false; }
+      return confirm(`Migrate outlet ${oc} to new machine ID: ${mid}?\n\nThis is IRREVERSIBLE — the old machine will lose access.`);
     }
   </script>
 

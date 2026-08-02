@@ -121,6 +121,12 @@ def init_db():
                     machine_id   VARCHAR(64),
                     redeemed_at  TIMESTAMP DEFAULT NOW()
                 );
+                CREATE TABLE IF NOT EXISTS revoked_outlets (
+                    machine_id   VARCHAR(64) PRIMARY KEY,
+                    outlet_code  VARCHAR(64),
+                    revoked_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    reason       VARCHAR(255) DEFAULT 'Deleted by developer'
+                );
             """)
             conn.commit()
 
@@ -202,6 +208,12 @@ def init_db():
                     key          TEXT UNIQUE NOT NULL,
                     machine_id   TEXT,
                     redeemed_at  TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS revoked_outlets (
+                    machine_id   TEXT PRIMARY KEY,
+                    outlet_code  TEXT,
+                    revoked_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+                    reason       TEXT DEFAULT 'Deleted by developer'
                 );
             """)
             conn.commit()
@@ -380,8 +392,29 @@ def outlet_ping():
         conn, is_pg = get_db()
         cur = conn.cursor() if is_pg else None
 
-        # Auto-heal / rebuild registration details if missing on cloud DB
         outlet_code = (d.get('outlet_code') or '').strip().upper()
+
+        # Check if machine_id was deleted from server → signal local app to reset & re-register
+        if is_pg:
+            cur.execute("SELECT machine_id FROM revoked_outlets WHERE UPPER(machine_id) = %s LIMIT 1", (machine_id,))
+            was_deleted = cur.fetchone()
+        else:
+            was_deleted = conn.execute("SELECT machine_id FROM revoked_outlets WHERE UPPER(machine_id) = ? LIMIT 1", (machine_id,)).fetchone()
+
+        if was_deleted:
+            conn.close()
+            return jsonify({
+                'status': 'ok',
+                'data': {
+                    'machine_id': machine_id,
+                    'license_status': 'needs_reregister',
+                    'payment_status': 'UNPAID',
+                    'activated_at': '',
+                    'expires_at': '',
+                    'grace_expires_at': '',
+                    'message': '⚠️ This outlet was deleted from the central server. Please re-register on this system to continue.'
+                }
+            })
         if outlet_code:
             md_username = (d.get('md_username') or '').strip()
             md_fullname = (d.get('md_fullname') or '').strip()
@@ -956,23 +989,102 @@ def delete_outlet(machine_id):
         init_db()
         mid = (machine_id or '').strip().upper()
         conn, is_pg = get_db()
+
+        # Fetch outlet_code before deletion so we can record it in revoked_outlets
         if is_pg:
             cur = conn.cursor()
+            cur.execute("SELECT outlet_code FROM outlet_registrations WHERE UPPER(machine_id) = %s LIMIT 1", (mid,))
+            reg_row = cur.fetchone()
+            outlet_code_for_revoke = (dict(reg_row)['outlet_code'] if reg_row else '').strip().upper()
+        else:
+            reg_row = conn.execute("SELECT outlet_code FROM outlet_registrations WHERE UPPER(machine_id) = ? LIMIT 1", (mid,)).fetchone()
+            outlet_code_for_reset = (reg_row['outlet_code'] if reg_row else '').strip().upper()
+
+        if is_pg:
             cur.execute("DELETE FROM outlets WHERE UPPER(machine_id) = %s", (mid,))
             cur.execute("DELETE FROM outlet_registrations WHERE UPPER(machine_id) = %s", (mid,))
             cur.execute("DELETE FROM outlet_users WHERE UPPER(machine_id) = %s", (mid,))
             cur.execute("DELETE FROM activation_keys WHERE UPPER(machine_id) = %s", (mid,))
+            # ── Mark as deleted so next ping signals the local app to re-register ──
+            cur.execute("""
+                INSERT INTO revoked_outlets (machine_id, outlet_code, revoked_at, reason)
+                VALUES (%s, %s, NOW(), 'Deleted by developer — re-registration required')
+                ON CONFLICT (machine_id) DO UPDATE SET revoked_at = NOW(), reason = 'Deleted by developer — re-registration required'
+            """, (mid, outlet_code_for_reset))
         else:
             conn.execute("DELETE FROM outlets WHERE UPPER(machine_id) = ?", (mid,))
             conn.execute("DELETE FROM outlet_registrations WHERE UPPER(machine_id) = ?", (mid,))
             conn.execute("DELETE FROM outlet_users WHERE UPPER(machine_id) = ?", (mid,))
             conn.execute("DELETE FROM activation_keys WHERE UPPER(machine_id) = ?", (mid,))
+            # ── Mark as deleted so next ping signals the local app to re-register ──
+            conn.execute("""
+                INSERT OR REPLACE INTO revoked_outlets (machine_id, outlet_code, revoked_at, reason)
+                VALUES (?, ?, CURRENT_TIMESTAMP, 'Deleted by developer — re-registration required')
+            """, (mid, outlet_code_for_reset))
+
         conn.commit()
         conn.close()
 
         return redirect(url_for('admin_portal'))
     except Exception as e:
         return f"Error deleting outlet: {str(e)}", 500
+
+@app.route('/admin/migrate-outlet', methods=['POST'])
+def migrate_outlet():
+    """Transfer an existing outlet's subscription and registration to a new machine hardware ID."""
+    if not session.get('logged_in'):
+        return redirect(url_for('admin_portal'))
+
+    try:
+        init_db()
+        outlet_code = (request.form.get('outlet_code') or '').strip().upper()
+        new_machine_id = (request.form.get('new_machine_id') or '').strip().upper()
+
+        if not outlet_code or not new_machine_id:
+            return "Both outlet_code and new_machine_id are required.", 400
+        if len(new_machine_id) < 8:
+            return "New Machine Hardware ID must be at least 8 characters.", 400
+
+        conn, is_pg = get_db()
+        now_str = str(datetime.now())[:19]
+
+        if is_pg:
+            cur = conn.cursor()
+            # Find old machine_id for this outlet code
+            cur.execute("SELECT machine_id FROM outlet_registrations WHERE UPPER(outlet_code) = %s LIMIT 1", (outlet_code,))
+            row = cur.fetchone()
+            if not row:
+                conn.close()
+                return f"No outlet found with outlet code: {outlet_code}", 404
+            old_machine_id = dict(row)['machine_id']
+
+            # Migrate all tables from old machine_id to new machine_id
+            cur.execute("UPDATE outlets SET machine_id = %s WHERE UPPER(machine_id) = %s", (new_machine_id, old_machine_id.upper()))
+            cur.execute("UPDATE outlet_registrations SET machine_id = %s WHERE UPPER(outlet_code) = %s", (new_machine_id, outlet_code))
+            cur.execute("UPDATE outlet_users SET machine_id = %s WHERE UPPER(machine_id) = %s", (new_machine_id, old_machine_id.upper()))
+            cur.execute("UPDATE activation_keys SET machine_id = %s WHERE UPPER(machine_id) = %s", (new_machine_id, old_machine_id.upper()))
+            # Remove old machine_id from deleted/revoked list if present
+            cur.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = %s OR UPPER(outlet_code) = %s", (old_machine_id.upper(), outlet_code))
+        else:
+            row = conn.execute("SELECT machine_id FROM outlet_registrations WHERE UPPER(outlet_code) = ? LIMIT 1", (outlet_code,)).fetchone()
+            if not row:
+                conn.close()
+                return f"No outlet found with outlet code: {outlet_code}", 404
+            old_machine_id = row['machine_id']
+
+            conn.execute("UPDATE outlets SET machine_id = ? WHERE UPPER(machine_id) = ?", (new_machine_id, old_machine_id.upper()))
+            conn.execute("UPDATE outlet_registrations SET machine_id = ? WHERE UPPER(outlet_code) = ?", (new_machine_id, outlet_code))
+            conn.execute("UPDATE outlet_users SET machine_id = ? WHERE UPPER(machine_id) = ?", (new_machine_id, old_machine_id.upper()))
+            conn.execute("UPDATE activation_keys SET machine_id = ? WHERE UPPER(machine_id) = ?", (new_machine_id, old_machine_id.upper()))
+            # Remove old machine_id from deleted/revoked list if present
+            conn.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = ? OR UPPER(outlet_code) = ?", (old_machine_id.upper(), outlet_code))
+
+        conn.commit()
+        conn.close()
+        return redirect(url_for('admin_portal'))
+    except Exception as e:
+        return f"Error migrating outlet: {str(e)}", 500
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))

@@ -8,7 +8,13 @@ import sqlite3
 import os
 from datetime import datetime
 
-DB_PATH = os.environ.get('DB_PATH') or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'meatshop.db')
+import sys
+if getattr(sys, 'frozen', False):
+    _base_dir = os.path.dirname(sys.executable)
+else:
+    _base_dir = os.path.dirname(os.path.abspath(__file__))
+
+DB_PATH = os.environ.get('DB_PATH') or os.path.join(_base_dir, 'data', 'meatshop.db')
 
 
 def get_db():

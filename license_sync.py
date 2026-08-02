@@ -91,43 +91,82 @@ def sync_with_cloud_server():
             method='POST'
         )
 
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            if resp.status == 200:
-                res_json = json.loads(resp.read().decode('utf-8'))
-                if res_json.get('status') == 'ok':
-                    data = res_json.get('data', {})
-                    cloud_lic_status = data.get('license_status')
-                    
-                    if cloud_lic_status == 'active' and data.get('expires_at'):
-                        # ⚡ Developer approved payment! Auto-activate local database!
-                        conn = get_db()
-                        exp_str = str(data['expires_at'])[:10]
-                        act_str = str(data.get('activated_at') or date.today())[:10]
-                        grace_str = str(data.get('grace_expires_at') or '')[:10]
-                        
-                        if not grace_str:
-                            try:
-                                exp_dt = datetime.strptime(exp_str, "%Y-%m-%d").date()
-                                grace_str = str(exp_dt + timedelta(days=GRACE_PERIOD_DAYS))
-                            except Exception:
-                                grace_str = exp_str
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                resp_body = resp.read().decode('utf-8')
+                resp_status = resp.status
+        except urllib.error.HTTPError as http_err:
+            # 403 = outlet has been revoked/deleted by the developer
+            if http_err.code == 403:
+                resp_body = http_err.read().decode('utf-8', errors='ignore')
+                resp_status = 403
+            else:
+                raise
 
-                        lic_payload = {
-                            'key': 'CLOUD-AUTO-ACTIVATED',
-                            'activated_at': act_str,
-                            'expires_at': exp_str,
-                            'grace_expires_at': grace_str,
-                            'machine_id': machine_id,
-                            'subscription_days': SUBSCRIPTION_DAYS
-                        }
+        res_json = json.loads(resp_body)
 
-                        conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('active_license_json', ?)", (json.dumps(lic_payload),))
-                        conn.commit()
-                        conn.close()
-                        return True, f"Cloud Auto-Activation Verified! Active until {exp_str}."
-                    
-                    status_display = str(cloud_lic_status).upper() if cloud_lic_status else "UNKNOWN"
-                    return False, f"Cloud sync complete. License status: {status_display}"
+        # ── NEEDS RE-REGISTER: Developer deleted this outlet from the admin portal ──
+        # The server returns license_status='needs_reregister'; we clear local data so
+        # the user sees the fresh MD registration screen on next app load.
+        cloud_lic_status_raw = ''
+        if resp_status == 200 and res_json.get('status') == 'ok':
+            cloud_lic_status_raw = (res_json.get('data') or {}).get('license_status', '')
+
+        if cloud_lic_status_raw == 'needs_reregister':
+            conn = get_db()
+            # Clear all registration & license data so user must re-register
+            keys_to_clear = [
+                'active_license_json', 'outlet_code', 'outlet_revoked',
+                'outlet_name', 'outlet_phone', 'outlet_city', 'outlet_state',
+                'outlet_pincode', 'shop_address', 'shop_phone', 'shop_name',
+                'md_group_name', 'system_machine_id'
+            ]
+            for k in keys_to_clear:
+                conn.execute("DELETE FROM shop_settings WHERE key = ?", (k,))
+            conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_needs_reregister', '1')")
+            conn.commit()
+            conn.close()
+            msg = (res_json.get('data') or {}).get('message', 'Outlet deleted. Please re-register.')
+            return False, f"NEEDS_REREGISTER: {msg}"
+
+        if resp_status == 200 and res_json.get('status') == 'ok':
+            data = res_json.get('data', {})
+            cloud_lic_status = data.get('license_status')
+            
+            if cloud_lic_status == 'active' and data.get('expires_at'):
+                # ⚡ Developer approved payment! Auto-activate local database!
+                conn = get_db()
+                exp_str = str(data['expires_at'])[:10]
+                act_str = str(data.get('activated_at') or date.today())[:10]
+                grace_str = str(data.get('grace_expires_at') or '')[:10]
+                
+                if not grace_str:
+                    try:
+                        exp_dt = datetime.strptime(exp_str, "%Y-%m-%d").date()
+                        grace_str = str(exp_dt + timedelta(days=GRACE_PERIOD_DAYS))
+                    except Exception:
+                        grace_str = exp_str
+
+                lic_payload = {
+                    'key': 'CLOUD-AUTO-ACTIVATED',
+                    'activated_at': act_str,
+                    'expires_at': exp_str,
+                    'grace_expires_at': grace_str,
+                    'machine_id': machine_id,
+                    'subscription_days': SUBSCRIPTION_DAYS
+                }
+
+                conn = get_db()
+                conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('active_license_json', ?)", (json.dumps(lic_payload),))
+                # Clear any stale re-register flag
+                conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_needs_reregister', '0')")
+                conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_revoked', '0')")
+                conn.commit()
+                conn.close()
+                return True, f"Cloud Auto-Activation Verified! Active until {exp_str}."
+            
+            status_display = str(cloud_lic_status).upper() if cloud_lic_status else "UNKNOWN"
+            return False, f"Cloud sync complete. License status: {status_display}"
     except Exception as e:
         return False, f"Cloud server connection offline/unreachable: {str(e)}"
 
