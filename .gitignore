@@ -15,3 +15,8 @@ cloud_license_server/cloud_backups/
 .venv/
 env/
 venv/
+
+# PyInstaller Build Output (large compiled binaries — distribute separately)
+dist/
+build/
+*.spec
