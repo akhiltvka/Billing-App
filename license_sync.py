@@ -172,6 +172,73 @@ def sync_with_cloud_server():
 
     return False, "Sync attempt finished."
 
+
+def re_register_with_cloud():
+    """
+    Push local outlet registration details to the central server.
+    Called when internet comes back after an offline re-registration,
+    or after a successful ping following a deletion+re-register cycle.
+    Returns (success: bool, message: str)
+    """
+    server_url = get_cloud_server_url()
+    reg_endpoint = f"{server_url}/api/v1/outlet/register"
+    machine_id = get_machine_id()
+
+    conn = get_db()
+    md_row = conn.execute("SELECT username, full_name FROM users WHERE role='md' LIMIT 1").fetchone()
+    if not md_row:
+        conn.close()
+        return False, "No MD account found — re-registration skipped."
+
+    keys = ['outlet_code', 'md_group_name', 'outlet_name', 'outlet_phone',
+            'shop_address', 'outlet_city', 'outlet_state', 'outlet_pincode']
+    settings = {}
+    for key in keys:
+        row = conn.execute("SELECT value FROM shop_settings WHERE key=?", (key,)).fetchone()
+        settings[key] = row['value'].strip() if row and row['value'] else ''
+    conn.close()
+
+    if not settings.get('outlet_name'):
+        return False, "No outlet name found — re-registration skipped."
+
+    payload = {
+        'machine_id':   machine_id,
+        'md_username':  md_row['username'],
+        'md_fullname':  md_row['full_name'],
+        'group_name':   settings.get('md_group_name', ''),
+        'outlet_name':  settings.get('outlet_name', ''),
+        'outlet_phone': settings.get('outlet_phone', ''),
+        'address':      settings.get('shop_address', ''),
+        'city':         settings.get('outlet_city', ''),
+        'state':        settings.get('outlet_state', ''),
+        'pincode':      settings.get('outlet_pincode', ''),
+    }
+
+    try:
+        data_bytes = json.dumps(payload).encode('utf-8')
+        req = urllib.request.Request(
+            reg_endpoint,
+            data=data_bytes,
+            headers={'Content-Type': 'application/json', 'User-Agent': 'MPI-Outlet-App/1.0'},
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            res_data = json.loads(resp.read().decode('utf-8'))
+            if res_data.get('status') == 'ok':
+                new_outlet_code = res_data.get('outlet_code', '')
+                if new_outlet_code:
+                    # Save the server-assigned outlet code locally
+                    conn = get_db()
+                    conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_code', ?)", (new_outlet_code,))
+                    conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_needs_reregister', '0')")
+                    conn.commit()
+                    conn.close()
+                return True, f"Re-registration synced to server. Outlet Code: {new_outlet_code or settings.get('outlet_code', 'N/A')}"
+    except Exception as e:
+        return False, f"Could not re-register with cloud: {str(e)}"
+
+    return False, "Re-registration sync failed."
+
 def notify_cloud_payment(utr_number):
     """Notify central developer server of submitted UPI payment UTR/Ref number."""
     server_url = get_cloud_server_url()

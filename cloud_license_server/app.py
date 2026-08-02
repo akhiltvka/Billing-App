@@ -278,17 +278,27 @@ def register_outlet():
 
         conn, is_pg = get_db()
 
-        # Check if this machine_id already has a registered outlet_code → return it
+        # Check if this machine_id already has a registered outlet_code
+        # BUT: if it's in revoked_outlets (was deleted), treat as fresh registration
+        was_revoked = False
         if machine_id and is_pg:
+            cur = conn.cursor()
+            cur.execute("SELECT machine_id FROM revoked_outlets WHERE UPPER(machine_id) = %s LIMIT 1", (machine_id,))
+            was_revoked = bool(cur.fetchone())
+        elif machine_id:
+            was_revoked = bool(conn.execute("SELECT machine_id FROM revoked_outlets WHERE UPPER(machine_id) = ? LIMIT 1", (machine_id,)).fetchone())
+
+        # Check for existing registration
+        if machine_id and not was_revoked and is_pg:
             cur = conn.cursor()
             cur.execute("SELECT outlet_code FROM outlet_registrations WHERE machine_id = %s", (machine_id,))
             existing = cur.fetchone()
-        elif machine_id:
+        elif machine_id and not was_revoked:
             existing = conn.execute("SELECT outlet_code FROM outlet_registrations WHERE machine_id = ?", (machine_id,)).fetchone()
         else:
             existing = None
 
-        if existing:
+        if existing and not was_revoked:
             outlet_code = existing['outlet_code']
             conn.close()
             return jsonify({'status': 'ok', 'outlet_code': outlet_code, 'message': f'Outlet already registered as {outlet_code}'})
@@ -319,21 +329,50 @@ def register_outlet():
         # Insert the outlet registration
         now_str = str(datetime.now())[:19]
         if is_pg:
+            cur = conn.cursor()
             cur.execute("""
                 INSERT INTO outlet_registrations
                     (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
                      outlet_phone, address, city, state, pincode, registered_at, updated_at)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
+                ON CONFLICT (machine_id) DO UPDATE SET
+                    outlet_code = EXCLUDED.outlet_code,
+                    md_username = EXCLUDED.md_username,
+                    md_fullname = EXCLUDED.md_fullname,
+                    group_name = EXCLUDED.group_name,
+                    outlet_name = EXCLUDED.outlet_name,
+                    outlet_phone = EXCLUDED.outlet_phone,
+                    address = EXCLUDED.address,
+                    city = EXCLUDED.city,
+                    state = EXCLUDED.state,
+                    pincode = EXCLUDED.pincode,
+                    updated_at = NOW()
             """, (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
                   outlet_phone, address, city, state, pincode))
+            # Clear from revoked list so future pings work normally
+            cur.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = %s", (machine_id,))
         else:
             conn.execute("""
                 INSERT INTO outlet_registrations
                     (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
                      outlet_phone, address, city, state, pincode, registered_at, updated_at)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT (machine_id) DO UPDATE SET
+                    outlet_code = excluded.outlet_code,
+                    md_username = excluded.md_username,
+                    md_fullname = excluded.md_fullname,
+                    group_name = excluded.group_name,
+                    outlet_name = excluded.outlet_name,
+                    outlet_phone = excluded.outlet_phone,
+                    address = excluded.address,
+                    city = excluded.city,
+                    state = excluded.state,
+                    pincode = excluded.pincode,
+                    updated_at = excluded.updated_at
             """, (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
                   outlet_phone, address, city, state, pincode, now_str, now_str))
+            # Clear from revoked list so future pings work normally
+            conn.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = ?", (machine_id,))
 
         conn.commit()
         conn.close()

@@ -20,7 +20,7 @@ from openpyxl.utils import get_column_letter
 from werkzeug.security import generate_password_hash, check_password_hash
 from database import get_db, init_db, dict_row, dict_rows, post_ledger_entry
 from license_manager import get_license_info, activate_subscription
-from license_sync import sync_with_cloud_server, notify_cloud_payment
+from license_sync import sync_with_cloud_server, notify_cloud_payment, re_register_with_cloud
 from cloud_backup import start_cloud_backup_scheduler, run_cloud_backup_job
 
 import sys
@@ -319,10 +319,19 @@ def license_activate():
 @app.route('/api/license/sync-cloud', methods=['POST'])
 @require_auth
 def license_sync_cloud():
+    # Check if this outlet was re-registered offline and needs to push to server first
+    try:
+        _conn = get_db()
+        _rereg_row = _conn.execute("SELECT value FROM shop_settings WHERE key='outlet_needs_reregister'").fetchone()
+        _is_pending = _rereg_row and str(_rereg_row['value']).strip() == '1'
+        _conn.close()
+        if _is_pending:
+            re_register_with_cloud()
+    except Exception:
+        pass
+
     success, msg = sync_with_cloud_server()
     info = get_license_info()
-    if success:
-        return ok(info, message=msg)
     return ok(info, message=msg)
 
 @app.route('/api/license/notify-payment', methods=['POST'])
