@@ -460,10 +460,8 @@ def outlet_ping():
         # Auto-clear revocation if local app pings so user details restore automatically
         if is_pg:
             cur.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = %s", (machine_id,))
-            conn.commit()
         else:
             conn.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = ?", (machine_id,))
-            conn.commit()
 
         md_username = (d.get('md_username') or '').strip()
         md_fullname = (d.get('md_fullname') or '').strip()
@@ -507,7 +505,6 @@ def outlet_ping():
                          outlet_phone, address, city, state, pincode, registered_at, updated_at)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
                 """, (outlet_code, machine_id, md_username, md_fullname, group_name, shop_name, phone, addr, city, state, pincode))
-            conn.commit()
         else:
             reg_row = conn.execute("SELECT id FROM outlet_registrations WHERE UPPER(machine_id) = ? LIMIT 1", (machine_id,)).fetchone()
             if reg_row:
@@ -525,7 +522,6 @@ def outlet_ping():
                          outlet_phone, address, city, state, pincode, registered_at, updated_at)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, (outlet_code, machine_id, md_username, md_fullname, group_name, shop_name, phone, addr, city, state, pincode, now_str, now_str))
-            conn.commit()
 
         # Upsert the local users list sent in the ping payload
         users_list = d.get('users') or []
@@ -564,10 +560,6 @@ def outlet_ping():
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                         """, (machine_id, u_username, u_fullname, u_role, u_empid, u_active, u_last_login, now_str))
 
-        if is_pg:
-            conn.commit()
-            cur = conn.cursor()
-
         owner_name_to_save = md_fullname or md_username or shop_name
 
         if is_pg:
@@ -579,13 +571,13 @@ def outlet_ping():
                     VALUES (%s, %s, %s, %s, 'trial', NOW())
                     RETURNING *
                 """, (machine_id, shop_name, phone, owner_name_to_save))
-                conn.commit()
                 outlet = cur.fetchone()
             else:
                 cur.execute("""
                     UPDATE outlets SET shop_name = %s, phone = %s, owner_name = %s, last_ping = NOW() WHERE UPPER(machine_id) = %s
                 """, (shop_name, phone, owner_name_to_save, machine_id))
-                conn.commit()
+                cur.execute("SELECT * FROM outlets WHERE UPPER(machine_id) = %s", (machine_id,))
+                outlet = cur.fetchone()
         else:
             outlet = conn.execute("SELECT * FROM outlets WHERE UPPER(machine_id) = ?", (machine_id,)).fetchone()
             if not outlet:
@@ -593,14 +585,14 @@ def outlet_ping():
                     INSERT INTO outlets (machine_id, shop_name, phone, owner_name, status, last_ping)
                     VALUES (?, ?, ?, ?, 'trial', ?)
                 """, (machine_id, shop_name, phone, owner_name_to_save, now_str))
-                conn.commit()
                 outlet = conn.execute("SELECT * FROM outlets WHERE UPPER(machine_id) = ?", (machine_id,)).fetchone()
             else:
                 conn.execute("""
                     UPDATE outlets SET shop_name = ?, phone = ?, owner_name = ?, last_ping = ? WHERE UPPER(machine_id) = ?
                 """, (shop_name, phone, owner_name_to_save, now_str, machine_id))
-                conn.commit()
+                outlet = conn.execute("SELECT * FROM outlets WHERE UPPER(machine_id) = ?", (machine_id,)).fetchone()
 
+        conn.commit()
         conn.close()
         outlet_dict = dict(outlet)
 
