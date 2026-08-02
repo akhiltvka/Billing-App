@@ -566,137 +566,147 @@ def login():
 
 @app.route('/api/auth/register-md', methods=['POST'])
 def register_md():
-    # ── First-Run Gate Check ──────────────────────────────────────────────────
-    # Check if an MD or Admin owner account has already been registered.
-    # NOTE: Ownership transfer to a new MD (e.g. if outlet changes hands) must go
-    # through a separate, properly authenticated admin/MD-only route if requested later.
-    conn = get_db()
-    existing_owner = conn.execute(
-        "SELECT id FROM users WHERE (role = 'md' OR role = 'admin') AND username != 'sudo' LIMIT 1"
-    ).fetchone()
-    conn.close()
-    if existing_owner:
-        return err("An owner account has already been registered on this system. Contact support to transfer ownership.", 403)
-
-    import json as _json
-    import urllib.request as _urllib_req
-
-    d = request.get_json() or {}
-    username   = (d.get('username')   or '').strip()
-    password   = d.get('password')    or ''
-    full_name  = (d.get('full_name')  or '').strip()
-    group_name = (d.get('group_name') or '').strip()
-
-    # Outlet address fields
-    outlet_name  = (d.get('outlet_name')  or '').strip()
-    outlet_phone = (d.get('outlet_phone') or '').strip()
-    addr1        = (d.get('addr1')        or '').strip()
-    addr2        = (d.get('addr2')        or '').strip()
-    city         = (d.get('city')         or '').strip()
-    state        = (d.get('state')        or '').strip()
-    pincode      = (d.get('pincode')      or '').strip()
-
-    if not username:  return err("Username required")
-    if not full_name: return err("Managing Director Full Name required")
-    if len(password) < 6: return err("Password must be at least 6 characters")
-    if not outlet_name: return err("Branch / Outlet Name is required")
-    if not city:        return err("City is required")
-    if not state:       return err("State is required")
-    if pincode and (not pincode.isdigit() or len(pincode) != 6):
-        return err("Pincode must be exactly 6 digits")
-
-    from license_manager import get_machine_id as _get_mid
-    from license_sync import get_cloud_server_url as _get_cloud_url
-    machine_id = _get_mid()
-
-    # ── Call cloud server to assign/retrieve outlet code ──────────────────
-    outlet_code = None
-    cloud_error = None
     try:
-        cloud_url  = _get_cloud_url()
-        full_addr  = ', '.join(filter(None, [addr1, addr2, city, state, pincode]))
-        payload_bytes = _json.dumps({
-            'machine_id':   machine_id,
-            'md_username':  username,
-            'md_fullname':  full_name,
-            'group_name':   group_name,
-            'outlet_name':  outlet_name,
-            'outlet_phone': outlet_phone,
-            'address':      full_addr,
-            'city':         city,
-            'state':        state,
-            'pincode':      pincode,
-        }).encode('utf-8')
-        req = _urllib_req.Request(
-            f"{cloud_url}/api/v1/outlet/register",
-            data=payload_bytes,
-            headers={'Content-Type': 'application/json', 'User-Agent': 'MPI-Billing-App/1.0'},
-            method='POST'
-        )
-        with _urllib_req.urlopen(req, timeout=10) as resp:
-            resp_data = _json.loads(resp.read().decode())
-            if resp_data.get('status') == 'ok':
-                outlet_code = resp_data.get('outlet_code')
-    except Exception as e:
-        cloud_error = str(e)
-        # Fallback: generate code locally if cloud is unreachable
-        prefix = ''.join(c for c in outlet_name.upper() if c.isalpha())[:2] or 'XX'
-        if len(prefix) < 2: prefix = (prefix + 'XX')[:2]
-        outlet_code = f"{prefix}01"
+        # ── First-Run Gate Check ──────────────────────────────────────────────────
+        # Check if an MD or Admin owner account has already been registered.
+        conn = get_db()
+        existing_owner = conn.execute(
+            "SELECT id FROM users WHERE (role = 'md' OR role = 'admin') AND username != 'sudo' LIMIT 1"
+        ).fetchone()
+        conn.close()
+        if existing_owner:
+            return err("An owner account has already been registered on this system. Contact support to transfer ownership.", 403)
 
-    conn = get_db()
+        import json as _json
+        import urllib.request as _urllib_req
 
-    # Save outlet details + outlet_code + machine_id to shop_settings
-    full_address = ', '.join(filter(None, [addr1, addr2, city, state, pincode]))
-    outlet_settings = {
-        'shop_name':       outlet_name,
-        'md_group_name':   group_name or outlet_name,
-        'outlet_name':     outlet_name,
-        'outlet_phone':    outlet_phone,
-        'outlet_city':     city,
-        'outlet_state':    state,
-        'outlet_pincode':  pincode,
-        'shop_address':    full_address,
-        'shop_phone':      outlet_phone,
-        'outlet_code':     outlet_code,
-        'system_machine_id': machine_id,
-    }
-    for k, v in outlet_settings.items():
-        conn.execute(
-            "INSERT INTO shop_settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (k, v)
-        )
+        d = request.get_json() or {}
+        username   = (d.get('username')   or '').strip()
+        password   = d.get('password')    or ''
+        full_name  = (d.get('full_name')  or '').strip()
+        group_name = (d.get('group_name') or '').strip()
 
-    existing = conn.execute('SELECT id FROM users WHERE username=? COLLATE NOCASE', (username,)).fetchone()
-    if existing:
-        conn.execute(
-            'UPDATE users SET password_hash=?, full_name=?, role="md", active=1 WHERE id=?',
-            (generate_password_hash(password), full_name, existing['id'])
-        )
-        conn.commit(); conn.close()
-        session['user_id']   = existing['id']
-        session['username']  = username
-        session['full_name'] = full_name
-        session['user_role'] = 'md'
-        log_activity('MD_REGISTER', f"MD account updated. Outlet: '{outlet_name}' ({outlet_code}), Machine: {machine_id[:8]}", 'users', existing['id'])
-        msg = f"MD account updated! Outlet Code: {outlet_code}"
-        if cloud_error: msg += f" (offline fallback — sync when online)"
-        return ok({'outlet_code': outlet_code, 'machine_id': machine_id}, message=msg)
-    else:
-        c = conn.execute(
-            'INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,"md")',
-            (username, generate_password_hash(password), full_name)
-        )
-        uid = c.lastrowid
-        conn.commit(); conn.close()
-        session['user_id']   = uid
-        session['username']  = username
-        session['full_name'] = full_name
-        session['user_role'] = 'md'
-        log_activity('MD_REGISTER', f"MD registered. Outlet: '{outlet_name}' ({outlet_code}), Machine: {machine_id[:8]}", 'users', uid)
-        msg = f"Managing Director registered! Outlet Code: {outlet_code}"
-        if cloud_error: msg += f" (offline fallback — sync when online)"
-        return ok({'outlet_code': outlet_code, 'machine_id': machine_id}, message=msg), 201
+        # Outlet address fields
+        outlet_name  = (d.get('outlet_name')  or '').strip()
+        outlet_phone = (d.get('outlet_phone') or '').strip()
+        addr1        = (d.get('addr1')        or '').strip()
+        addr2        = (d.get('addr2')        or '').strip()
+        city         = (d.get('city')         or '').strip()
+        state        = (d.get('state')        or '').strip()
+        pincode      = (d.get('pincode')      or '').strip()
+
+        if not username:  return err("Username required")
+        if not full_name: return err("Managing Director Full Name required")
+        if len(password) < 6: return err("Password must be at least 6 characters")
+        if not outlet_name: return err("Branch / Outlet Name is required")
+        if not city:        return err("City is required")
+        if not state:       return err("State is required")
+        if pincode and (not pincode.isdigit() or len(pincode) != 6):
+            return err("Pincode must be exactly 6 digits")
+
+        from license_manager import get_machine_id as _get_mid
+        from license_sync import get_cloud_server_url as _get_cloud_url
+        machine_id = _get_mid()
+
+        # ── Call cloud server to assign/retrieve outlet code ──────────────────
+        outlet_code = None
+        cloud_error = None
+        try:
+            cloud_url  = _get_cloud_url()
+            full_addr  = ', '.join(filter(None, [addr1, addr2, city, state, pincode]))
+            payload_bytes = _json.dumps({
+                'machine_id':   machine_id,
+                'md_username':  username,
+                'md_fullname':  full_name,
+                'group_name':   group_name,
+                'outlet_name':  outlet_name,
+                'outlet_phone': outlet_phone,
+                'address':      full_addr,
+                'city':         city,
+                'state':        state,
+                'pincode':      pincode,
+            }).encode('utf-8')
+            req = _urllib_req.Request(
+                f"{cloud_url}/api/v1/outlet/register",
+                data=payload_bytes,
+                headers={'Content-Type': 'application/json', 'User-Agent': 'MPI-Billing-App/1.0'},
+                method='POST'
+            )
+            with _urllib_req.urlopen(req, timeout=10) as resp:
+                resp_data = _json.loads(resp.read().decode())
+                if resp_data.get('status') == 'ok':
+                    outlet_code = resp_data.get('outlet_code')
+        except Exception as e:
+            cloud_error = str(e)
+            # Fallback: generate code locally if cloud is unreachable
+            prefix = ''.join(c for c in outlet_name.upper() if c.isalpha())[:2] or 'XX'
+            if len(prefix) < 2: prefix = (prefix + 'XX')[:2]
+            outlet_code = f"{prefix}01"
+
+        conn = get_db()
+
+        # Save outlet details + outlet_code + machine_id to shop_settings
+        full_address = ', '.join(filter(None, [addr1, addr2, city, state, pincode]))
+        outlet_settings = {
+            'shop_name':       outlet_name,
+            'md_group_name':   group_name or outlet_name,
+            'outlet_name':     outlet_name,
+            'outlet_phone':    outlet_phone,
+            'outlet_city':     city,
+            'outlet_state':    state,
+            'outlet_pincode':  pincode,
+            'shop_address':    full_address,
+            'shop_phone':      outlet_phone,
+            'outlet_code':     outlet_code,
+            'system_machine_id': machine_id,
+        }
+        for k, v in outlet_settings.items():
+            conn.execute(
+                "INSERT INTO shop_settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (k, v)
+            )
+
+        existing = conn.execute('SELECT id FROM users WHERE username=? COLLATE NOCASE', (username,)).fetchone()
+        if existing:
+            conn.execute(
+                'UPDATE users SET password_hash=?, full_name=?, role="md", active=1 WHERE id=?',
+                (generate_password_hash(password), full_name, existing['id'])
+            )
+            conn.commit(); conn.close()
+            session['user_id']   = existing['id']
+            session['username']  = username
+            session['full_name'] = full_name
+            session['user_role'] = 'md'
+            try:
+                log_activity('MD_REGISTER', f"MD account updated. Outlet: '{outlet_name}' ({outlet_code}), Machine: {machine_id[:8]}", 'users', existing['id'])
+            except Exception:
+                pass
+            msg = f"MD account updated! Outlet Code: {outlet_code}"
+            if cloud_error: msg += f" (offline fallback — sync when online)"
+            return ok({'outlet_code': outlet_code, 'machine_id': machine_id}, message=msg)
+        else:
+            c = conn.execute(
+                'INSERT INTO users (username, password_hash, full_name, role) VALUES (?,?,?,"md")',
+                (username, generate_password_hash(password), full_name)
+            )
+            uid = c.lastrowid
+            conn.commit(); conn.close()
+            session['user_id']   = uid
+            session['username']  = username
+            session['full_name'] = full_name
+            session['user_role'] = 'md'
+            try:
+                log_activity('MD_REGISTER', f"MD registered. Outlet: '{outlet_name}' ({outlet_code}), Machine: {machine_id[:8]}", 'users', uid)
+            except Exception:
+                pass
+            msg = f"Managing Director registered! Outlet Code: {outlet_code}"
+            if cloud_error: msg += f" (offline fallback — sync when online)"
+            return ok({'outlet_code': outlet_code, 'machine_id': machine_id}, message=msg), 201
+
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return err(f"Registration failed: {str(exc)}", 500)
 
 @app.route('/api/auth/logout', methods=['POST'])
 def logout():
