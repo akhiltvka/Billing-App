@@ -13,6 +13,13 @@ import sys
 import os
 import webview
 
+# Set AppUserModelID so Windows Taskbar displays official logo.ico / logo.png icon
+try:
+    import ctypes
+    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("MeatProductsOfIndia.BillingApp.1.0")
+except Exception:
+    pass
+
 # ─── Load Environment Variables ─────────────────────────────────────────────
 try:
     from dotenv import load_dotenv
