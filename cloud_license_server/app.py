@@ -608,6 +608,8 @@ def outlet_ping():
             'status': 'ok',
             'data': {
                 'machine_id': outlet_dict['machine_id'],
+                'outlet_code': outlet_code,
+                'outlet_name': shop_name,
                 'license_status': outlet_dict['status'],
                 'payment_status': outlet_dict['payment_status'],
                 'activated_at': str(outlet_dict['activated_at'] or ''),

@@ -132,14 +132,22 @@ def sync_with_cloud_server():
             return False, f"NEEDS_REREGISTER: {msg}"
 
         if resp_status == 200 and res_json.get('status') == 'ok':
+            data = res_json.get('data', {})
+            server_oc = (data.get('outlet_code') or '').strip()
+            server_on = (data.get('outlet_name') or '').strip()
+
             # Clear any stale re-register / revocation flags since server returned 200 OK
             conn = get_db()
             conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_needs_reregister', '0')")
             conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_revoked', '0')")
+            if server_oc:
+                conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_code', ?)", (server_oc,))
+            if server_on:
+                conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_name', ?)", (server_on,))
+                conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('shop_name', ?)", (server_on,))
             conn.commit()
             conn.close()
 
-            data = res_json.get('data', {})
             cloud_lic_status = data.get('license_status')
             
             if cloud_lic_status == 'active' and data.get('expires_at'):
