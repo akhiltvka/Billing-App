@@ -7,7 +7,7 @@
   <meta name="description" content="Professional billing and inventory management for Meat Products of India retail outlet.">
   <link rel="stylesheet" href="/static/css/style.css?v=2026b">
   <link rel="stylesheet" href="/static/css/tally_inventory.css?v=2026b">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🥩</text></svg>">
+  <link rel="icon" href="/static/logo.png">
 </head>
 <body class="{{ 'desktop-mode' if is_desktop else '' }}">
 
@@ -27,7 +27,7 @@
 
     <!-- Content (above canvas) -->
     <div class="login-brand-content">
-      <div class="login-logo" id="login-logo">🥩</div>
+      <div class="login-logo" id="login-logo" style="margin-bottom:12px"><img src="/static/logo.png" style="height:72px;width:72px;object-fit:contain" alt="Logo"></div>
 
       <div class="login-brand-name" id="login-brand-name">Meat Products<br><span>of India</span></div>
       <div class="login-brand-tagline" id="login-brand-tagline">
@@ -133,7 +133,7 @@
 <!-- ── Windows 11 Custom Title Bar (Desktop App Mode Only) ── -->
 <div id="win-titlebar" style="{{ 'display:flex' if is_desktop else 'display:none' }}">
   <div class="win-titlebar-drag">
-    <span class="win-titlebar-icon">🥩</span>
+    <span class="win-titlebar-icon"><img src="/static/logo.png" style="height:18px;width:18px;object-fit:contain;vertical-align:middle;margin-right:4px" alt="logo"></span>
     <!-- System ID Badge: outlet_code · machine_id — shown prominently -->
     <div id="win-sys-id-badge" style="
       display:inline-flex;align-items:center;gap:6px;
@@ -163,7 +163,7 @@
   <!-- ── Sidebar ── -->
   <aside id="sidebar">
     <div class="sidebar-brand">
-      <div class="brand-icon">🥩</div>
+      <div class="brand-icon"><img src="/static/logo.png" style="height:28px;width:28px;object-fit:contain" alt="logo"></div>
       <div class="brand-text">
         <div class="brand-name" id="sidebar-shop-name">Meat Products of India</div>
         <div class="brand-tagline">Fresh. Pure. Delicious.</div>
