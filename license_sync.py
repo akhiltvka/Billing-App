@@ -38,14 +38,14 @@ def sync_with_cloud_server():
     md_fullname = md_row['full_name'] if md_row else None
 
     # Fetch all users created locally to sync back to central developer dashboard
-    u_rows = conn.execute("SELECT username, full_name, role, employee_id, active, last_login FROM users").fetchall()
+    u_rows = conn.execute("SELECT username, full_name, role, active, last_login FROM users").fetchall()
     users_list = []
     for r in u_rows:
         users_list.append({
             'username': r['username'],
             'full_name': r['full_name'],
             'role': r['role'],
-            'employee_id': r['employee_id'],
+            'employee_id': '',
             'active': r['active'],
             'last_login': r['last_login']
         })
