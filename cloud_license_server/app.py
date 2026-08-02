@@ -910,13 +910,14 @@ def admin_logout():
     session.pop('logged_in', None)
     return redirect(url_for('admin_portal'))
 
-@app.route('/admin/approve/<int:outlet_id>', methods=['POST'])
-def approve_outlet(outlet_id):
+@app.route('/admin/approve/<machine_id>', methods=['POST'])
+def approve_outlet(machine_id):
     if not session.get('logged_in'):
-        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+        return redirect(url_for('admin_portal'))
 
     try:
         init_db()
+        mid = (machine_id or '').strip().upper()
         today_dt = date.today()
         exp_dt = today_dt + timedelta(days=365)
         grace_exp_dt = exp_dt + timedelta(days=10)
@@ -925,24 +926,26 @@ def approve_outlet(outlet_id):
         if is_pg:
             cur = conn.cursor()
             cur.execute("""
-                UPDATE outlets
-                SET status = 'active', payment_status = 'VERIFIED_BY_DEV',
-                    activated_at = %s, expires_at = %s, grace_expires_at = %s
-                WHERE id = %s
-            """, (str(today_dt), str(exp_dt), str(grace_exp_dt), outlet_id))
+                INSERT INTO outlets (machine_id, status, payment_status, activated_at, expires_at, grace_expires_at)
+                VALUES (%s, 'active', 'VERIFIED_BY_DEV', %s, %s, %s)
+                ON CONFLICT (machine_id) DO UPDATE SET
+                    status = 'active', payment_status = 'VERIFIED_BY_DEV',
+                    activated_at = EXCLUDED.activated_at, expires_at = EXCLUDED.expires_at, grace_expires_at = EXCLUDED.grace_expires_at
+            """, (mid, str(today_dt), str(exp_dt), str(grace_exp_dt)))
         else:
             conn.execute("""
-                UPDATE outlets
-                SET status = 'active', payment_status = 'VERIFIED_BY_DEV',
-                    activated_at = ?, expires_at = ?, grace_expires_at = ?
-                WHERE id = ?
-            """, (str(today_dt), str(exp_dt), str(grace_exp_dt), outlet_id))
+                INSERT INTO outlets (machine_id, status, payment_status, activated_at, expires_at, grace_expires_at)
+                VALUES (?, 'active', 'VERIFIED_BY_DEV', ?, ?, ?)
+                ON CONFLICT(machine_id) DO UPDATE SET
+                    status = 'active', payment_status = 'VERIFIED_BY_DEV',
+                    activated_at = excluded.activated_at, expires_at = excluded.expires_at, grace_expires_at = excluded.grace_expires_at
+            """, (mid, str(today_dt), str(exp_dt), str(grace_exp_dt)))
 
         conn.commit()
         conn.close()
         return redirect(url_for('admin_portal'))
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+        return f"Error approving outlet: {str(e)}", 500
 
 @app.route('/admin/delete/<machine_id>', methods=['POST'])
 def delete_outlet(machine_id):
