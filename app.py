@@ -567,6 +567,9 @@ def login():
 @app.route('/api/auth/register-md', methods=['POST'])
 def register_md():
     try:
+        from database import init_db
+        init_db()
+
         # ── First-Run Gate Check ──────────────────────────────────────────────────
         # Check if an MD or Admin owner account has already been registered.
         conn = get_db()
