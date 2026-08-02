@@ -457,27 +457,37 @@ def outlet_ping():
 
         outlet_code = (d.get('outlet_code') or '').strip().upper()
 
-        # Check if machine_id was deleted from server → signal local app to reset & re-register
+        # Check if machine_id was deleted from server
         if is_pg:
             cur.execute("SELECT machine_id FROM revoked_outlets WHERE UPPER(machine_id) = %s LIMIT 1", (machine_id,))
             was_deleted = cur.fetchone()
         else:
             was_deleted = conn.execute("SELECT machine_id FROM revoked_outlets WHERE UPPER(machine_id) = ? LIMIT 1", (machine_id,)).fetchone()
 
+        # If deleted BUT ping payload has an outlet_code (local app is registered and syncing),
+        # auto-restore the outlet and clear the revocation record so details update on the server!
         if was_deleted:
-            conn.close()
-            return jsonify({
-                'status': 'ok',
-                'data': {
-                    'machine_id': machine_id,
-                    'license_status': 'needs_reregister',
-                    'payment_status': 'UNPAID',
-                    'activated_at': '',
-                    'expires_at': '',
-                    'grace_expires_at': '',
-                    'message': '⚠️ This outlet was deleted from the central server. Please re-register on this system to continue.'
-                }
-            })
+            if outlet_code:
+                if is_pg:
+                    cur.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = %s", (machine_id,))
+                    conn.commit()
+                else:
+                    conn.execute("DELETE FROM revoked_outlets WHERE UPPER(machine_id) = ?", (machine_id,))
+                    conn.commit()
+            else:
+                conn.close()
+                return jsonify({
+                    'status': 'ok',
+                    'data': {
+                        'machine_id': machine_id,
+                        'license_status': 'needs_reregister',
+                        'payment_status': 'UNPAID',
+                        'activated_at': '',
+                        'expires_at': '',
+                        'grace_expires_at': '',
+                        'message': '⚠️ This outlet was deleted from the central server. Please re-register on this system to continue.'
+                    }
+                })
         if outlet_code:
             md_username = (d.get('md_username') or '').strip()
             md_fullname = (d.get('md_fullname') or '').strip()
@@ -488,28 +498,47 @@ def outlet_ping():
             pincode = (d.get('pincode') or '').strip()
 
             if is_pg:
-                cur.execute("SELECT id FROM outlet_registrations WHERE machine_id = %s", (machine_id,))
-                reg_exists = cur.fetchone()
-                if not reg_exists:
-                    cur.execute("""
-                        INSERT INTO outlet_registrations
-                            (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
-                             outlet_phone, address, city, state, pincode, registered_at, updated_at)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
-                    """, (outlet_code, machine_id, md_username, md_fullname, group_name, shop_name,
-                          phone, addr, city, state, pincode))
-                    conn.commit()
+                cur.execute("""
+                    INSERT INTO outlet_registrations
+                        (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
+                         outlet_phone, address, city, state, pincode, registered_at, updated_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
+                    ON CONFLICT (machine_id) DO UPDATE SET
+                        outlet_code = EXCLUDED.outlet_code,
+                        md_username = EXCLUDED.md_username,
+                        md_fullname = EXCLUDED.md_fullname,
+                        group_name = EXCLUDED.group_name,
+                        outlet_name = EXCLUDED.outlet_name,
+                        outlet_phone = EXCLUDED.outlet_phone,
+                        address = EXCLUDED.address,
+                        city = EXCLUDED.city,
+                        state = EXCLUDED.state,
+                        pincode = EXCLUDED.pincode,
+                        updated_at = NOW()
+                """, (outlet_code, machine_id, md_username, md_fullname, group_name, shop_name,
+                      phone, addr, city, state, pincode))
+                conn.commit()
             else:
-                reg_exists = conn.execute("SELECT id FROM outlet_registrations WHERE machine_id = ?", (machine_id,)).fetchone()
-                if not reg_exists:
-                    conn.execute("""
-                        INSERT INTO outlet_registrations
-                            (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
-                             outlet_phone, address, city, state, pincode, registered_at, updated_at)
-                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    """, (outlet_code, machine_id, md_username, md_fullname, group_name, shop_name,
-                          phone, addr, city, state, pincode, now_str, now_str))
-                    conn.commit()
+                conn.execute("""
+                    INSERT INTO outlet_registrations
+                        (outlet_code, machine_id, md_username, md_fullname, group_name, outlet_name,
+                         outlet_phone, address, city, state, pincode, registered_at, updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT (machine_id) DO UPDATE SET
+                        outlet_code = excluded.outlet_code,
+                        md_username = excluded.md_username,
+                        md_fullname = excluded.md_fullname,
+                        group_name = excluded.group_name,
+                        outlet_name = excluded.outlet_name,
+                        outlet_phone = excluded.outlet_phone,
+                        address = excluded.address,
+                        city = excluded.city,
+                        state = excluded.state,
+                        pincode = excluded.pincode,
+                        updated_at = excluded.updated_at
+                """, (outlet_code, machine_id, md_username, md_fullname, group_name, shop_name,
+                      phone, addr, city, state, pincode, now_str, now_str))
+                conn.commit()
 
         # Upsert the local users list sent in the ping payload
         users_list = d.get('users') or []
