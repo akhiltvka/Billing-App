@@ -128,11 +128,18 @@
         </td>
         <td style="font-size:12px;color:#94A3B8">{{ o.last_ping[:19] if o.last_ping else '—' }}</td>
         <td onclick="event.stopPropagation()">
-          <form action="/admin/approve/{{ o.id }}" method="POST" style="margin:0">
-            <button class="btn btn-success" type="submit" onclick="return confirm('Confirm ₹12,000 UPI Payment Received for {{ o.reg_outlet_name or o.shop_name }}? This will activate 1-Year subscription!')">
-              {% if o.status == 'active' %}🔄 Extend +1 Year{% else %}⚡ Approve 1 Year (₹12,000){% endif %}
-            </button>
-          </form>
+          <div style="display:flex;gap:6px;align-items:center">
+            <form action="/admin/approve/{{ o.id }}" method="POST" style="margin:0">
+              <button class="btn btn-success" type="submit" onclick="return confirm('Confirm ₹12,000 UPI Payment Received for {{ o.reg_outlet_name or o.shop_name }}? This will activate 1-Year subscription!')">
+                {% if o.status == 'active' %}🔄 Extend +1 Year{% else %}⚡ Approve 1 Year (₹12,000){% endif %}
+              </button>
+            </form>
+            <form action="/admin/delete/{{ o.machine_id }}" method="POST" style="margin:0">
+              <button class="btn btn-danger" type="submit" style="padding:6px 10px;font-size:12px;background:#EF4444;border-radius:6px;color:#fff;border:none;cursor:pointer" onclick="return confirm('Are you sure you want to delete outlet {{ o.reg_outlet_name or o.shop_name }} ({{ o.machine_id[:8] }})?')">
+                🗑️ Delete
+              </button>
+            </form>
+          </div>
         </td>
       </tr>
       {% endfor %}

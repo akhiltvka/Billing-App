@@ -937,6 +937,33 @@ def approve_outlet(outlet_id):
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+@app.route('/admin/delete/<machine_id>', methods=['POST'])
+def delete_outlet(machine_id):
+    if not session.get('logged_in'):
+        return redirect(url_for('admin_portal'))
+
+    try:
+        init_db()
+        mid = (machine_id or '').strip().upper()
+        conn, is_pg = get_db()
+        if is_pg:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM outlets WHERE UPPER(machine_id) = %s", (mid,))
+            cur.execute("DELETE FROM outlet_registrations WHERE UPPER(machine_id) = %s", (mid,))
+            cur.execute("DELETE FROM outlet_users WHERE UPPER(machine_id) = %s", (mid,))
+            cur.execute("DELETE FROM activation_keys WHERE UPPER(machine_id) = %s", (mid,))
+        else:
+            conn.execute("DELETE FROM outlets WHERE UPPER(machine_id) = ?", (mid,))
+            conn.execute("DELETE FROM outlet_registrations WHERE UPPER(machine_id) = ?", (mid,))
+            conn.execute("DELETE FROM outlet_users WHERE UPPER(machine_id) = ?", (mid,))
+            conn.execute("DELETE FROM activation_keys WHERE UPPER(machine_id) = ?", (mid,))
+        conn.commit()
+        conn.close()
+
+        return redirect(url_for('admin_portal'))
+    except Exception as e:
+        return f"Error deleting outlet: {str(e)}", 500
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
     app.run(host='0.0.0.0', port=port, debug=True)
