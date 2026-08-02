@@ -726,33 +726,43 @@ def activate_key():
 
         # Record activation key binding & update outlet status
         if is_pg:
-            cur.execute("""
-                INSERT INTO activation_keys (key, machine_id, redeemed_at)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (key) DO UPDATE SET machine_id = EXCLUDED.machine_id
-            """, (clean_k, machine_id, str(today_dt)))
+            cur.execute("SELECT id FROM activation_keys WHERE UPPER(key) = %s LIMIT 1", (clean_k.upper(),))
+            if cur.fetchone():
+                cur.execute("UPDATE activation_keys SET machine_id = %s, redeemed_at = %s WHERE UPPER(key) = %s", (machine_id, str(today_dt), clean_k.upper()))
+            else:
+                cur.execute("INSERT INTO activation_keys (key, machine_id, redeemed_at) VALUES (%s, %s, %s)", (clean_k, machine_id, str(today_dt)))
 
-            cur.execute("""
-                INSERT INTO outlets (machine_id, status, payment_status, activated_at, expires_at, grace_expires_at)
-                VALUES (%s, 'active', 'VERIFIED_KEY', %s, %s, %s)
-                ON CONFLICT (machine_id) DO UPDATE SET
-                    status = 'active', payment_status = 'VERIFIED_KEY',
-                    activated_at = EXCLUDED.activated_at, expires_at = EXCLUDED.expires_at, grace_expires_at = EXCLUDED.grace_expires_at
-            """, (machine_id, str(today_dt), str(exp_dt), str(grace_exp_dt)))
+            cur.execute("SELECT id FROM outlets WHERE UPPER(machine_id) = %s LIMIT 1", (machine_id.upper(),))
+            if cur.fetchone():
+                cur.execute("""
+                    UPDATE outlets SET status = 'active', payment_status = 'VERIFIED_KEY',
+                        activated_at = %s, expires_at = %s, grace_expires_at = %s
+                    WHERE UPPER(machine_id) = %s
+                """, (str(today_dt), str(exp_dt), str(grace_exp_dt), machine_id.upper()))
+            else:
+                cur.execute("""
+                    INSERT INTO outlets (machine_id, status, payment_status, activated_at, expires_at, grace_expires_at)
+                    VALUES (%s, 'active', 'VERIFIED_KEY', %s, %s, %s)
+                """, (machine_id, str(today_dt), str(exp_dt), str(grace_exp_dt)))
         else:
-            conn.execute("""
-                INSERT INTO activation_keys (key, machine_id, redeemed_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(key) DO UPDATE SET machine_id = excluded.machine_id
-            """, (clean_k, machine_id, str(today_dt)))
+            k_row = conn.execute("SELECT id FROM activation_keys WHERE UPPER(key) = ? LIMIT 1", (clean_k.upper(),)).fetchone()
+            if k_row:
+                conn.execute("UPDATE activation_keys SET machine_id = ?, redeemed_at = ? WHERE UPPER(key) = ?", (machine_id, str(today_dt), clean_k.upper()))
+            else:
+                conn.execute("INSERT INTO activation_keys (key, machine_id, redeemed_at) VALUES (?, ?, ?)", (clean_k, machine_id, str(today_dt)))
 
-            conn.execute("""
-                INSERT INTO outlets (machine_id, status, payment_status, activated_at, expires_at, grace_expires_at)
-                VALUES (?, 'active', 'VERIFIED_KEY', ?, ?, ?)
-                ON CONFLICT(machine_id) DO UPDATE SET
-                    status = 'active', payment_status = 'VERIFIED_KEY',
-                    activated_at = excluded.activated_at, expires_at = excluded.expires_at, grace_expires_at = excluded.grace_expires_at
-            """, (machine_id, str(today_dt), str(exp_dt), str(grace_exp_dt)))
+            o_row = conn.execute("SELECT id FROM outlets WHERE UPPER(machine_id) = ? LIMIT 1", (machine_id.upper(),)).fetchone()
+            if o_row:
+                conn.execute("""
+                    UPDATE outlets SET status = 'active', payment_status = 'VERIFIED_KEY',
+                        activated_at = ?, expires_at = ?, grace_expires_at = ?
+                    WHERE UPPER(machine_id) = ?
+                """, (str(today_dt), str(exp_dt), str(grace_exp_dt), machine_id.upper()))
+            else:
+                conn.execute("""
+                    INSERT INTO outlets (machine_id, status, payment_status, activated_at, expires_at, grace_expires_at)
+                    VALUES (?, 'active', 'VERIFIED_KEY', ?, ?, ?)
+                """, (machine_id, str(today_dt), str(exp_dt), str(grace_exp_dt)))
 
         conn.commit()
         conn.close()
@@ -798,21 +808,31 @@ def webhook_payment():
         conn, is_pg = get_db()
         if is_pg:
             cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO outlets (machine_id, status, payment_status, utr_number, activated_at, expires_at, grace_expires_at)
-                VALUES (%s, 'active', 'VERIFIED_AUTO_WEBHOOK', %s, %s, %s, %s)
-                ON CONFLICT (machine_id) DO UPDATE SET
-                    status = 'active', payment_status = 'VERIFIED_AUTO_WEBHOOK', utr_number = EXCLUDED.utr_number,
-                    activated_at = EXCLUDED.activated_at, expires_at = EXCLUDED.expires_at, grace_expires_at = EXCLUDED.grace_expires_at
-            """, (machine_id, utr, str(today_dt), str(exp_dt), str(grace_exp_dt)))
+            cur.execute("SELECT id FROM outlets WHERE UPPER(machine_id) = %s LIMIT 1", (machine_id.upper(),))
+            if cur.fetchone():
+                cur.execute("""
+                    UPDATE outlets SET status = 'active', payment_status = 'VERIFIED_AUTO_WEBHOOK', utr_number = %s,
+                        activated_at = %s, expires_at = %s, grace_expires_at = %s
+                    WHERE UPPER(machine_id) = %s
+                """, (utr, str(today_dt), str(exp_dt), str(grace_exp_dt), machine_id.upper()))
+            else:
+                cur.execute("""
+                    INSERT INTO outlets (machine_id, status, payment_status, utr_number, activated_at, expires_at, grace_expires_at)
+                    VALUES (%s, 'active', 'VERIFIED_AUTO_WEBHOOK', %s, %s, %s, %s)
+                """, (machine_id, utr, str(today_dt), str(exp_dt), str(grace_exp_dt)))
         else:
-            conn.execute("""
-                INSERT INTO outlets (machine_id, status, payment_status, utr_number, activated_at, expires_at, grace_expires_at)
-                VALUES (?, 'active', 'VERIFIED_AUTO_WEBHOOK', ?, ?, ?, ?)
-                ON CONFLICT(machine_id) DO UPDATE SET
-                    status = 'active', payment_status = 'VERIFIED_AUTO_WEBHOOK', utr_number = excluded.utr_number,
-                    activated_at = excluded.activated_at, expires_at = excluded.expires_at, grace_expires_at = excluded.grace_expires_at
-            """, (machine_id, utr, str(today_dt), str(exp_dt), str(grace_exp_dt)))
+            o_row = conn.execute("SELECT id FROM outlets WHERE UPPER(machine_id) = ? LIMIT 1", (machine_id.upper(),)).fetchone()
+            if o_row:
+                conn.execute("""
+                    UPDATE outlets SET status = 'active', payment_status = 'VERIFIED_AUTO_WEBHOOK', utr_number = ?,
+                        activated_at = ?, expires_at = ?, grace_expires_at = ?
+                    WHERE UPPER(machine_id) = ?
+                """, (utr, str(today_dt), str(exp_dt), str(grace_exp_dt), machine_id.upper()))
+            else:
+                conn.execute("""
+                    INSERT INTO outlets (machine_id, status, payment_status, utr_number, activated_at, expires_at, grace_expires_at)
+                    VALUES (?, 'active', 'VERIFIED_AUTO_WEBHOOK', ?, ?, ?, ?)
+                """, (machine_id, utr, str(today_dt), str(exp_dt), str(grace_exp_dt)))
 
         conn.commit()
         conn.close()
@@ -1073,21 +1093,31 @@ def approve_outlet(machine_id):
         conn, is_pg = get_db()
         if is_pg:
             cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO outlets (machine_id, status, payment_status, activated_at, expires_at, grace_expires_at)
-                VALUES (%s, 'active', 'VERIFIED_BY_DEV', %s, %s, %s)
-                ON CONFLICT (machine_id) DO UPDATE SET
-                    status = 'active', payment_status = 'VERIFIED_BY_DEV',
-                    activated_at = EXCLUDED.activated_at, expires_at = EXCLUDED.expires_at, grace_expires_at = EXCLUDED.grace_expires_at
-            """, (mid, str(today_dt), str(exp_dt), str(grace_exp_dt)))
+            cur.execute("SELECT id FROM outlets WHERE UPPER(machine_id) = %s LIMIT 1", (mid.upper(),))
+            if cur.fetchone():
+                cur.execute("""
+                    UPDATE outlets SET status = 'active', payment_status = 'VERIFIED_BY_DEV',
+                        activated_at = %s, expires_at = %s, grace_expires_at = %s
+                    WHERE UPPER(machine_id) = %s
+                """, (str(today_dt), str(exp_dt), str(grace_exp_dt), mid.upper()))
+            else:
+                cur.execute("""
+                    INSERT INTO outlets (machine_id, status, payment_status, activated_at, expires_at, grace_expires_at)
+                    VALUES (%s, 'active', 'VERIFIED_BY_DEV', %s, %s, %s)
+                """, (mid, str(today_dt), str(exp_dt), str(grace_exp_dt)))
         else:
-            conn.execute("""
-                INSERT INTO outlets (machine_id, status, payment_status, activated_at, expires_at, grace_expires_at)
-                VALUES (?, 'active', 'VERIFIED_BY_DEV', ?, ?, ?)
-                ON CONFLICT(machine_id) DO UPDATE SET
-                    status = 'active', payment_status = 'VERIFIED_BY_DEV',
-                    activated_at = excluded.activated_at, expires_at = excluded.expires_at, grace_expires_at = excluded.grace_expires_at
-            """, (mid, str(today_dt), str(exp_dt), str(grace_exp_dt)))
+            o_row = conn.execute("SELECT id FROM outlets WHERE UPPER(machine_id) = ? LIMIT 1", (mid.upper(),)).fetchone()
+            if o_row:
+                conn.execute("""
+                    UPDATE outlets SET status = 'active', payment_status = 'VERIFIED_BY_DEV',
+                        activated_at = ?, expires_at = ?, grace_expires_at = ?
+                    WHERE UPPER(machine_id) = ?
+                """, (str(today_dt), str(exp_dt), str(grace_exp_dt), mid.upper()))
+            else:
+                conn.execute("""
+                    INSERT INTO outlets (machine_id, status, payment_status, activated_at, expires_at, grace_expires_at)
+                    VALUES (?, 'active', 'VERIFIED_BY_DEV', ?, ?, ?)
+                """, (mid, str(today_dt), str(exp_dt), str(grace_exp_dt)))
 
         conn.commit()
         conn.close()
