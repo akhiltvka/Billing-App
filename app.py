@@ -799,6 +799,32 @@ def logout():
     session.clear()
     return ok(message="Logged out")
 
+# ─── Background Cloud License Sync Loop ─────────────────────────────────────
+_cloud_sync_thread_started = False
+
+def _background_cloud_sync_loop():
+    import time
+    time.sleep(2)
+    while True:
+        try:
+            sync_with_cloud_server()
+        except Exception:
+            pass
+        time.sleep(60)
+
+def start_background_cloud_sync():
+    global _cloud_sync_thread_started
+    if not _cloud_sync_thread_started:
+        _cloud_sync_thread_started = True
+        import threading
+        t = threading.Thread(target=_background_cloud_sync_loop, daemon=True)
+        t.start()
+
+try:
+    start_background_cloud_sync()
+except Exception as _e:
+    print(f"Background cloud sync thread init notice: {_e}")
+
 @app.route('/api/auth/me', methods=['GET'])
 def me():
     if 'user_id' not in session:
@@ -809,6 +835,14 @@ def me():
     if not user or not user['active']:
         session.clear()
         return err("Session expired", 401)
+
+    # ⚡ Auto-sync with central license server on page load / session check!
+    try:
+        import threading
+        threading.Thread(target=sync_with_cloud_server, daemon=True).start()
+    except Exception:
+        pass
+
     must_change = bool(dict(user).get('must_change_password', 0))
     return ok({
         'id':                   user['id'],
