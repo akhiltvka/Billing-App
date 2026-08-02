@@ -121,12 +121,12 @@
             <a href="/admin/download-db/{{ o.machine_id }}" class="btn btn-db" title="Download latest meatshop.db database file">
               📥 Download .db
             </a>
-            <div style="font-size:10px;color:#94A3B8;margin-top:3px">{{ o.backup_size_kb }} KB &bull; {{ o.backup_time[:10] }}</div>
+            <div style="font-size:10px;color:#94A3B8;margin-top:3px">{{ o.backup_size_kb }} KB &bull; {{ (o.backup_time|string)[:10] }}</div>
           {% else %}
             <span style="color:#64748B;font-size:11px">No backup file</span>
           {% endif %}
         </td>
-        <td style="font-size:12px;color:#94A3B8">{{ o.last_ping[:19] if o.last_ping else '—' }}</td>
+        <td style="font-size:12px;color:#94A3B8">{{ (o.last_ping|string)[:19] if o.last_ping else '—' }}</td>
         <td onclick="event.stopPropagation()">
           <div style="display:flex;gap:6px;align-items:center">
             <form action="/admin/approve/{{ o.id }}" method="POST" style="margin:0">

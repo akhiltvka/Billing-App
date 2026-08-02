@@ -794,7 +794,10 @@ def admin_portal():
                 user_rows = conn.execute("SELECT machine_id, username, full_name, role, employee_id, active, last_login FROM outlet_users ORDER BY username").fetchall()
             for ur in user_rows:
                 u_dict = dict(ur)
-                mid = u_dict['machine_id'].strip().upper()
+                for k, v in list(u_dict.items()):
+                    if isinstance(v, (datetime, date)):
+                        u_dict[k] = str(v)
+                mid = (u_dict.get('machine_id') or '').strip().upper()
                 if mid not in users_by_machine:
                     users_by_machine[mid] = []
                 users_by_machine[mid].append(u_dict)
@@ -808,6 +811,10 @@ def admin_portal():
 
         for o in outlets:
             d = dict(o)
+            for k, v in list(d.items()):
+                if isinstance(v, (datetime, date)):
+                    d[k] = str(v)
+
             mid = (d.get('machine_id') or '').strip().upper()
             d['users'] = users_by_machine.get(mid, [])
             outlet_dir = os.path.join(base_backup_dir, mid)
