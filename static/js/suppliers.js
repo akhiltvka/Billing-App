@@ -34,7 +34,7 @@ const Suppliers = {
                         <button class="btn btn-secondary btn-sm btn-icon" onclick="Suppliers.showModal(${JSON.stringify(JSON.stringify(s))})" title="Edit">✏️</button>
                         <button class="btn btn-danger btn-sm btn-icon" onclick="Suppliers.delete(${s.id},'${s.name}')" title="Delete">🗑️</button>
                       </div>` : ''}
-                    </div>`
+                    </div>
                     <div style="display:flex;flex-direction:column;gap:8px">
                       ${s.phone ? `<div style="display:flex;align-items:center;gap:8px;font-size:13px"><span>📞</span><span>${s.phone}</span></div>` : ''}
                       ${s.email ? `<div style="display:flex;align-items:center;gap:8px;font-size:13px"><span>✉️</span><span class="text-muted">${s.email}</span></div>` : ''}
@@ -70,8 +70,8 @@ const Suppliers = {
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label">Phone</label>
-            <input class="form-control" id="s-phone" value="${s?.phone || ''}" placeholder="+91 XXXXX XXXXX">
+            <label class="form-label">Phone Number (10 digits)</label>
+            <input class="form-control" id="s-phone" value="${s?.phone || ''}" placeholder="10-digit mobile number" maxlength="10" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
           </div>
           <div class="form-group">
             <label class="form-label">Email</label>
@@ -97,10 +97,15 @@ const Suppliers = {
   async save(id) {
     const name = document.getElementById('s-name').value.trim();
     if (!name) { App.toast('Name required', 'error'); return; }
+    const phone = document.getElementById('s-phone').value.trim();
+    if (phone && !/^\d{10}$/.test(phone)) {
+      App.toast('Phone number must be exactly 10 digits', 'error');
+      return;
+    }
     const payload = {
       name,
       contact_person: document.getElementById('s-contact').value,
-      phone:  document.getElementById('s-phone').value,
+      phone,
       email:  document.getElementById('s-email').value,
       address: document.getElementById('s-address').value,
       gstin:  document.getElementById('s-gstin').value,

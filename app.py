@@ -2394,10 +2394,13 @@ def create_customer():
     if d is None:
         return err("Invalid or missing JSON payload")
     if not d.get('name'): return err("Name required")
+    phone = (d.get('phone') or '').strip()
+    if phone and (not phone.isdigit() or len(phone) != 10):
+        return err("Phone number must be exactly 10 digits")
     conn = get_db()
     c = conn.execute(
         'INSERT INTO customers (name, phone, email, address, gstin, state_code) VALUES (?,?,?,?,?,?)',
-        (d['name'], d.get('phone',''), d.get('email',''), d.get('address',''), d.get('gstin',''), d.get('state_code',''))
+        (d['name'], phone, d.get('email',''), d.get('address',''), d.get('gstin',''), d.get('state_code',''))
     )
     conn.commit()
     row = conn.execute('SELECT * FROM customers WHERE id=?', (c.lastrowid,)).fetchone()
@@ -2411,10 +2414,13 @@ def update_customer(cid):
     if d is None:
         return err("Invalid or missing JSON payload")
     if not d.get('name'): return err("Name required")
+    phone = (d.get('phone') or '').strip()
+    if phone and (not phone.isdigit() or len(phone) != 10):
+        return err("Phone number must be exactly 10 digits")
     conn = get_db()
     conn.execute(
         'UPDATE customers SET name=?, phone=?, email=?, address=?, gstin=?, state_code=? WHERE id=?',
-        (d['name'], d.get('phone',''), d.get('email',''), d.get('address',''), d.get('gstin',''), d.get('state_code',''), cid)
+        (d['name'], phone, d.get('email',''), d.get('address',''), d.get('gstin',''), d.get('state_code',''), cid)
     )
     conn.commit()
     row = conn.execute('SELECT * FROM customers WHERE id=?', (cid,)).fetchone()
@@ -2555,10 +2561,13 @@ def create_supplier():
     if d is None:
         return err("Invalid or missing JSON payload")
     if not d.get('name'): return err("Name required")
+    phone = (d.get('phone') or '').strip()
+    if phone and (not phone.isdigit() or len(phone) != 10):
+        return err("Phone number must be exactly 10 digits")
     conn = get_db()
     c = conn.execute(
         'INSERT INTO suppliers (name, contact_person, phone, email, address, gstin) VALUES (?,?,?,?,?,?)',
-        (d['name'], d.get('contact_person',''), d.get('phone',''),
+        (d['name'], d.get('contact_person',''), phone,
          d.get('email',''), d.get('address',''), d.get('gstin',''))
     )
     conn.commit()
@@ -2573,10 +2582,13 @@ def update_supplier(sid):
     if d is None:
         return err("Invalid or missing JSON payload")
     if not d.get('name'): return err("Name required")
+    phone = (d.get('phone') or '').strip()
+    if phone and (not phone.isdigit() or len(phone) != 10):
+        return err("Phone number must be exactly 10 digits")
     conn = get_db()
     conn.execute(
         'UPDATE suppliers SET name=?, contact_person=?, phone=?, email=?, address=?, gstin=? WHERE id=?',
-        (d['name'], d.get('contact_person',''), d.get('phone',''),
+        (d['name'], d.get('contact_person',''), phone,
          d.get('email',''), d.get('address',''), d.get('gstin',''), sid)
     )
     conn.commit()

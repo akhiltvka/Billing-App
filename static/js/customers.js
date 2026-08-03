@@ -89,8 +89,8 @@ const Customers = {
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label">Mobile Number</label>
-            <input class="form-control" id="c-phone" value="${c?.phone || ''}" placeholder="+91 XXXXX XXXXX">
+            <label class="form-label">Mobile Number (10 digits)</label>
+            <input class="form-control" id="c-phone" value="${c?.phone || ''}" placeholder="10-digit mobile number" maxlength="10" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
           </div>
           <div class="form-group">
             <label class="form-label">Email</label>
@@ -116,9 +116,14 @@ const Customers = {
   async save(id) {
     const name = document.getElementById('c-name').value.trim();
     if (!name) { App.toast('Name required', 'error'); return; }
+    const phone = document.getElementById('c-phone').value.trim();
+    if (phone && !/^\d{10}$/.test(phone)) {
+      App.toast('Phone number must be exactly 10 digits', 'error');
+      return;
+    }
     const payload = {
       name,
-      phone:   document.getElementById('c-phone').value,
+      phone,
       email:   document.getElementById('c-email').value,
       address: document.getElementById('c-address').value,
       gstin:   document.getElementById('c-gstin').value,

@@ -247,8 +247,8 @@ const Billing = {
           <input class="form-control" id="qc-name" placeholder="e.g., John Doe" autofocus>
         </div>
         <div class="form-group">
-          <label class="form-label required">Mobile Phone Number</label>
-          <input class="form-control" id="qc-phone" placeholder="+91 XXXXX XXXXX">
+          <label class="form-label required">Mobile Phone Number (10 digits)</label>
+          <input class="form-control" id="qc-phone" placeholder="10-digit mobile number" maxlength="10" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
         </div>
         <div class="form-group">
           <label class="form-label">GSTIN (optional for B2B)</label>
@@ -268,6 +268,10 @@ const Billing = {
 
     if (!name) { App.toast('Customer name is required', 'error'); return; }
     if (!phone) { App.toast('Phone number is required', 'error'); return; }
+    if (!/^\d{10}$/.test(phone)) {
+      App.toast('Phone number must be exactly 10 digits', 'error');
+      return;
+    }
 
     try {
       const newCust = await App.api('/customers', 'POST', { name, phone, gstin });
