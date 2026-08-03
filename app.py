@@ -32,6 +32,7 @@ else:
     app = Flask(__name__)
 
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
+app.config['APP_VERSION'] = '1.0.0'
 
 @app.after_request
 def add_header(response):
@@ -641,7 +642,7 @@ def utility_processor():
 @app.route('/')
 def index():
     is_desktop = os.environ.get('FLASK_DESKTOP') == '1'
-    return render_template('index.html', is_desktop=is_desktop, app_version=app.config['APP_VERSION'])
+    return render_template('index.html', is_desktop=is_desktop, app_version=app.config.get('APP_VERSION', '1.0.0'))
 
 @app.route('/invoice/<int:bill_id>')
 def invoice_page(bill_id):
