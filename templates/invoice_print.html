@@ -26,7 +26,7 @@
 
     @media print {
       body { background: white; }
-      .page { width: 100%; margin: 0; padding: 12px; box-shadow: none; }
+      .page { width: 100%; min-height: auto !important; margin: 0; padding: 12px; box-shadow: none; }
       .no-print { display: none !important; }
       @page { margin: 0; size: A4 portrait; }
     }
@@ -145,8 +145,8 @@
 </div>
 
 <script>
-  const pathParts = window.location.pathname.split('/');
-  const billId = parseInt(pathParts[pathParts.indexOf('invoice') + 1]);
+  const match = window.location.pathname.match(/\/invoice\/(\d+)/i);
+  const billId = match ? parseInt(match[1]) : NaN;
   let billData = null;
 
   function updatePageStyle(isA4) {
@@ -160,14 +160,14 @@
       styleEl.textContent = `
         @media print {
           @page { size: A4 portrait; margin: 15mm; }
-          .page { width: 100%; max-width: 100%; padding: 0; box-shadow: none; margin: 0; }
+          .page { width: 100%; min-height: auto !important; max-width: 100%; padding: 0; box-shadow: none; margin: 0; }
         }
       `;
     } else {
       styleEl.textContent = `
         @media print {
-          @page { size: 80mm auto; margin: 0; }
-          .page { width: 100%; padding: 12px; box-shadow: none; margin: 0; }
+          @page { size: {{ width }}mm auto; margin: 0; }
+          .page { width: 100%; min-height: auto !important; padding: 12px; box-shadow: none; margin: 0; }
         }
       `;
     }
