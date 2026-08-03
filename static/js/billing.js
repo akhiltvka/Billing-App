@@ -31,7 +31,7 @@ const Billing = {
             <!-- Customer Panel -->
             <div class="card customer-panel" style="padding:14px 16px">
               <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                <div style="flex:1;min-width:240px">
+                <div style="flex:1;min-width:240px;position:relative">
                   <div class="form-label mb-8" style="display:flex;justify-content:space-between;align-items:center">
                     <span>Customer (optional)</span>
                     <button class="btn btn-secondary btn-sm" onclick="Billing.showQuickCustomerModal()" title="Shortcut: F11 or Alt+C or Ctrl+N" style="padding:2px 8px;font-size:11px">
@@ -42,7 +42,7 @@ const Billing = {
                     <input id="customer-search" class="form-control" placeholder="Search by name or phone…" oninput="Billing.searchCustomer(this.value)" onfocus="Billing.searchCustomer(this.value)" onclick="Billing.searchCustomer(this.value)" autocomplete="off">
                     <button class="btn btn-secondary btn-icon" onclick="Billing.clearCustomer()" title="Walk-in">👤</button>
                   </div>
-                  <div id="customer-results" class="product-search-results"></div>
+                  <div id="customer-results" class="product-search-results" style="position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--bg-card);border:1px solid var(--border-strong);border-radius:var(--r-md);box-shadow:var(--shadow-lg);max-height:280px;overflow-y:auto;display:none"></div>
                 </div>
                 <div id="customer-info" style="min-width:180px">
                   <div class="badge badge-info" id="customer-badge">👤 Walk-in Customer</div>
@@ -183,17 +183,17 @@ const Billing = {
               <button class="btn btn-gold btn-xl w-full" id="btn-save-bill" onclick="Billing.saveBill()">
                 💾 Save & Print Bill
               </button>
-              <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px">
-                <button class="btn btn-primary btn-sm" onclick="Billing.startNewBill()" title="Start New Bill (F1)">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px">
+                <button class="btn btn-primary btn-sm" onclick="Billing.startNewBill()" title="Start New Bill (F1)" style="padding:8px 6px;font-weight:600">
                   ✨ New Bill
                 </button>
-                <button class="btn btn-secondary btn-sm" onclick="Billing.saveBill(false)">
+                <button class="btn btn-secondary btn-sm" onclick="Billing.saveBill(false)" style="padding:8px 6px;font-weight:600">
                   💾 Save Only
                 </button>
-                <button class="btn btn-warning btn-sm" onclick="Billing.holdCurrentBill()" title="Hold Bill (F5)">
+                <button class="btn btn-warning btn-sm" onclick="Billing.holdCurrentBill()" title="Hold Bill (F5)" style="padding:8px 6px;font-weight:600">
                   ⏸️ Hold Bill
                 </button>
-                <button class="btn btn-danger btn-sm" onclick="Billing.clearCart()">
+                <button class="btn btn-danger btn-sm" onclick="Billing.clearCart()" style="padding:8px 6px;font-weight:600">
                   🗑️ Clear Cart
                 </button>
               </div>
@@ -641,26 +641,29 @@ const Billing = {
         if (qStr.length > 0) {
           const safeQ = qStr.replace(/'/g, "\\'");
           const isNum = /^\+?\d+$/.test(qStr);
-          el.innerHTML = `<div class="search-result-item" onclick="Billing.showQuickCustomerModal(); setTimeout(() => { const field = document.getElementById('${isNum ? 'qc-phone' : 'qc-name'}'); if (field) { field.value = '${safeQ}'; field.focus(); } }, 150);" style="cursor:pointer;color:var(--primary);padding:10px">
-            <span>➕ No customer found — <strong style="text-decoration:underline">Click to Add "${qStr}"</strong></span>
+          el.innerHTML = `<div class="search-result-item" onmousedown="event.preventDefault(); Billing.showQuickCustomerModal(); setTimeout(() => { const field = document.getElementById('${isNum ? 'qc-phone' : 'qc-name'}'); if (field) { field.value = '${safeQ}'; field.focus(); } }, 150);" style="cursor:pointer;color:var(--crimson);padding:12px 14px;font-weight:600">
+            <span>➕ No customer found — <strong style="text-decoration:underline">Click to Add "${safeQ}"</strong></span>
           </div>`;
         } else {
-          el.innerHTML = `<div class="search-result-item" style="padding:10px;color:var(--text-muted)">
+          el.innerHTML = `<div class="search-result-item" style="padding:12px 14px;color:var(--text-muted)">
             <span>No saved customers found. Click "Quick Add Customer" to create one.</span>
           </div>`;
         }
       } else {
         el.innerHTML = customers.map((c, idx) => `
-          <div class="search-result-item" onclick="Billing.selectCustomerByIndex(${idx})" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border)">
+          <div class="search-result-item" onmousedown="event.preventDefault(); Billing.selectCustomerByIndex(${idx})" style="padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
             <div>
-              <div class="item-name" style="font-weight:600;font-size:14px">${App.escapeHtml(c.name)}</div>
-              <div class="item-meta" style="font-size:12px;color:var(--text-muted)">📞 ${App.escapeHtml(c.phone || 'No phone')} ${c.gstin ? '• GSTIN: ' + App.escapeHtml(c.gstin) : ''}</div>
+              <div class="item-name" style="font-weight:700;font-size:14px;color:var(--text-primary)">👤 ${App.escapeHtml(c.name)}</div>
+              <div class="item-meta" style="font-size:12px;color:var(--text-muted);margin-top:2px">📞 ${App.escapeHtml(c.phone || 'No phone')} ${c.gstin ? '• GSTIN: ' + App.escapeHtml(c.gstin) : ''}</div>
             </div>
+            <div style="font-size:12px;font-weight:600;color:var(--crimson)">Select ➔</div>
           </div>`).join('');
       }
+      el.style.display = 'block';
       el.classList.add('show');
     } catch(e) {
       console.error("Customer search error:", e);
+      el.style.display = 'none';
       el.classList.remove('show');
     }
   },
@@ -674,7 +677,10 @@ const Billing = {
     if (input) input.value = c.name;
 
     const el = document.getElementById('customer-results');
-    if (el) el.classList.remove('show');
+    if (el) {
+      el.style.display = 'none';
+      el.classList.remove('show');
+    }
 
     const badge = document.getElementById('customer-badge');
     if (badge) {
@@ -689,7 +695,11 @@ const Billing = {
     this.customer = c;
     const input = document.getElementById('customer-search');
     if (input) input.value = c.name;
-    document.getElementById('customer-results')?.classList.remove('show');
+    const el = document.getElementById('customer-results');
+    if (el) {
+      el.style.display = 'none';
+      el.classList.remove('show');
+    }
     const badge = document.getElementById('customer-badge');
     if (badge) {
       badge.innerHTML = `👤 <strong>${App.escapeHtml(c.name)}</strong> (${App.escapeHtml(c.phone || 'No phone')})`;
@@ -701,7 +711,11 @@ const Billing = {
     this.customer = null;
     const input = document.getElementById('customer-search');
     if (input) input.value = '';
-    document.getElementById('customer-results')?.classList.remove('show');
+    const el = document.getElementById('customer-results');
+    if (el) {
+      el.style.display = 'none';
+      el.classList.remove('show');
+    }
     const badge = document.getElementById('customer-badge');
     if (badge) {
       badge.innerHTML = '👤 Walk-in Customer';
@@ -1022,3 +1036,20 @@ const Billing = {
     } catch(e) { App.toast(e.message, 'error'); }
   },
 };
+
+// Global click-outside listener to hide search dropdowns
+document.addEventListener('click', (e) => {
+  const custSearch = document.getElementById('customer-search');
+  const custResults = document.getElementById('customer-results');
+  if (custResults && custSearch && !custSearch.contains(e.target) && !custResults.contains(e.target)) {
+    custResults.style.display = 'none';
+    custResults.classList.remove('show');
+  }
+
+  const prodSearch = document.getElementById('product-search');
+  const prodResults = document.getElementById('product-results');
+  if (prodResults && prodSearch && !prodSearch.contains(e.target) && !prodResults.contains(e.target)) {
+    prodResults.style.display = 'none';
+    prodResults.classList.remove('show');
+  }
+});
