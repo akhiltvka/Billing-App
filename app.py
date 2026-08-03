@@ -174,10 +174,10 @@ def log_permission_audit(user_id, username, permission_code, route, method, allo
         print(f"[Audit Log Error] {e}")
 
 
-def require_permission(code):
+def require_permission(*codes):
     """
     Decorator enforcing granular role-based permissions.
-    1. Checks if current user's role has the specified permission code (or '*').
+    1. Checks if current user's role has ANY of the specified permission codes (or '*').
     2. Logs denied attempts to audit_log and returns 403 error/redirect.
     3. Audits allowed sensitive actions (settings.gst_toggle, billing.void_bill, inventory.edit_price).
     """
@@ -204,11 +204,12 @@ def require_permission(code):
             method = request.method
 
             user_perms = get_user_permissions(user_id)
-            is_allowed = (code in user_perms) or ('*' in user_perms)
+            is_allowed = ('*' in user_perms) or any(c in user_perms for c in codes)
+            code = codes[0] if codes else 'access'
 
             # Special discount cap check for billing.give_discount
             eval_code = code
-            if is_allowed and code == 'billing.create':
+            if is_allowed and 'billing.create' in codes:
                 d = request.get_json(silent=True) or {}
                 disc = float(d.get('discount_percent', 0))
                 if disc > 0 and 'billing.give_discount' not in user_perms and '*' not in user_perms:
@@ -2387,7 +2388,7 @@ def get_customer_dues(cid):
     return ok(res)
 
 @app.route('/api/customers', methods=['POST'])
-@require_permission('customers.manage')
+@require_permission('customers.manage', 'customers.create', 'billing.create')
 def create_customer():
     d = request.get_json()
     if d is None:

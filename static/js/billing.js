@@ -604,7 +604,11 @@ const Billing = {
     try {
       const customers = await App.api(`/customers?q=${encodeURIComponent(query)}`);
       if (customers.length === 0) {
-        el.innerHTML = '<div class="search-result-item"><span class="text-muted">No customer found</span></div>';
+        const safeQ = query.replace(/'/g, "\\'");
+        const isNum = /^\+?\d+$/.test(query);
+        el.innerHTML = `<div class="search-result-item" onclick="Billing.showQuickCustomerModal(); setTimeout(() => { const field = document.getElementById('${isNum ? 'qc-phone' : 'qc-name'}'); if (field) { field.value = '${safeQ}'; field.focus(); } }, 150);" style="cursor:pointer;color:var(--primary);padding:10px">
+          <span>➕ No customer found — <strong style="text-decoration:underline">Click to Add "${query}"</strong></span>
+        </div>`;
       } else {
         el.innerHTML = customers.map(c => `
           <div class="search-result-item" onclick="Billing.selectCustomer(${JSON.stringify(JSON.stringify(c))})">
