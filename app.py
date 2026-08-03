@@ -608,10 +608,11 @@ def login():
         except Exception:
             pass
 
-        # ── Re-Registration & Cloud Sync Check (ALL roles including MD) ────────────
+        # ── Re-Registration & Cloud Sync Check (Background Thread) ─────────────
         try:
+            import threading
             from license_sync import sync_with_cloud_server as _login_sync
-            _login_sync()
+            threading.Thread(target=_login_sync, daemon=True).start()
         except Exception:
             pass
 
