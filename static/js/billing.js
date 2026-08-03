@@ -39,10 +39,12 @@ const Billing = {
                     </button>
                   </div>
                   <div style="display:flex;gap:8px">
-                    <input id="customer-search" class="form-control" placeholder="Search by name or phone…" oninput="Billing.searchCustomer(this.value)" onfocus="Billing.searchCustomer(this.value)" onclick="Billing.searchCustomer(this.value)" autocomplete="off">
+                    <div style="position:relative;flex:1">
+                      <input id="customer-search" class="form-control" placeholder="Search by name or phone…" oninput="Billing.searchCustomer(this.value)" onfocus="Billing.searchCustomer(this.value)" onclick="Billing.searchCustomer(this.value)" autocomplete="off">
+                      <div id="customer-results" class="product-search-results" style="position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--bg-card);border:1px solid var(--border-strong);border-radius:var(--r-md);box-shadow:var(--shadow-lg);max-height:280px;overflow-y:auto;margin-top:4px;display:none"></div>
+                    </div>
                     <button id="btn-clear-customer" class="btn btn-secondary" onclick="Billing.clearCustomer()" title="Reset to Walk-in Customer" style="padding:0 12px;font-size:12px;white-space:nowrap;display:flex;align-items:center;gap:4px">👤 Walk-in</button>
                   </div>
-                  <div id="customer-results" class="product-search-results" style="position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--bg-card);border:1px solid var(--border-strong);border-radius:var(--r-md);box-shadow:var(--shadow-lg);max-height:280px;overflow-y:auto;display:none"></div>
                 </div>
                 <div id="customer-info" style="min-width:180px">
                   <div class="badge badge-info" id="customer-badge">👤 Walk-in Customer</div>
@@ -202,14 +204,16 @@ const Billing = {
         </div>
       </div>`;
 
-    // Load products & upcoming bill number & held count
+    // Load products, customers, upcoming bill number & held count
     try {
-      const [prods, nextNumData, heldData] = await Promise.all([
+      const [prods, nextNumData, heldData, custsData] = await Promise.all([
         App.api('/products?active=true'),
         App.api('/bills/next-number'),
-        App.api('/billing/held')
+        App.api('/billing/held'),
+        App.api('/customers')
       ]);
       this.products = prods;
+      this.allCustomers = Array.isArray(custsData) ? custsData : (custsData?.data || []);
       const el = document.getElementById('pos-bill-no');
       if (el) el.textContent = nextNumData.next_bill_no;
 
@@ -633,39 +637,64 @@ const Billing = {
   async searchCustomer(query = '') {
     const el = document.getElementById('customer-results');
     if (!el) return;
-    try {
-      const qStr = (query || '').trim();
-      const customers = await App.api(`/customers?q=${encodeURIComponent(qStr)}`);
-      this.lastCustomerResults = customers || [];
-      if (!customers || customers.length === 0) {
-        if (qStr.length > 0) {
-          const safeQ = qStr.replace(/'/g, "\\'");
-          const isNum = /^\+?\d+$/.test(qStr);
-          el.innerHTML = `<div class="search-result-item" onmousedown="event.preventDefault(); Billing.showQuickCustomerModal(); setTimeout(() => { const field = document.getElementById('${isNum ? 'qc-phone' : 'qc-name'}'); if (field) { field.value = '${safeQ}'; field.focus(); } }, 150);" style="cursor:pointer;color:var(--crimson);padding:12px 14px;font-weight:600">
-            <span>➕ No customer found — <strong style="text-decoration:underline">Click to Add "${safeQ}"</strong></span>
-          </div>`;
-        } else {
-          el.innerHTML = `<div class="search-result-item" style="padding:12px 14px;color:var(--text-muted)">
-            <span>No saved customers found. Click "Quick Add Customer" to create one.</span>
-          </div>`;
-        }
-      } else {
-        el.innerHTML = customers.map((c, idx) => `
-          <div class="search-result-item" onmousedown="event.preventDefault(); Billing.selectCustomerByIndex(${idx})" style="padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-            <div>
-              <div class="item-name" style="font-weight:700;font-size:14px;color:var(--text-primary)">👤 ${App.escapeHtml(c.name)}</div>
-              <div class="item-meta" style="font-size:12px;color:var(--text-muted);margin-top:2px">📞 ${App.escapeHtml(c.phone || 'No phone')} ${c.gstin ? '• GSTIN: ' + App.escapeHtml(c.gstin) : ''}</div>
-            </div>
-            <div style="font-size:12px;font-weight:600;color:var(--crimson)">Select ➔</div>
-          </div>`).join('');
-      }
-      el.style.display = 'block';
-      el.classList.add('show');
-    } catch(e) {
-      console.error("Customer search error:", e);
-      el.style.display = 'none';
-      el.classList.remove('show');
+
+    const qStr = (query || '').trim().toLowerCase();
+
+    // Fast local filter from cached allCustomers first for 0ms instant response
+    let list = this.allCustomers || [];
+    if (qStr.length > 0) {
+      list = list.filter(c => 
+        (c.name && c.name.toLowerCase().includes(qStr)) || 
+        (c.phone && c.phone.includes(qStr)) ||
+        (c.email && c.email.toLowerCase().includes(qStr)) ||
+        (c.gstin && c.gstin.toLowerCase().includes(qStr))
+      );
     }
+
+    this.lastCustomerResults = list;
+
+    if (list.length === 0) {
+      if (qStr.length > 0) {
+        const safeQ = (query || '').trim().replace(/'/g, "\\'");
+        const isNum = /^\+?\d+$/.test((query || '').trim());
+        el.innerHTML = `<div class="search-result-item" onmousedown="event.preventDefault(); Billing.showQuickCustomerModal(); setTimeout(() => { const field = document.getElementById('${isNum ? 'qc-phone' : 'qc-name'}'); if (field) { field.value = '${safeQ}'; field.focus(); } }, 150);" style="cursor:pointer;color:var(--crimson);padding:12px 14px;font-weight:600">
+          <span>➕ No customer found — <strong style="text-decoration:underline">Click to Add "${safeQ}"</strong></span>
+        </div>`;
+      } else {
+        el.innerHTML = `<div class="search-result-item" style="padding:12px 14px;color:var(--text-muted)">
+          <span>No saved customers found. Click "Quick Add Customer" to create one.</span>
+        </div>`;
+      }
+    } else {
+      el.innerHTML = list.map((c, idx) => `
+        <div class="search-result-item" onmousedown="event.preventDefault(); Billing.selectCustomerByIndex(${idx})" style="padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:var(--bg-card)">
+          <div>
+            <div class="item-name" style="font-weight:700;font-size:14px;color:var(--text-primary)">👤 ${App.escapeHtml(c.name)}</div>
+            <div class="item-meta" style="font-size:12px;color:var(--text-muted);margin-top:2px">📞 ${App.escapeHtml(c.phone || 'No phone')} ${c.gstin ? '• GSTIN: ' + App.escapeHtml(c.gstin) : ''}</div>
+          </div>
+          <div class="badge badge-gold" style="font-size:11px">Select ➔</div>
+        </div>`).join('');
+    }
+    el.style.display = 'block';
+    el.classList.add('show');
+
+    // Async sync with backend API
+    try {
+      const freshList = await App.api(`/customers?q=${encodeURIComponent((query || '').trim())}`);
+      if (freshList && Array.isArray(freshList)) {
+        this.lastCustomerResults = freshList;
+        if (el.style.display === 'block' && freshList.length > 0) {
+          el.innerHTML = freshList.map((c, idx) => `
+            <div class="search-result-item" onmousedown="event.preventDefault(); Billing.selectCustomerByIndex(${idx})" style="padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:var(--bg-card)">
+              <div>
+                <div class="item-name" style="font-weight:700;font-size:14px;color:var(--text-primary)">👤 ${App.escapeHtml(c.name)}</div>
+                <div class="item-meta" style="font-size:12px;color:var(--text-muted);margin-top:2px">📞 ${App.escapeHtml(c.phone || 'No phone')} ${c.gstin ? '• GSTIN: ' + App.escapeHtml(c.gstin) : ''}</div>
+              </div>
+              <div class="badge badge-gold" style="font-size:11px">Select ➔</div>
+            </div>`).join('');
+        }
+      }
+    } catch(e) { /* ignore background sync errors */ }
   },
 
   selectCustomerByIndex(idx) {
