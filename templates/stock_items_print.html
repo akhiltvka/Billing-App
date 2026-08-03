@@ -78,11 +78,11 @@
     <div class="header-icon">??</div>
     <div class="header-info">
       <h1>Stock Item Reference</h1>
-      <p>{{ shop_name }} — Active Products Catalogue</p>
+      <p>{{ shop_name }} â€” Active Products Catalogue</p>
     </div>
     <div class="header-meta">
       <div class="label">Generated</div>
-      <div class="value" id="gen-time">—</div>
+      <div class="value" id="gen-time">â€”</div>
     </div>
   </div>
 
@@ -93,13 +93,13 @@
   <div id="items-content">
     <div class="loading">
       <div class="spinner"></div>
-      Loading items from database…
+      Loading items from databaseâ€¦
     </div>
   </div>
 
   <div class="page-footer">
-    <span>{{ shop_name }} — Internal Reference</span>
-    <span id="footer-count">—</span>
+    <span>{{ shop_name }} â€” Internal Reference</span>
+    <span id="footer-count">â€”</span>
   </div>
 </div>
 
@@ -152,8 +152,8 @@
       html += '<div class="category-section"><div class="category-header"><span class="category-name">' +
         esc(cat) + '</span><span class="category-count">' + catItems.length + '</span></div><div class="items-grid">';
       catItems.forEach(item => {
-        html += '<div class="item-card"><div class="item-code">' + esc(item.code || '—') +
-          '</div><div class="item-name">' + esc(item.name || '—') + '</div></div>';
+        html += '<div class="item-card"><div class="item-code">' + esc(item.code || 'â€”') +
+          '</div><div class="item-name">' + esc(item.name || 'â€”') + '</div></div>';
       });
       html += '</div></div>';
     }

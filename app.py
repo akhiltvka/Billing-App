@@ -684,34 +684,22 @@ def printable_stock_items():
     """Printable/PDF reference page for all active stock item names and codes."""
     conn = get_db()
     rows = conn.execute(
-        "SELECT code, name, category_id, (SELECT name FROM categories WHERE id=p.category_id) AS category_name "
+        "SELECT p.code, p.name, (SELECT c.name FROM categories c WHERE c.id=p.category_id) AS category_name "
         "FROM products p WHERE p.active=1 ORDER BY p.name"
     ).fetchall()
-    conn.close()
     items = [dict(r) for r in rows]
-    shop_name = 'Meat Products of India'
-    try:
-        srow = conn = get_db()
-        srow = conn.execute("SELECT value FROM settings WHERE key='shop_name'").fetchone()
-        conn.close()
-        if srow:
-            shop_name = srow['value']
-    except Exception:
-        pass
+    shop_name_row = conn.execute("SELECT value FROM shop_settings WHERE key='shop_name'").fetchone()
+    shop_name = shop_name_row['value'] if shop_name_row else 'Meat Products of India'
+    conn.close()
     return render_template('stock_items_print.html', items=items, shop_name=shop_name)
 
 @app.route('/printables/shortcuts')
 def printable_shortcuts():
     """Printable/PDF reference page for all keyboard shortcuts."""
-    shop_name = 'Meat Products of India'
-    try:
-        conn = get_db()
-        srow = conn.execute("SELECT value FROM settings WHERE key='shop_name'").fetchone()
-        conn.close()
-        if srow:
-            shop_name = srow['value']
-    except Exception:
-        pass
+    conn = get_db()
+    shop_name_row = conn.execute("SELECT value FROM shop_settings WHERE key='shop_name'").fetchone()
+    shop_name = shop_name_row['value'] if shop_name_row else 'Meat Products of India'
+    conn.close()
     return render_template('shortcuts_print.html', shop_name=shop_name)
 
 

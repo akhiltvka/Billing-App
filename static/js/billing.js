@@ -185,6 +185,10 @@ const Billing = {
                   🗑️ Clear Cart
                 </button>
               </div>
+              ${Auth.can('billing.hold') ? `
+              <button class="btn btn-secondary w-full" onclick="Billing.showSwitchBillsModal()" title="Switch Bills (F6)" style="padding:9px 6px;font-weight:600;border:1.5px solid var(--gold);color:var(--gold);background:rgba(201,168,76,.08);margin-top:2px">
+                🔄 Switch Bills &nbsp;<span id="switch-bills-badge" style="font-size:11px;background:var(--gold);color:#0f172a;border-radius:10px;padding:1px 7px;font-weight:700;margin-left:2px"></span>
+              </button>` : ''}
             </div>
           </div>
         </div>
@@ -208,6 +212,8 @@ const Billing = {
       const heldList = Array.isArray(heldData) ? heldData : (heldData.held_bills || heldData.data || []);
       const badgeEl = document.getElementById('held-bills-badge');
       if (badgeEl) badgeEl.textContent = `(${heldList.length})`;
+      const switchBadge = document.getElementById('switch-bills-badge');
+      if (switchBadge) switchBadge.textContent = heldList.length > 0 ? heldList.length : '';
     } catch(e) { App.toast('Could not load POS data', 'error'); }
 
     // Restore active cart and selections
@@ -587,46 +593,90 @@ const Billing = {
     }
   },
 
-  async showHeldBillsModal() {
+  // Keep for F6 shortcut compatibility
+  async showHeldBillsModal() { return this.showSwitchBillsModal(); },
+
+  async showSwitchBillsModal() {
     try {
       const res = await App.api('/billing/held');
       const heldList = Array.isArray(res) ? res : (res.held_bills || res.data || []);
       const canDelete = typeof Auth !== 'undefined' && Auth.isRole && Auth.isRole('admin', 'manager', 'md');
 
+      // Snapshot current active bill
+      const activeCust = this.customer?.name || 'Walk-in Customer';
+      const activeItems = this.cart || [];
+      const activeTotal = parseFloat(document.getElementById('sum-total')?.textContent?.replace(/[₹,]/g,'') || 0);
+      const hasActiveBill = activeItems.length > 0;
+
+      const cardStyle = `padding:14px 16px;border-radius:var(--r-md);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;cursor:pointer;transition:all .15s;`;
+
       App.showModal(`
-        <div class="modal modal-lg">
-          <div class="modal-header">
-            <div class="modal-title"><span class="modal-title-icon">⏸️</span> Held Bills (${heldList.length})</div>
+        <div class="modal" style="max-width:600px;width:96vw">
+          <div class="modal-header" style="border-bottom:1px solid var(--border);padding-bottom:12px">
+            <div class="modal-title">🔄 Switch Bills</div>
             <button class="modal-close" onclick="App.closeModal()">✕</button>
           </div>
-          ${heldList.length === 0
-            ? '<div class="empty-state"><div class="empty-state-icon">⏸️</div><h3>No held bills</h3><p>You can hold active bills on the POS screen (Press F5).</p></div>'
-            : `<div style="display:flex;flex-direction:column;gap:12px;max-height:400px;overflow-y:auto">
-                ${heldList.map(h => `
-                  <div style="padding:16px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--r-md);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
-                    <div>
-                      <div style="display:flex;align-items:center;gap:8px">
-                        <span class="badge badge-gold font-bold" style="font-family:monospace;font-size:12px">${h.reference || ('HOLD-' + h.id)}</span>
-                        <span style="font-weight:700;font-size:15px;color:var(--text-primary)">
-                          ${h.customer_name ? `👤 ${h.customer_name}` : (h.customer_master_name ? `👤 ${h.customer_master_name}` : '👤 Walk-in Customer')}
-                        </span>
+
+          <!-- Current Active Bill -->
+          <div style="padding:16px 20px 0">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);margin-bottom:8px">▶ Currently Active</div>
+            <div style="${cardStyle}background:${hasActiveBill ? 'rgba(34,197,94,.08)' : 'var(--bg-input)'};border:2px solid ${hasActiveBill ? 'rgba(34,197,94,.4)' : 'var(--border)'}">
+              <div style="flex:1">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                  <span style="font-size:18px">${hasActiveBill ? '🛒' : '🗒️'}</span>
+                  <span style="font-weight:700;font-size:14px;color:var(--text-primary)">👤 ${App.escapeHtml(activeCust)}</span>
+                  ${hasActiveBill ? '<span style="background:rgba(34,197,94,.2);color:#22c55e;border:1px solid rgba(34,197,94,.4);border-radius:20px;padding:2px 10px;font-size:10px;font-weight:700">ACTIVE</span>' : ''}
+                </div>
+                ${hasActiveBill
+                  ? `<div style="font-size:12px;color:var(--text-muted)">${activeItems.length} item${activeItems.length !== 1 ? 's' : ''} — ${activeItems.slice(0,3).map(i => App.escapeHtml(i.product_name || i.name || '')).join(', ')}${activeItems.length > 3 ? '…' : ''}</div>`
+                  : `<div style="font-size:12px;color:var(--text-muted)">No items in cart</div>`
+                }
+              </div>
+              <div style="text-align:right">
+                <div style="font-size:20px;font-weight:800;color:${hasActiveBill ? '#22c55e' : 'var(--text-muted)'}">${hasActiveBill ? App.fmt(activeTotal) : '—'}</div>
+                ${hasActiveBill ? `<button class="btn btn-warning btn-sm" style="margin-top:6px" onclick="App.closeModal();Billing.holdCurrentBill()">⏸️ Hold This</button>` : ''}
+              </div>
+            </div>
+          </div>
+
+          <!-- Held Bills List -->
+          <div style="padding:14px 20px 20px">
+            <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);margin-bottom:8px">⏸ Held Bills (${heldList.length})</div>
+            ${heldList.length === 0
+              ? `<div style="text-align:center;padding:24px 0;color:var(--text-muted)">
+                  <div style="font-size:36px;margin-bottom:8px">📭</div>
+                  <div style="font-size:13px">No held bills yet.</div>
+                  <div style="font-size:11px;margin-top:4px">Use <kbd style="background:rgba(0,0,0,.15);padding:1px 6px;border-radius:4px">F5</kbd> or the Hold Bill button to park a bill.</div>
+                </div>`
+              : `<div style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;padding-right:2px">
+                  ${heldList.map((h, idx) => {
+                    const custName = h.customer_name || h.customer_master_name || 'Walk-in Customer';
+                    const itemText = (h.items || []).slice(0,3).map(i => i.product_name || i.name).join(', ') + ((h.items||[]).length > 3 ? '…' : '');
+                    const itemCount = h.item_count || (h.items || []).length;
+                    return `
+                    <div style="${cardStyle}background:var(--bg-input);border:1px solid var(--border)" onmouseover="this.style.borderColor='var(--gold)';this.style.background='rgba(201,168,76,.06)'" onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--bg-input)'">
+                      <div style="flex:1">
+                        <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
+                          <span class="badge badge-gold" style="font-family:monospace;font-size:11px;font-weight:700">${h.reference || ('HOLD-' + h.id)}</span>
+                          <span style="font-weight:700;font-size:13px">👤 ${App.escapeHtml(custName)}</span>
+                        </div>
+                        <div style="font-size:11px;color:var(--text-muted)">${itemCount} item${itemCount !== 1 ? 's' : ''} • ${App.fmtDateTime(h.time_held || h.created_at)}</div>
+                        ${itemText ? `<div style="font-size:11px;color:var(--text-secondary);margin-top:2px">${App.escapeHtml(itemText)}</div>` : ''}
                       </div>
-                      <div class="text-muted text-xs mt-4">
-                        Held at ${App.fmtDateTime(h.time_held || h.created_at)} • ${h.item_count || (h.items || []).length} item${(h.items || []).length !== 1 ? 's' : ''} • Terminal: ${h.terminal_id || 'POS-1'} ${h.cashier_name ? '• By: ' + h.cashier_name : ''}
+                      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                        <div style="font-size:16px;font-weight:800;color:var(--gold)">${App.fmt(h.total || h.total_amount)}</div>
+                        <button class="btn btn-success btn-sm" onclick="Billing.resumeHeldBill(${h.id})">▶️ Switch</button>
+                        ${canDelete ? `<button class="btn btn-danger btn-sm btn-icon" title="Delete held bill" onclick="Billing.discardHeldBill(${h.id}, '${h.reference || ('HOLD-' + h.id)}')">🗑️</button>` : ''}
                       </div>
-                      <div style="font-size:12px;margin-top:4px;color:var(--text-secondary)">
-                        ${(h.items || []).map(i => `${i.product_name || i.name} (${i.quantity} ${i.unit || 'unit'})`).join(', ')}
-                      </div>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:12px">
-                      <div style="font-size:18px;font-weight:800;color:var(--gold)">${App.fmt(h.total || h.total_amount)}</div>
-                      <button class="btn btn-success btn-sm" onclick="Billing.resumeHeldBill(${h.id})">▶️ Recall</button>
-                      ${canDelete ? `<button class="btn btn-danger btn-sm btn-icon" onclick="Billing.discardHeldBill(${h.id}, '${h.reference || ('HOLD-' + h.id)}')">🗑️</button>` : ''}
-                    </div>
-                  </div>`).join('')}
-               </div>`}
-          <div class="modal-footer">
+                    </div>`;
+                  }).join('')}
+                </div>`
+            }
+          </div>
+
+          <div class="modal-footer" style="border-top:1px solid var(--border);padding:10px 20px">
             <button class="btn btn-secondary" onclick="App.closeModal()">Close</button>
+            ${hasActiveBill ? `<button class="btn btn-warning" onclick="App.closeModal();Billing.holdCurrentBill()">⏸️ Hold Current &amp; Start New</button>` : `<button class="btn btn-primary" onclick="App.closeModal()">✨ Start Billing</button>`}
           </div>
         </div>`);
     } catch(e) {
