@@ -679,6 +679,9 @@ def login():
     conn.commit()
     conn.close()
 
+    user_dict = dict(user)
+    must_change = bool(user_dict.get('must_change_password', 0))
+
     # ── Hardware-Binding Cross-Check (non-admin roles only) ────────────────────
     # admin (developer) can login on any machine; all others must match outlet_code & machine_id
     if user['role'] != 'admin':
@@ -689,11 +692,13 @@ def login():
         oc_row  = lconn.execute("SELECT value FROM shop_settings WHERE key='outlet_code'").fetchone()
         mid_row = lconn.execute("SELECT value FROM shop_settings WHERE key='system_machine_id'").fetchone()
         lconn.close()
-        machine_outlet_code = oc_row['value'].strip().upper()  if oc_row  else None
-        machine_sys_id      = mid_row['value'].strip().upper() if mid_row else None
+        machine_outlet_code = (oc_row['value'] or '').strip().upper()  if oc_row and oc_row['value']  else None
+        machine_sys_id      = (mid_row['value'] or '').strip().upper() if mid_row and mid_row['value'] else None
 
-        user_oc  = (user['outlet_code']  or '').strip().upper() if user['outlet_code']  else None
-        user_mid = (user['machine_id']   or '').strip().upper() if user['machine_id']   else None
+        user_oc_val  = user_dict.get('outlet_code')
+        user_mid_val = user_dict.get('machine_id')
+        user_oc  = (user_oc_val or '').strip().upper()  if user_oc_val  else None
+        user_mid = (user_mid_val or '').strip().upper() if user_mid_val else None
 
         # Only enforce if both the machine and the user have been bound
         if machine_outlet_code and user_oc and user_oc != machine_outlet_code:
@@ -708,13 +713,12 @@ def login():
                 f"Contact your Managing Director if you believe this is an error.", 403
             )
 
-    must_change = bool(dict(user).get('must_change_password', 0))
     session.clear()
     session['user_id']              = user['id']
     session['username']             = user['username']
     session['full_name']            = user['full_name']
     session['user_role']            = user['role']
-    session['outlet_code']          = (user['outlet_code'] or '') if user['outlet_code'] else ''
+    session['outlet_code']          = user_dict.get('outlet_code') or ''
     session['must_change_password'] = must_change
     session.permanent               = True
 
@@ -726,8 +730,8 @@ def login():
         'role_label':           ROLE_LABELS.get(user['role'], user['role']),
         'pages':                ROLE_PAGES.get(user['role'], []),
         'permissions':          sorted(list(get_user_permissions(user['id']))),
-        'outlet_code':          user['outlet_code'] or '',
-        'machine_id':           (user['machine_id'] or '')[:8],
+        'outlet_code':          user_dict.get('outlet_code') or '',
+        'machine_id':           (user_dict.get('machine_id') or '')[:8],
         'must_change_password': must_change,
     }
     return ok(resp_data, "Login successful")

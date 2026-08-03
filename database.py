@@ -235,6 +235,8 @@ def init_db():
             full_name             TEXT NOT NULL,
             role                  TEXT NOT NULL CHECK(role IN ('admin','md','manager','accountant','counter_staff','tester')),
             role_id               INTEGER REFERENCES roles(id) ON DELETE SET NULL,
+            outlet_code           TEXT,
+            machine_id            TEXT,
             active                INTEGER DEFAULT 1,
             must_change_password  INTEGER DEFAULT 0,
             last_login            TEXT,
@@ -521,6 +523,16 @@ def init_db():
 
     try:
         c.execute("ALTER TABLE products ADD COLUMN sale_unit TEXT DEFAULT 'kg'")
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        c.execute('ALTER TABLE users ADD COLUMN outlet_code TEXT')
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        c.execute('ALTER TABLE users ADD COLUMN machine_id TEXT')
     except sqlite3.OperationalError:
         pass
 
