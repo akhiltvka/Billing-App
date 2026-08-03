@@ -95,8 +95,8 @@ const Settings = {
                 <div class="form-group" style="margin-top:8px">
                   <label class="form-label">Default Invoice Print Format</label>
                   <select class="form-control" id="s-print-format" style="width:100%">
-                    <option value="a4" ${settings.default_print_format !== 'thermal' ? 'selected' : ''}>🖨️ A4 Paper Invoice</option>
-                    <option value="thermal" ${settings.default_print_format === 'thermal' ? 'selected' : ''}>🧾 Thermal Receipt (80mm / 58mm)</option>
+                    <option value="a4" ${settings.default_print_format === 'a4' ? 'selected' : ''}>🖨️ A4 Paper Invoice</option>
+                    <option value="thermal" ${settings.default_print_format !== 'a4' ? 'selected' : ''}>🧾 Thermal Receipt (80mm / 58mm)</option>
                   </select>
                 </div>
                 <div style="display:flex;flex-direction:column;gap:12px;margin-top:12px">

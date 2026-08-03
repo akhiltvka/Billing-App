@@ -441,7 +441,7 @@ const Billing = {
     const urlSuffix = format === 'thermal' ? '/thermal' : '';
     const tokenParam = token ? `?token=${token}` : '';
     const sep = tokenParam ? '&' : '?';
-    const url = `/invoice/${billId}${urlSuffix}${tokenParam}${sep}v=2026t`;
+    const url = `/invoice/${billId}${urlSuffix}${tokenParam}${sep}v=2026u`;
 
     App.showModal(`
       <div class="modal" style="max-width:850px;width:95vw;height:85vh;display:flex;flex-direction:column;padding:0">
@@ -1386,7 +1386,7 @@ const Billing = {
       this.notes = '';
 
       if (print) {
-        const fmt = (this.settings && this.settings.default_print_format) === 'thermal' ? 'thermal' : 'a4';
+        const fmt = (this.settings && this.settings.default_print_format) === 'a4' ? 'a4' : 'thermal';
         this.showPrintPreviewModal(bill.id, fmt, bill.print_token || '');
       }
 
