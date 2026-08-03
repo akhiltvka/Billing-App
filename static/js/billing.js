@@ -637,18 +637,7 @@ const Billing = {
     if (!el) {
       el = document.createElement('div');
       el.id = 'customer-results';
-      el.style.cssText = [
-        'position:fixed',
-        'z-index:99999',
-        'background:var(--bg-card)',
-        'border:1px solid var(--border-strong)',
-        'border-radius:8px',
-        'box-shadow:0 8px 32px rgba(0,0,0,0.35)',
-        'max-height:280px',
-        'overflow-y:auto',
-        'display:none',
-        'min-width:260px'
-      ].join(';');
+      el.className = 'customer-results-portal';
       document.body.appendChild(el);
     }
     return el;
@@ -659,25 +648,24 @@ const Billing = {
     const el = document.getElementById('customer-results');
     if (!input || !el) return;
     const rect = input.getBoundingClientRect();
-    el.style.top  = (rect.bottom + 4) + 'px';
-    el.style.left = rect.left + 'px';
+    el.style.top   = (rect.bottom + 4) + 'px';
+    el.style.left  = rect.left + 'px';
     el.style.width = rect.width + 'px';
   },
 
   _hideCustomerDropdown() {
     const el = document.getElementById('customer-results');
-    if (el) { el.style.display = 'none'; }
+    if (el) el.style.display = 'none';
   },
 
   _renderCustomerList(list, el) {
-    if (list.length === 0) return;
     el.innerHTML = list.map((c, idx) => `
-      <div class="search-result-item" onmousedown="event.preventDefault(); Billing.selectCustomerByIndex(${idx})" style="padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:var(--bg-card)">
+      <div class="cr-item" onmousedown="event.preventDefault(); Billing.selectCustomerByIndex(${idx})">
         <div>
-          <div style="font-weight:700;font-size:14px;color:var(--text-primary)">👤 ${App.escapeHtml(c.name)}</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-top:2px">📞 ${App.escapeHtml(c.phone || 'No phone')} ${c.gstin ? '• GSTIN: ' + App.escapeHtml(c.gstin) : ''}</div>
+          <div class="cr-name">👤 ${App.escapeHtml(c.name)}</div>
+          <div class="cr-meta">📞 ${App.escapeHtml(c.phone || 'No phone')}${c.gstin ? ' &bull; GSTIN: ' + App.escapeHtml(c.gstin) : ''}</div>
         </div>
-        <span style="font-size:11px;font-weight:600;color:var(--gold)">Select ➔</span>
+        <span class="cr-select">Select ➔</span>
       </div>`).join('');
   },
 
@@ -686,13 +674,24 @@ const Billing = {
     this._positionCustomerDropdown();
 
     const qStr = (query || '').trim().toLowerCase();
+    const rawQ = (query || '').trim();
 
-    // Instant local filter from pre-loaded cache
+    // If cache not loaded yet, fetch directly from API right away
+    if (!this.allCustomers || this.allCustomers.length === 0) {
+      el.innerHTML = '<div style="padding:12px 14px;color:#94A3B8;font-size:12px">Loading customers…</div>';
+      el.style.display = 'block';
+      try {
+        const data = await App.api('/customers');
+        this.allCustomers = Array.isArray(data) ? data : [];
+      } catch(e) { this.allCustomers = []; }
+    }
+
+    // Instant local filter
     let list = this.allCustomers || [];
     if (qStr.length > 0) {
       list = list.filter(c =>
         (c.name  && c.name.toLowerCase().includes(qStr))  ||
-        (c.phone && c.phone.includes(qStr))               ||
+        (c.phone && c.phone.includes(rawQ))               ||
         (c.email && c.email.toLowerCase().includes(qStr)) ||
         (c.gstin && c.gstin.toLowerCase().includes(qStr))
       );
@@ -702,15 +701,13 @@ const Billing = {
 
     if (list.length === 0) {
       if (qStr.length > 0) {
-        const safeQ = (query || '').trim().replace(/'/g, "\\'");
-        const isNum = /^\+?\d+$/.test((query || '').trim());
-        el.innerHTML = `<div onmousedown="event.preventDefault(); Billing.showQuickCustomerModal(); setTimeout(()=>{ const f=document.getElementById('${isNum?'qc-phone':'qc-name'}'); if(f){f.value='${safeQ}';f.focus();} },150)" style="cursor:pointer;color:var(--crimson,#c62828);padding:12px 14px;font-weight:600">
-          ➕ No customer found — <strong style="text-decoration:underline">Click to Add "${safeQ}"</strong>
+        const safeQ = rawQ.replace(/'/g, "\\'");
+        const isNum = /^\+?\d+$/.test(rawQ);
+        el.innerHTML = `<div onmousedown="event.preventDefault(); Billing.showQuickCustomerModal(); setTimeout(()=>{ const f=document.getElementById('${isNum?'qc-phone':'qc-name'}'); if(f){f.value='${safeQ}';f.focus();} },150)" style="cursor:pointer;color:#059669;padding:12px 14px;font-weight:600;font-size:13px">
+          ➕ No match — <strong style="text-decoration:underline">Click to Add "${rawQ}"</strong>
         </div>`;
       } else {
-        el.innerHTML = `<div style="padding:12px 14px;color:var(--text-muted)">
-          Type a name or phone to search saved customers…
-        </div>`;
+        el.innerHTML = '<div style="padding:12px 14px;color:#94A3B8;font-size:12px">Start typing to search saved customers…</div>';
       }
     } else {
       this._renderCustomerList(list, el);
@@ -718,12 +715,14 @@ const Billing = {
 
     el.style.display = 'block';
 
-    // Background server sync
+    // Background server sync for accuracy
     try {
-      const freshList = await App.api(`/customers?q=${encodeURIComponent((query||'').trim())}`);
+      const freshList = await App.api(`/customers?q=${encodeURIComponent(rawQ)}`);
       if (freshList && Array.isArray(freshList) && el.style.display === 'block') {
         this.lastCustomerResults = freshList;
-        if (freshList.length > 0) this._renderCustomerList(freshList, el);
+        if (freshList.length > 0) {
+          this._renderCustomerList(freshList, el);
+        }
       }
     } catch(e) { /* ignore */ }
   },
