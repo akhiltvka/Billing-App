@@ -34,8 +34,8 @@ const Billing = {
                 <div style="flex:1;min-width:240px">
                   <div class="form-label mb-8" style="display:flex;justify-content:space-between;align-items:center">
                     <span>Customer (optional)</span>
-                    <button class="btn btn-secondary btn-sm" onclick="Billing.showQuickCustomerModal()" style="padding:2px 8px;font-size:11px">
-                      ➕ Quick Add Customer
+                    <button class="btn btn-secondary btn-sm" onclick="Billing.showQuickCustomerModal()" title="Shortcut: F11 or Alt+C or Ctrl+N" style="padding:2px 8px;font-size:11px">
+                      ➕ Quick Add Customer <kbd style="font-family:sans-serif;background:rgba(0,0,0,0.12);padding:1px 4px;border-radius:3px;font-size:10px;margin-left:3px">F11 / Alt+C</kbd>
                     </button>
                   </div>
                   <div style="display:flex;gap:8px">
@@ -203,6 +203,21 @@ const Billing = {
       const badgeEl = document.getElementById('held-bills-badge');
       if (badgeEl) badgeEl.textContent = `(${heldList.length})`;
     } catch(e) { App.toast('Could not load POS data', 'error'); }
+
+    // Initialize keyboard shortcuts for POS
+    if (typeof BillingShortcuts !== 'undefined') {
+      BillingShortcuts.init({
+        onNewBill:        () => Billing.startNewBill(),
+        onSearchItem:     () => document.getElementById('product-search')?.focus(),
+        onSearchCustomer: () => document.getElementById('customer-search')?.focus(),
+        onNewCustomer:    () => Billing.showQuickCustomerModal(),
+        onHoldBill:       () => Billing.holdCurrentBill(),
+        onRecallBill:     () => Billing.loadHeldBills(),
+        onSaveAndPrint:   () => Billing.saveBill(true),
+        onSaveOnly:       () => Billing.saveBill(false),
+        onEscape:         () => App.closeModal(),
+      });
+    }
   },
 
   // ─── Quick Add First-Time Customer ─────────────────────────────────────────

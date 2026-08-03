@@ -188,11 +188,19 @@ const BillingShortcuts = (function () {
       }
     }
 
-    // Alt+1..Alt+9 -> jump to item group
-    if (e.altKey && !e.ctrlKey && /^[1-9]$/.test(e.key)) {
-      e.preventDefault();
-      call('onGroupJump', parseInt(e.key, 10));
-      return;
+    // Alt-combos (Alt+C / Alt+N -> Quick Add Customer; Alt+1..9 -> jump to group)
+    if (e.altKey && !e.ctrlKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'c' || k === 'n') {
+        e.preventDefault();
+        call('onNewCustomer');
+        return;
+      }
+      if (/^[1-9]$/.test(e.key)) {
+        e.preventDefault();
+        call('onGroupJump', parseInt(e.key, 10));
+        return;
+      }
     }
 
     // The remaining shortcuts only fire when NOT typing in a text field,
