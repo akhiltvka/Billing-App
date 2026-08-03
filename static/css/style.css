@@ -943,7 +943,8 @@ textarea.form-control { resize: vertical; min-height: 80px; }
   transition: background 150ms ease;
 }
 .customer-results-portal .cr-item:last-child { border-bottom: none; }
-.customer-results-portal .cr-item:hover { background: #F0F7FF; }
+.customer-results-portal .cr-item:hover,
+.customer-results-portal .cr-item.active { background: #F0F7FF; border-left: 3px solid #0284C7; }
 .customer-results-portal .cr-name {
   font-weight: 700;
   font-size: 13.5px;

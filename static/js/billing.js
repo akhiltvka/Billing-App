@@ -39,7 +39,7 @@ const Billing = {
                     </button>
                   </div>
                   <div style="display:flex;gap:8px">
-                    <input id="customer-search" class="form-control" placeholder="Search by name or phone…" oninput="Billing.searchCustomer(this.value)" onfocus="Billing.searchCustomer(this.value)" onclick="Billing.searchCustomer(this.value)" onblur="setTimeout(()=>Billing._hideCustomerDropdown(),180)" autocomplete="off" style="flex:1">
+                    <input id="customer-search" class="form-control" placeholder="Search by name or phone…" oninput="Billing.searchCustomer(this.value)" onfocus="Billing.searchCustomer(this.value)" onclick="Billing.searchCustomer(this.value)" onkeydown="Billing.onCustomerSearchKey(event)" onblur="setTimeout(()=>Billing._hideCustomerDropdown(),250)" autocomplete="off" style="flex:1">
                     <button id="btn-clear-customer" class="btn btn-secondary" onclick="Billing.clearCustomer()" title="Reset to Walk-in Customer" style="padding:0 12px;font-size:12px;white-space:nowrap;display:flex;align-items:center;gap:4px">👤 Walk-in</button>
                   </div>
                 </div>
@@ -632,6 +632,8 @@ const Billing = {
 
   // ─── Customer Selection ───────────────────────────────────────────────────
   // ─── Customer Dropdown Portal ─────────────────────────────────────────────
+  _selectedCustomerIndex: -1,
+
   _getOrCreateCustomerDropdown() {
     let el = document.getElementById('customer-results');
     if (!el) {
@@ -650,23 +652,71 @@ const Billing = {
     const rect = input.getBoundingClientRect();
     el.style.top   = (rect.bottom + 4) + 'px';
     el.style.left  = rect.left + 'px';
-    el.style.width = rect.width + 'px';
+    el.style.width = Math.max(rect.width, 280) + 'px';
   },
 
   _hideCustomerDropdown() {
     const el = document.getElementById('customer-results');
     if (el) el.style.display = 'none';
+    this._selectedCustomerIndex = -1;
+  },
+
+  onCustomerSearchKey(e) {
+    const el = document.getElementById('customer-results');
+    if (!el || el.style.display === 'none') return;
+    const items = el.querySelectorAll('.cr-item');
+    if (!items || items.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      this._selectedCustomerIndex = Math.min(this._selectedCustomerIndex + 1, items.length - 1);
+      this._updateCustomerItemHighlight(items);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      this._selectedCustomerIndex = Math.max(this._selectedCustomerIndex - 1, 0);
+      this._updateCustomerItemHighlight(items);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const idx = this._selectedCustomerIndex >= 0 ? this._selectedCustomerIndex : 0;
+      if (this.lastCustomerResults && this.lastCustomerResults[idx]) {
+        this.selectCustomer(this.lastCustomerResults[idx]);
+      }
+    } else if (e.key === 'Escape') {
+      this._hideCustomerDropdown();
+    }
+  },
+
+  _updateCustomerItemHighlight(items) {
+    items.forEach((item, idx) => {
+      if (idx === this._selectedCustomerIndex) {
+        item.classList.add('active');
+        item.scrollIntoView({ block: 'nearest' });
+      } else {
+        item.classList.remove('active');
+      }
+    });
   },
 
   _renderCustomerList(list, el) {
-    el.innerHTML = list.map((c, idx) => `
-      <div class="cr-item" onmousedown="event.preventDefault(); Billing.selectCustomerByIndex(${idx})">
-        <div>
-          <div class="cr-name">👤 ${App.escapeHtml(c.name)}</div>
-          <div class="cr-meta">📞 ${App.escapeHtml(c.phone || 'No phone')}${c.gstin ? ' &bull; GSTIN: ' + App.escapeHtml(c.gstin) : ''}</div>
-        </div>
-        <span class="cr-select">Select ➔</span>
-      </div>`).join('');
+    this.lastCustomerResults = list;
+    el.innerHTML = list.map((c, idx) => {
+      const isActive = idx === this._selectedCustomerIndex ? ' active' : '';
+      const dues = parseFloat(c.total_dues || 0);
+      const duesBadge = dues > 0
+        ? `<span class="badge badge-danger" style="font-size:10px;padding:2px 6px;margin-left:4px">Dues: ₹${dues.toFixed(2)}</span>`
+        : '';
+      return `
+        <div class="cr-item${isActive}" data-id="${c.id}" onmousedown="event.preventDefault(); Billing.selectCustomerById(${c.id})">
+          <div style="flex:1;min-width:0">
+            <div class="cr-name" style="display:flex;align-items:center;gap:4px">
+              <span>👤 ${App.escapeHtml(c.name)}</span>
+              ${duesBadge}
+            </div>
+            <div class="cr-meta">📞 ${App.escapeHtml(c.phone || 'No phone')}${c.gstin ? ' &bull; GSTIN: ' + App.escapeHtml(c.gstin) : ''}${c.address ? ' &bull; ' + App.escapeHtml(c.address) : ''}</div>
+          </div>
+          <span class="cr-select">Select ➔</span>
+        </div>`;
+    }).join('');
   },
 
   async searchCustomer(query = '') {
@@ -676,7 +726,7 @@ const Billing = {
     const qStr = (query || '').trim().toLowerCase();
     const rawQ = (query || '').trim();
 
-    // If cache not loaded yet, fetch directly from API right away
+    // Fetch directly from API if cache not loaded
     if (!this.allCustomers || this.allCustomers.length === 0) {
       el.innerHTML = '<div style="padding:12px 14px;color:#94A3B8;font-size:12px">Loading customers…</div>';
       el.style.display = 'block';
@@ -686,18 +736,22 @@ const Billing = {
       } catch(e) { this.allCustomers = []; }
     }
 
-    // Instant local filter
+    // Filter local customers
     let list = this.allCustomers || [];
     if (qStr.length > 0) {
       list = list.filter(c =>
-        (c.name  && c.name.toLowerCase().includes(qStr))  ||
-        (c.phone && c.phone.includes(rawQ))               ||
-        (c.email && c.email.toLowerCase().includes(qStr)) ||
-        (c.gstin && c.gstin.toLowerCase().includes(qStr))
+        (c.name  && String(c.name).toLowerCase().includes(qStr))  ||
+        (c.phone && String(c.phone).toLowerCase().includes(qStr)) ||
+        (c.email && String(c.email).toLowerCase().includes(qStr)) ||
+        (c.gstin && String(c.gstin).toLowerCase().includes(qStr))
       );
+    } else {
+      // If query empty, show top 15 saved customers for fast selection
+      list = list.slice(0, 15);
     }
 
     this.lastCustomerResults = list;
+    this._selectedCustomerIndex = -1;
 
     if (list.length === 0) {
       if (qStr.length > 0) {
@@ -707,7 +761,7 @@ const Billing = {
           ➕ No match — <strong style="text-decoration:underline">Click to Add "${rawQ}"</strong>
         </div>`;
       } else {
-        el.innerHTML = '<div style="padding:12px 14px;color:#94A3B8;font-size:12px">Start typing to search saved customers…</div>';
+        el.innerHTML = '<div style="padding:12px 14px;color:#94A3B8;font-size:12px">No saved customers found</div>';
       }
     } else {
       this._renderCustomerList(list, el);
@@ -727,28 +781,17 @@ const Billing = {
     } catch(e) { /* ignore */ }
   },
 
+  selectCustomerById(id) {
+    const list = this.allCustomers || [];
+    const c = list.find(cust => cust.id == id) || (this.lastCustomerResults || []).find(cust => cust.id == id);
+    if (c) {
+      this.selectCustomer(c);
+    }
+  },
+
   selectCustomerByIndex(idx) {
     if (!this.lastCustomerResults || !this.lastCustomerResults[idx]) return;
-    const c = this.lastCustomerResults[idx];
-    this.customer = c;
-
-    const input = document.getElementById('customer-search');
-    if (input) input.value = c.name;
-
-    this._hideCustomerDropdown();
-
-    const badge = document.getElementById('customer-badge');
-    if (badge) {
-      badge.innerHTML = `👤 <strong>${App.escapeHtml(c.name)}</strong> (${App.escapeHtml(c.phone || 'No phone')})`;
-      badge.className = 'badge badge-gold';
-    }
-
-    const btnClear = document.getElementById('btn-clear-customer');
-    if (btnClear) {
-      btnClear.innerHTML = '✕ Clear';
-      btnClear.className = 'btn btn-danger';
-      btnClear.title = 'Clear customer selection';
-    }
+    this.selectCustomer(this.lastCustomerResults[idx]);
   },
 
   selectCustomer(cJson) {
@@ -758,11 +801,15 @@ const Billing = {
     const input = document.getElementById('customer-search');
     if (input) input.value = c.name;
     this._hideCustomerDropdown();
+
     const badge = document.getElementById('customer-badge');
     if (badge) {
-      badge.innerHTML = `👤 <strong>${App.escapeHtml(c.name)}</strong> (${App.escapeHtml(c.phone || 'No phone')})`;
+      const dues = parseFloat(c.total_dues || 0);
+      const duesInfo = dues > 0 ? ` <span class="text-danger" style="font-size:11px;font-weight:700">(Dues: ₹${dues.toFixed(2)})</span>` : '';
+      badge.innerHTML = `👤 <strong>${App.escapeHtml(c.name)}</strong> (${App.escapeHtml(c.phone || 'No phone')})${duesInfo}`;
       badge.className = 'badge badge-gold';
     }
+
     const btnClear = document.getElementById('btn-clear-customer');
     if (btnClear) {
       btnClear.innerHTML = '✕ Clear';
