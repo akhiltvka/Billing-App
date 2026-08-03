@@ -88,6 +88,7 @@ def init_db():
             gstin          TEXT,
             state_code     TEXT,
             credit_balance REAL DEFAULT 0,
+            is_active      INTEGER DEFAULT 1,
             created_at     TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -494,6 +495,16 @@ def init_db():
     try:
         c.execute('ALTER TABLE customers ADD COLUMN state_code TEXT')
     except sqlite3.OperationalError:
+        pass
+
+    try:
+        c.execute('ALTER TABLE customers ADD COLUMN is_active INTEGER DEFAULT 1')
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        c.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_phone_unique ON customers(phone) WHERE phone IS NOT NULL AND phone != ""')
+    except Exception:
         pass
 
     try:

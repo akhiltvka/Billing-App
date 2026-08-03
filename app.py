@@ -23,6 +23,7 @@ from license_manager import get_license_info, activate_subscription
 from license_sync import sync_with_cloud_server, notify_cloud_payment, re_register_with_cloud
 from cloud_backup import start_cloud_backup_scheduler, run_cloud_backup_job
 
+import secrets
 import sys
 if getattr(sys, 'frozen', False):
     bundle_dir = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
@@ -39,11 +40,28 @@ def add_header(response):
     response.headers['Expires'] = '0'
     return response
 
-if not os.environ.get('APP_SECRET_KEY'):
-    print("WARNING: using insecure default secret key — set APP_SECRET_KEY env var for production")
-    app.secret_key = 'mpi_secret_key_2025_change_in_production_!@#'
-else:
-    app.secret_key = os.environ.get('APP_SECRET_KEY')
+def _get_flask_secret_key():
+    env_key = os.environ.get('APP_SECRET_KEY')
+    if env_key:
+        return env_key
+    try:
+        base_dir = os.environ.get('PROGRAMDATA') or os.environ.get('APPDATA') or os.path.expanduser('~/.mpi_billing')
+        app_dir = os.path.join(base_dir, 'MPI_Billing_App')
+        secret_file = os.path.join(app_dir, 'flask_secret.key')
+        if os.path.exists(secret_file):
+            with open(secret_file, 'r', encoding='utf-8') as f:
+                key = f.read().strip()
+                if key:
+                    return key
+        os.makedirs(app_dir, exist_ok=True)
+        new_key = secrets.token_hex(32)
+        with open(secret_file, 'w', encoding='utf-8') as f:
+            f.write(new_key)
+        return new_key
+    except Exception:
+        return os.urandom(32)
+
+app.secret_key = _get_flask_secret_key()
 
 CORS(app, supports_credentials=True)
 
@@ -578,7 +596,7 @@ def utility_processor():
 @app.route('/')
 def index():
     is_desktop = os.environ.get('FLASK_DESKTOP') == '1'
-    return render_template('index.html', is_desktop=is_desktop)
+    return render_template('index.html', is_desktop=is_desktop, app_version=app.config['APP_VERSION'])
 
 @app.route('/invoice/<int:bill_id>')
 def invoice_page(bill_id):
@@ -2313,6 +2331,7 @@ def conversion_yield_report():
 def list_customers():
     conn = get_db()
     q = request.args.get('q', '').strip()
+    include_inactive = request.args.get('include_inactive', '0') in ('1', 'true', 'True')
     sql = '''
         SELECT c.*, COALESCE(SUM(b.amount_due), 0) AS total_dues
         FROM customers c
@@ -2320,6 +2339,8 @@ def list_customers():
         WHERE 1=1
     '''
     params = []
+    if not include_inactive:
+        sql += ' AND COALESCE(c.is_active, 1) = 1'
     if q:
         sql += ' AND (c.name LIKE ? OR c.phone LIKE ?)'
         params += [f'%{q}%', f'%{q}%']
@@ -2398,6 +2419,12 @@ def create_customer():
     if phone and (not phone.isdigit() or len(phone) != 10):
         return err("Phone number must be exactly 10 digits")
     conn = get_db()
+    if phone:
+        existing = conn.execute('SELECT * FROM customers WHERE phone=?', (phone,)).fetchone()
+        if existing:
+            conn.close()
+            return ok(dict_row(existing), message="Existing customer matched by phone"), 200
+
     c = conn.execute(
         'INSERT INTO customers (name, phone, email, address, gstin, state_code) VALUES (?,?,?,?,?,?)',
         (d['name'], phone, d.get('email',''), d.get('address',''), d.get('gstin',''), d.get('state_code',''))
@@ -2418,6 +2445,12 @@ def update_customer(cid):
     if phone and (not phone.isdigit() or len(phone) != 10):
         return err("Phone number must be exactly 10 digits")
     conn = get_db()
+    if phone:
+        existing = conn.execute('SELECT * FROM customers WHERE phone=? AND id!=?', (phone, cid)).fetchone()
+        if existing:
+            conn.close()
+            return err(f"Phone number '{phone}' is already registered to customer ID #{existing['id']} ({existing['name']})", 400)
+
     conn.execute(
         'UPDATE customers SET name=?, phone=?, email=?, address=?, gstin=?, state_code=? WHERE id=?',
         (d['name'], phone, d.get('email',''), d.get('address',''), d.get('gstin',''), d.get('state_code',''), cid)
@@ -2431,9 +2464,21 @@ def update_customer(cid):
 @require_permission('customers.manage')
 def delete_customer(cid):
     conn = get_db()
-    conn.execute('DELETE FROM customers WHERE id=?', (cid,))
-    conn.commit(); conn.close()
-    return ok(message="Customer deleted")
+    cust = conn.execute('SELECT * FROM customers WHERE id=?', (cid,)).fetchone()
+    if not cust:
+        conn.close()
+        return err("Customer not found", 404)
+
+    bill_count = conn.execute('SELECT COUNT(*) FROM bills WHERE customer_id=?', (cid,)).fetchone()[0]
+
+    if bill_count > 0:
+        conn.execute('UPDATE customers SET is_active=0 WHERE id=?', (cid,))
+        conn.commit(); conn.close()
+        return ok(message="Customer archived (had bill history)")
+    else:
+        conn.execute('DELETE FROM customers WHERE id=?', (cid,))
+        conn.commit(); conn.close()
+        return ok(message="Customer permanently deleted")
 
 # ─── Suppliers ──────────────────────────────────────────────────────────────
 

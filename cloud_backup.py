@@ -90,6 +90,85 @@ def upload_backup_to_cloud(zip_path):
     except Exception as e:
         return False, f"Upload request error: {str(e)}"
 
+def get_backup_retention_settings():
+    """Fetch backup retention configuration from shop_settings table, falling back to 30 days / 60 max files."""
+    retention_days = 30
+    max_files = 60
+    try:
+        from database import get_db
+        conn = get_db()
+        r_row = conn.execute("SELECT value FROM shop_settings WHERE key='backup_retention_days'").fetchone()
+        m_row = conn.execute("SELECT value FROM shop_settings WHERE key='backup_max_files'").fetchone()
+        conn.close()
+        if r_row and r_row['value']:
+            retention_days = int(r_row['value'])
+        if m_row and m_row['value']:
+            max_files = int(m_row['value'])
+    except Exception:
+        pass
+    return retention_days, max_files
+
+
+def prune_old_backups(retention_days=None, max_files=None):
+    """
+    Delete compressed backup files in data/backups/ matching 'meatshop_cloud_auto_*.zip'
+    that are older than retention_days, or trim excess files down to max_files (oldest first).
+    Returns count of pruned files.
+    """
+    r_def, m_def = get_backup_retention_settings()
+    if retention_days is None:
+        retention_days = r_def
+    if max_files is None:
+        max_files = m_def
+
+    backup_dir = os.path.join(os.path.dirname(DB_PATH), "backups")
+    if not os.path.exists(backup_dir):
+        return 0
+
+    now = time.time()
+    cutoff_time = now - (retention_days * 86400)
+    pruned_count = 0
+
+    try:
+        file_list = [
+            os.path.join(backup_dir, f)
+            for f in os.listdir(backup_dir)
+            if f.startswith("meatshop_cloud_auto_") and f.endswith(".zip")
+        ]
+    except Exception as e:
+        print(f"[Cloud Backup Prune Error] Could not access backup directory: {e}")
+        return 0
+
+    remaining_files = []
+    for filepath in file_list:
+        try:
+            mtime = os.path.getmtime(filepath)
+            if mtime < cutoff_time:
+                try:
+                    os.remove(filepath)
+                    pruned_count += 1
+                except Exception as e:
+                    print(f"[Cloud Backup Prune Error] Could not delete old backup '{filepath}': {e}")
+            else:
+                remaining_files.append((filepath, mtime))
+        except Exception as e:
+            print(f"[Cloud Backup Prune Error] Could not inspect file '{filepath}': {e}")
+
+    # Trim excess files down to max_files (oldest first)
+    if len(remaining_files) > max_files:
+        remaining_files.sort(key=lambda x: x[1])
+        excess_count = len(remaining_files) - max_files
+        for filepath, _ in remaining_files[:excess_count]:
+            try:
+                os.remove(filepath)
+                pruned_count += 1
+            except Exception as e:
+                print(f"[Cloud Backup Prune Error] Could not remove excess backup '{filepath}': {e}")
+
+    print(f"[Cloud Backup Pruning] Pruned {pruned_count} old backup zip(s) (Retention: {retention_days} days, Max Files: {max_files}).")
+    return pruned_count
+
+
 def run_cloud_backup_job():
     """Execute a single backup + upload cycle if online."""
     if not check_internet_connection():
@@ -127,6 +206,12 @@ def run_cloud_backup_job():
             json.dump(history, f, indent=2)
     except Exception:
         pass
+
+    # Run backup pruning after history is written
+    try:
+        prune_old_backups()
+    except Exception as e:
+        print(f"[Cloud Backup Prune Error] {e}")
 
     return success, upload_msg
 

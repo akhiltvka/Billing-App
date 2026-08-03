@@ -131,5 +131,7 @@ if __name__ == '__main__':
         except Exception:
             pass
 
-    webview.start(on_loaded, debug=False)
+    # Set MPI_DEBUG=1 in the environment only for internal development/testing, never in the customer build.
+    DEBUG_MODE = os.environ.get('MPI_DEBUG', '0') == '1'
+    webview.start(on_loaded, debug=DEBUG_MODE)
     print("[OK] Desktop window closed. Goodbye!")
