@@ -441,7 +441,7 @@ const Billing = {
     const urlSuffix = format === 'thermal' ? '/thermal' : '';
     const tokenParam = token ? `?token=${token}` : '';
     const sep = tokenParam ? '&' : '?';
-    const url = `/invoice/${billId}${urlSuffix}${tokenParam}${sep}v=2026u`;
+    const url = `/invoice/${billId}${urlSuffix}${tokenParam}${sep}v=2026v`;
 
     App.showModal(`
       <div class="modal" style="max-width:850px;width:95vw;height:85vh;display:flex;flex-direction:column;padding:0">

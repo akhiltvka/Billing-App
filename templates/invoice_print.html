@@ -145,7 +145,8 @@
 </div>
 
 <script>
-  const billId = parseInt(window.location.pathname.split('/').pop());
+  const pathParts = window.location.pathname.split('/');
+  const billId = parseInt(pathParts[pathParts.indexOf('invoice') + 1]);
   let billData = null;
 
   function updatePageStyle(isA4) {
