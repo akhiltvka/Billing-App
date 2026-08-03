@@ -92,7 +92,14 @@ const Settings = {
                     <input class="form-control" id="s-currency" value="${settings.currency_symbol || '₹'}">
                   </div>
                 </div>
-                <div style="display:flex;flex-direction:column;gap:12px;margin-top:8px">
+                <div class="form-group" style="margin-top:8px">
+                  <label class="form-label">Default Invoice Print Format</label>
+                  <select class="form-control" id="s-print-format" style="width:100%">
+                    <option value="a4" ${settings.default_print_format !== 'thermal' ? 'selected' : ''}>🖨️ A4 Paper Invoice</option>
+                    <option value="thermal" ${settings.default_print_format === 'thermal' ? 'selected' : ''}>🧾 Thermal Receipt (80mm / 58mm)</option>
+                  </select>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:12px;margin-top:12px">
                   <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
                     <input type="checkbox" id="s-gst" ${settings.gst_enabled === 'true' ? 'checked' : ''} ${(Auth.can('settings.gst_toggle') || Auth.isRole('admin', 'md', 'manager', 'accountant')) ? '' : 'disabled title="Requires permission"'}
                       style="width:18px;height:18px;accent-color:var(--crimson)">
@@ -591,11 +598,12 @@ const Settings = {
 
   async savePreferences() {
     const payload = {
-      bill_prefix:      document.getElementById('s-prefix').value,
-      currency_symbol:  document.getElementById('s-currency').value,
-      gst_enabled:      document.getElementById('s-gst').checked ? 'true' : 'false',
-      print_after_bill: document.getElementById('s-print').checked ? 'true' : 'false',
-      low_stock_alert:  document.getElementById('s-lowstock').checked ? 'true' : 'false',
+      bill_prefix:          document.getElementById('s-prefix').value,
+      currency_symbol:      document.getElementById('s-currency').value,
+      gst_enabled:          document.getElementById('s-gst').checked ? 'true' : 'false',
+      print_after_bill:     document.getElementById('s-print').checked ? 'true' : 'false',
+      low_stock_alert:      document.getElementById('s-lowstock').checked ? 'true' : 'false',
+      default_print_format: document.getElementById('s-print-format').value,
     };
     try {
       await App.api('/settings', 'POST', payload);

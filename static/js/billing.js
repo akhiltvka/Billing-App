@@ -205,16 +205,18 @@ const Billing = {
         </div>
       </div>`;
 
-    // Load products, customers, upcoming bill number & held count
+    // Load products, customers, upcoming bill number, held count & settings
     try {
-      const [prods, nextNumData, heldData, custsData] = await Promise.all([
+      const [prods, nextNumData, heldData, custsData, settingsData] = await Promise.all([
         App.api('/products?active=true'),
         App.api('/bills/next-number'),
         App.api('/billing/held'),
-        App.api('/customers')
+        App.api('/customers'),
+        App.api('/settings')
       ]);
       this.products = prods;
       this.allCustomers = Array.isArray(custsData) ? custsData : (custsData?.data || []);
+      this.settings = settingsData || {};
       const el = document.getElementById('pos-bill-no');
       if (el) el.textContent = nextNumData.next_bill_no;
 
@@ -334,12 +336,20 @@ const Billing = {
                   <td style="padding:10px 8px;text-align:right;font-size:24px;font-weight:900;color:var(--gold)">${total}</td>
                 </tr>
                 <tr style="border-top:1px dashed var(--border)">
-                  <td style="padding:6px 8px;color:var(--text-muted)">Amount Paid</td>
-                  <td style="padding:6px 8px;text-align:right;font-weight:700">₹${parseFloat(paid||0).toFixed(2)}</td>
+                  <td style="padding:6px 8px;color:var(--text-muted);vertical-align:middle">Amount Paid</td>
+                  <td style="padding:6px 8px;text-align:right">
+                    <div style="display:inline-flex;align-items:center;position:relative">
+                      <span style="font-weight:700;margin-right:4px">₹</span>
+                      <input id="popup-amount-paid" type="number" step="1" style="width:110px;text-align:right;font-weight:700;font-size:15px;padding:4px 6px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--bg-input);color:var(--text-primary)" 
+                        value="${parseFloat(paid||0).toFixed(2)}"
+                        oninput="Billing.updatePopupPaid(this.value)"
+                        onkeydown="Billing.handlePopupPaidKey(event)">
+                    </div>
+                  </td>
                 </tr>
                 <tr>
-                  <td style="padding:6px 8px;font-weight:700">${App.escapeHtml(changeLabel)}</td>
-                  <td style="padding:6px 8px;text-align:right;font-size:18px;font-weight:900;color:#10B981">${change}</td>
+                  <td style="padding:6px 8px;font-weight:700" id="popup-change-label">${App.escapeHtml(changeLabel)}</td>
+                  <td style="padding:6px 8px;text-align:right;font-size:18px;font-weight:900;color:#10B981" id="popup-change-value">${change}</td>
                 </tr>
               </tbody>
             </table>
@@ -354,6 +364,50 @@ const Billing = {
           </div>
         </div>
       </div>`);
+
+    // Dynamic focus & color syncing
+    setTimeout(() => {
+      const popupPaid = document.getElementById('popup-amount-paid');
+      if (popupPaid) {
+        popupPaid.focus();
+        popupPaid.select();
+      }
+      const popupChangeVal = document.getElementById('popup-change-value');
+      const screenChangeEl = document.getElementById('sum-change');
+      if (popupChangeVal && screenChangeEl) {
+        popupChangeVal.style.color = screenChangeEl.style.color;
+      }
+    }, 150);
+  },
+
+  updatePopupPaid(val) {
+    const paidInput = document.getElementById('amount-paid');
+    if (paidInput) {
+      paidInput.value = val;
+    }
+    this.amountPaid = val;
+    this.calcChange();
+
+    const changeLabel = document.getElementById('change-label')?.textContent || 'Balance Given';
+    const changeVal = document.getElementById('sum-change')?.textContent || '₹0.00';
+    const popupChangeLabel = document.getElementById('popup-change-label');
+    const popupChangeVal = document.getElementById('popup-change-value');
+    if (popupChangeLabel) popupChangeLabel.textContent = changeLabel;
+    if (popupChangeVal) {
+      popupChangeVal.textContent = changeVal;
+      const screenChangeEl = document.getElementById('sum-change');
+      if (screenChangeEl) {
+        popupChangeVal.style.color = screenChangeEl.style.color;
+      }
+    }
+  },
+
+  handlePopupPaidKey(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      App.closeModal();
+      Billing.saveBill(true);
+    }
   },
 
   // ─── Quick Add First-Time Customer ─────────────────────────────────────────
@@ -1205,7 +1259,12 @@ const Billing = {
       this.notes = '';
 
       if (print) {
-        window.open(`/invoice/${bill.id}`, '_blank');
+        const fmt = (this.settings && this.settings.default_print_format) === 'thermal' ? 'thermal' : 'a4';
+        if (fmt === 'thermal') {
+          window.open(`/invoice/${bill.id}/thermal`, '_blank');
+        } else {
+          window.open(`/invoice/${bill.id}`, '_blank');
+        }
       }
 
       this.render();
