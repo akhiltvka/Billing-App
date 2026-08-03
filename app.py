@@ -2388,7 +2388,7 @@ def get_customer_dues(cid):
     return ok(res)
 
 @app.route('/api/customers', methods=['POST'])
-@require_permission('customers.manage', 'customers.create', 'billing.create')
+@require_auth
 def create_customer():
     d = request.get_json()
     if d is None:

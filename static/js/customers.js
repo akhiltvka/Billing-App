@@ -16,7 +16,7 @@ const Customers = {
               <h1>👥 Customers</h1>
               <p>${customers.length} registered customers</p>
             </div>
-            ${Auth.can('customers.manage') || Auth.can('customers.create') || Auth.can('billing.create') ? '<button class="btn btn-primary" onclick="Customers.showModal()">➕ Add Customer</button>' : ''}
+            <button class="btn btn-primary" onclick="Customers.showModal()">➕ Add Customer</button>
           </div>
 
           <div class="filter-row">
