@@ -97,9 +97,14 @@ const App = {
     if (res.status === 403) {
       throw new Error('You do not have permission to perform this action.');
     }
-    const json = await res.json();
-    if (json.status === 'error') throw new Error(json.message);
-    return json.data;
+    let json = null;
+    try {
+      json = await res.json();
+    } catch (_) {
+      throw new Error(`Server returned non-JSON response (${res.status})`);
+    }
+    if (json && json.status === 'error') throw new Error(json.message || 'API request failed');
+    return json ? json.data : null;
   },
 
   // ── Toast Notifications ─────────────────────────────────────────────────

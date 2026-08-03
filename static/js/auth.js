@@ -286,7 +286,19 @@ const Auth = {
         credentials: 'include',
         body: JSON.stringify({ username, password }),
       });
-      const json = await res.json();
+
+      let json = null;
+      const contentType = res.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        try {
+          json = await res.json();
+        } catch (_) {}
+      }
+
+      if (!json) {
+        Auth.showLoginError(`Server returned unexpected response (${res.status}). Please try again.`);
+        return;
+      }
 
       if (json.status !== 'ok') {
         Auth.showLoginError(json.message || 'Invalid credentials');
