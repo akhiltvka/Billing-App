@@ -16,25 +16,35 @@
     }
 
     .page {
-      width: 80mm; /* Standard thermal receipt width */
+      width: 210mm;
+      min-height: 297mm;
       margin: 0 auto;
       background: #fff;
-      padding: 16px 14px;
+      padding: 20mm;
+      font-size: 14px;
     }
 
     @media print {
       body { background: white; }
       .page { width: 100%; margin: 0; padding: 12px; box-shadow: none; }
       .no-print { display: none !important; }
-      @page { margin: 0; size: 80mm auto; }
+      @page { margin: 0; size: A4 portrait; }
     }
 
-    /* A4 mode */
-    body.a4-mode .page {
-      width: 210mm;
-      min-height: 297mm;
-      padding: 20mm;
-      font-size: 14px;
+    /* Receipt (narrow) mode override */
+    body.receipt-mode .page {
+      width: {{ width }}mm;
+      min-height: auto;
+      padding: 16px 14px;
+      font-size: 13px;
+    }
+
+    /* Hide HSN and GST% columns in receipt mode for item table space saving */
+    body.receipt-mode .items-table th.col-hsn,
+    body.receipt-mode .items-table td.col-hsn,
+    body.receipt-mode .items-table th.col-gst,
+    body.receipt-mode .items-table td.col-gst {
+      display: none !important;
     }
 
     /* Header */
@@ -120,7 +130,7 @@
     .print-btn.secondary { background: #fff; color: #333; border: 1px solid #ccc; }
   </style>
 </head>
-<body class="a4-mode">
+<body class="{{ 'receipt-mode' if is_thermal else '' }}">
 
 <div class="no-print">
   <button class="print-btn secondary" onclick="toggleA4()">Toggle A4 / Receipt</button>
@@ -163,12 +173,12 @@
   }
 
   function toggleA4() {
-    const isA4 = document.body.classList.toggle('a4-mode');
-    updatePageStyle(isA4);
+    const isReceipt = document.body.classList.toggle('receipt-mode');
+    updatePageStyle(!isReceipt);
   }
 
   // Initialize dynamic print size page styling
-  updatePageStyle(document.body.classList.contains('a4-mode'));
+  updatePageStyle(!document.body.classList.contains('receipt-mode'));
 
   function numberToWords(num) {
     if (num === 0) return 'Zero';
@@ -298,10 +308,10 @@
           <tr>
             <th>#</th>
             <th>Item Description</th>
-            ${isGstGlobal ? '<th>HSN</th>' : ''}
+            ${isGstGlobal ? '<th class="col-hsn">HSN</th>' : ''}
             <th style="text-align:right">Qty</th>
             <th style="text-align:right">Rate</th>
-            ${hasGST ? '<th style="text-align:right">GST%</th>' : ''}
+            ${hasGST ? '<th style="text-align:right" class="col-gst">GST%</th>' : ''}
             <th style="text-align:right">Amount</th>
           </tr>
         </thead>
@@ -313,10 +323,10 @@
                 <div class="item-name">${item.product_name}</div>
                 <div class="item-detail">${item.unit || ''}</div>
               </td>
-              ${isGstGlobal ? `<td style="font-size:10px">${item.hsn_code || '—'}</td>` : ''}
+              ${isGstGlobal ? `<td class="col-hsn" style="font-size:10px">${item.hsn_code || '—'}</td>` : ''}
               <td class="text-right">${fmt(item.quantity, 3)}</td>
               <td class="text-right">₹${fmt(item.unit_price)}</td>
-              ${hasGST ? `<td class="text-right">${item.gst_rate}%</td>` : ''}
+              ${hasGST ? `<td class="text-right col-gst">${item.gst_rate}%</td>` : ''}
               <td class="text-right font-weight:700">₹${fmt(item.amount)}</td>
             </tr>`).join('')}
         </tbody>

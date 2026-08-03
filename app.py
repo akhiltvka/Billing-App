@@ -670,14 +670,14 @@ def index():
 
 @app.route('/invoice/<int:bill_id>')
 def invoice_page(bill_id):
-    return render_template('invoice_print.html', bill_id=bill_id)
+    return render_template('invoice_print.html', bill_id=bill_id, is_thermal=False, width='210')
 
 @app.route('/invoice/<int:bill_id>/thermal')
 def invoice_thermal_page(bill_id):
     width = request.args.get('width', '80')
     if width not in ('58', '80'):
         width = '80'
-    return render_template('invoice_thermal.html', bill_id=bill_id, width=width)
+    return render_template('invoice_print.html', bill_id=bill_id, is_thermal=True, width=width)
 
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
