@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stock Item Reference</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --gold: #c9a84c;
+      --bg: #f8f9fb;
+      --border: #e2e8f0;
+      --text: #1a202c;
+      --text-muted: #64748b;
+      --card: #ffffff;
+      --header-bg: #0f172a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Inter", sans-serif; background: var(--bg); color: var(--text); font-size: 13px; }
+    .toolbar { position: fixed; top: 0; left: 0; right: 0; background: var(--header-bg); color: #fff; display: flex; align-items: center; gap: 12px; padding: 10px 20px; z-index: 999; box-shadow: 0 2px 12px rgba(0,0,0,.4); }
+    .toolbar-title { flex: 1; font-weight: 600; font-size: 14px; }
+    .toolbar-sub { font-size: 11px; color: rgba(255,255,255,.55); margin-top: 2px; }
+    .btn-print { background: var(--gold); color: #0f172a; border: none; border-radius: 7px; padding: 8px 18px; font-weight: 700; font-size: 13px; cursor: pointer; transition: opacity .15s; }
+    .btn-print:hover { opacity: .85; }
+    .btn-close { background: rgba(255,255,255,.1); color: #fff; border: 1px solid rgba(255,255,255,.2); border-radius: 7px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
+    .btn-close:hover { background: rgba(255,255,255,.2); }
+    .item-count-badge { background: rgba(201,168,76,.2); color: var(--gold); border: 1px solid rgba(201,168,76,.4); border-radius: 20px; padding: 3px 12px; font-size: 12px; font-weight: 600; }
+    .page { max-width: 900px; margin: 70px auto 40px; background: var(--card); border-radius: 12px; box-shadow: 0 4px 32px rgba(0,0,0,.08); overflow: hidden; }
+    .page-header { background: var(--header-bg); color: #fff; padding: 24px 32px 20px; display: flex; align-items: center; gap: 20px; }
+    .header-icon { width: 52px; height: 52px; background: rgba(201,168,76,.15); border: 2px solid rgba(201,168,76,.4); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 26px; flex-shrink: 0; }
+    .header-info h1 { font-size: 22px; font-weight: 700; color: var(--gold); }
+    .header-info p { font-size: 12px; color: rgba(255,255,255,.55); margin-top: 3px; }
+    .header-meta { margin-left: auto; text-align: right; }
+    .header-meta .label { font-size: 10px; color: rgba(255,255,255,.4); text-transform: uppercase; letter-spacing: .06em; }
+    .header-meta .value { font-size: 13px; color: rgba(255,255,255,.8); font-weight: 600; }
+    .search-bar { padding: 16px 32px; border-bottom: 1px solid var(--border); background: #f1f5f9; }
+    .search-input { width: 100%; padding: 9px 14px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; font-family: "Inter", sans-serif; background: #fff; color: var(--text); outline: none; transition: border-color .2s, box-shadow .2s; }
+    .search-input:focus { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(201,168,76,.15); }
+    .category-section { padding: 0 32px 24px; }
+    .category-header { display: flex; align-items: center; gap: 10px; padding: 20px 0 12px; border-bottom: 2px solid var(--border); margin-bottom: 14px; }
+    .category-name { font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
+    .category-count { background: var(--bg); border: 1px solid var(--border); border-radius: 20px; padding: 2px 10px; font-size: 11px; color: var(--text-muted); font-weight: 600; }
+    .items-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+    .item-card { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; transition: border-color .15s, box-shadow .15s; }
+    .item-card:hover { border-color: rgba(201,168,76,.5); box-shadow: 0 2px 8px rgba(201,168,76,.1); }
+    .item-code { font-family: "JetBrains Mono", monospace; font-size: 11px; font-weight: 600; color: var(--gold); letter-spacing: .04em; margin-bottom: 3px; }
+    .item-name { font-size: 12.5px; font-weight: 500; color: var(--text); line-height: 1.3; }
+    .empty-state { text-align: center; padding: 60px 32px; color: var(--text-muted); }
+    .empty-icon { font-size: 48px; margin-bottom: 12px; }
+    .page-footer { padding: 16px 32px; border-top: 1px solid var(--border); background: var(--bg); display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-muted); }
+    .loading { text-align: center; padding: 60px; color: var(--text-muted); font-size: 14px; }
+    .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--gold); border-radius: 50%; animation: spin .7s linear infinite; margin: 0 auto 16px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media print {
+      body { background: white; }
+      .toolbar, .search-bar { display: none !important; }
+      .page { max-width: 100%; margin: 0; border-radius: 0; box-shadow: none; min-height: auto !important; }
+      .item-card { break-inside: avoid; }
+      .category-section { break-inside: avoid; }
+      @page { size: A4 portrait; margin: 12mm; }
+    }
+  </style>
+</head>
+<body>
+<div class="toolbar">
+  <div>
+    <div class="toolbar-title">?? Stock Item Quick Reference</div>
+    <div class="toolbar-sub">{{ shop_name }}</div>
+  </div>
+  <span class="item-count-badge" id="item-count-badge">Loading...</span>
+  <button class="btn-print" onclick="window.print()">??? Print / Save PDF</button>
+  <button class="btn-close" onclick="window.close()">? Close</button>
+</div>
+
+<div class="page" id="print-page">
+  <div class="page-header">
+    <div class="header-icon">??</div>
+    <div class="header-info">
+      <h1>Stock Item Reference</h1>
+      <p>{{ shop_name }} — Active Products Catalogue</p>
+    </div>
+    <div class="header-meta">
+      <div class="label">Generated</div>
+      <div class="value" id="gen-time">—</div>
+    </div>
+  </div>
+
+  <div class="search-bar">
+    <input class="search-input" type="search" id="item-search" placeholder="??  Search by item name or code..." oninput="filterItems(this.value)">
+  </div>
+
+  <div id="items-content">
+    <div class="loading">
+      <div class="spinner"></div>
+      Loading items from database…
+    </div>
+  </div>
+
+  <div class="page-footer">
+    <span>{{ shop_name }} — Internal Reference</span>
+    <span id="footer-count">—</span>
+  </div>
+</div>
+
+<script>
+  let allItems = [];
+
+  document.getElementById('gen-time').textContent = new Date().toLocaleString('en-IN', {
+    day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit'
+  });
+
+  async function loadItems() {
+    try {
+      const resp = await fetch('/api/products?active=true', { credentials: 'include' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      allItems = Array.isArray(data) ? data : (data.items || data.data || []);
+      renderItems(allItems);
+    } catch (e) {
+      document.getElementById('items-content').innerHTML =
+        '<div class="empty-state"><div class="empty-icon">??</div><p>Could not load items: ' + e.message + '</p><p style="font-size:12px;margin-top:8px">Please log in and retry.</p></div>';
+    }
+  }
+
+  function groupByCategory(items) {
+    const groups = {};
+    items.forEach(item => {
+      const cat = item.category_name || 'Uncategorized';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(item);
+    });
+    return groups;
+  }
+
+  function renderItems(items) {
+    const count = items.length;
+    document.getElementById('item-count-badge').textContent = count + ' Items';
+    document.getElementById('footer-count').textContent = 'Total: ' + count + ' active stock items';
+
+    if (count === 0) {
+      document.getElementById('items-content').innerHTML =
+        '<div class="empty-state"><div class="empty-icon">??</div><p>No active stock items found.</p></div>';
+      return;
+    }
+
+    const groups = groupByCategory(items);
+    const sortedCats = Object.keys(groups).sort();
+    let html = '';
+    for (const cat of sortedCats) {
+      const catItems = groups[cat];
+      html += '<div class="category-section"><div class="category-header"><span class="category-name">' +
+        esc(cat) + '</span><span class="category-count">' + catItems.length + '</span></div><div class="items-grid">';
+      catItems.forEach(item => {
+        html += '<div class="item-card"><div class="item-code">' + esc(item.code || '—') +
+          '</div><div class="item-name">' + esc(item.name || '—') + '</div></div>';
+      });
+      html += '</div></div>';
+    }
+    document.getElementById('items-content').innerHTML = html;
+  }
+
+  function filterItems(query) {
+    const q = query.toLowerCase().trim();
+    if (!q) { renderItems(allItems); return; }
+    renderItems(allItems.filter(i => (i.name||'').toLowerCase().includes(q) || (i.code||'').toLowerCase().includes(q)));
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  loadItems();
+</script>
+</body>
+</html>

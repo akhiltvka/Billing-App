@@ -211,6 +211,44 @@ const Settings = {
             </div>
           </div>
 
+          <!-- Quick Reference Guides — available to all users -->
+          <div class="card mt-16" style="margin-top:20px">
+            <div class="card-title"><span class="card-title-icon">📄</span> Quick Reference Guides</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:4px">
+
+              <!-- Stock Items Reference -->
+              <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--r-md);padding:16px">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                  <div style="width:38px;height:38px;background:rgba(201,168,76,.12);border:1.5px solid rgba(201,168,76,.35);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">📦</div>
+                  <div>
+                    <div style="font-weight:700;font-size:13px">Stock Item Reference</div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:2px">All active item codes &amp; names — auto-updates as products change</div>
+                  </div>
+                </div>
+                <div style="display:flex;gap:8px">
+                  <button class="btn btn-primary btn-sm" style="flex:1" onclick="Settings.openPrintablePreview('stock-items','📦 Stock Items Reference')">🖨️ Print / PDF</button>
+                  <button class="btn btn-secondary btn-sm" onclick="window.open('/printables/stock-items','_blank')">↗ Open</button>
+                </div>
+              </div>
+
+              <!-- Keyboard Shortcuts Reference -->
+              <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--r-md);padding:16px">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                  <div style="width:38px;height:38px;background:rgba(99,179,237,.12);border:1.5px solid rgba(99,179,237,.35);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0">⌨️</div>
+                  <div>
+                    <div style="font-weight:700;font-size:13px">Keyboard Shortcuts Guide</div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Complete POS shortcut cheat sheet for cashier training</div>
+                  </div>
+                </div>
+                <div style="display:flex;gap:8px">
+                  <button class="btn btn-primary btn-sm" style="flex:1" onclick="Settings.openPrintablePreview('shortcuts','⌨️ Keyboard Shortcuts Guide')">🖨️ Print / PDF</button>
+                  <button class="btn btn-secondary btn-sm" onclick="window.open('/printables/shortcuts','_blank')">↗ Open</button>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
         ${['admin','md','manager'].includes(Auth.user?.role) ? `
         <!-- Activity Audit Log — MD/CEO & Developer only -->
         <div class="card" style="margin-top:20px">
@@ -622,5 +660,27 @@ const Settings = {
       const errDetail = (e && e.message) ? e.message : (typeof e === 'string' ? e : 'Connection error');
       App.toast(`Cloud Backup Failed: ${errDetail}`, 'error');
     }
+  },
+
+  openPrintablePreview(type, title) {
+    const url = `/printables/${type}?v=${Date.now()}`;
+    App.showModal(`
+      <div class="modal" style="max-width:900px;width:96vw;height:88vh;display:flex;flex-direction:column;padding:0">
+        <div class="modal-header" style="padding:12px 16px;border-bottom:1px solid var(--border)">
+          <div class="modal-title">${title}</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-primary btn-sm" onclick="document.getElementById('ref-preview-iframe').contentWindow.print()">🖨️ Print / PDF</button>
+            <button class="modal-close" onclick="App.closeModal()">✕</button>
+          </div>
+        </div>
+        <div style="flex:1;overflow:hidden">
+          <iframe id="ref-preview-iframe" src="${url}"
+            style="width:100%;height:100%;border:none;background:#f8f9fb"
+            onload="this.style.opacity=1"
+            style="opacity:0;transition:opacity .3s">
+          </iframe>
+        </div>
+      </div>
+    `);
   },
 };
