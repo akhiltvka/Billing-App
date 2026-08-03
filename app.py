@@ -592,149 +592,156 @@ def invoice_thermal_page(bill_id):
 
 @app.route('/api/auth/login', methods=['POST'])
 def login():
-    d = request.get_json()
-    if d is None:
-        return err("Invalid or missing JSON payload")
-    username = (d.get('username') or '').strip()
-    password = d.get('password') or ''
-    if not username or not password:
-        return err("Username and password required")
-
-    # ── Re-Registration & Cloud Sync Check (ALL roles including MD) ────────────
-    # Ping central server first to verify status and sync user/outlet details.
-    # If developer deleted this outlet from the admin portal, the server returns
-    # needs_reregister, which clears local settings and sets status='needs_reregister'.
     try:
-        from license_sync import sync_with_cloud_server as _login_sync
-        _login_sync()
-    except Exception:
-        pass
+        d = request.get_json()
+        if d is None:
+            return err("Invalid or missing JSON payload")
+        username = (d.get('username') or '').strip()
+        password = d.get('password') or ''
+        if not username or not password:
+            return err("Username and password required")
 
-    try:
-        from license_manager import get_license_info as _get_lic
-        _lic = _get_lic()
-        if _lic.get('status') == 'needs_reregister':
-            return err(
-                "⚠️ This outlet was deleted from the central server. "
-                "Please re-register this system using the 'Register Managing Director' button on the login screen.",
-                403
-            )
-    except Exception:
-        pass
-
-    conn = get_db()
-    now = datetime.now()
-    now_str = now.isoformat()
-
-    attempt = conn.execute('SELECT * FROM login_attempts WHERE username=? COLLATE NOCASE', (username,)).fetchone()
-    if attempt and attempt['locked_until']:
+        # Ensure DB tables exist before attempting login
         try:
-            locked_until = datetime.fromisoformat(attempt['locked_until'])
-            if now < locked_until:
-                mins_left = max(1, int((locked_until - now).total_seconds() / 60) + 1)
-                conn.close()
-                return err(f"Account locked due to 5 consecutive failed login attempts. Please try again after {mins_left} minutes.", 400)
+            from database import init_db
+            init_db()
         except Exception:
             pass
 
-    user = conn.execute(
-        'SELECT * FROM users WHERE username=? COLLATE NOCASE AND active=1', (username,)
-    ).fetchone()
+        # ── Re-Registration & Cloud Sync Check (ALL roles including MD) ────────────
+        try:
+            from license_sync import sync_with_cloud_server as _login_sync
+            _login_sync()
+        except Exception:
+            pass
 
-    if not user or not check_password_hash(user['password_hash'], password):
-        if attempt:
+        try:
+            from license_manager import get_license_info as _get_lic
+            _lic = _get_lic()
+            if _lic.get('status') == 'needs_reregister':
+                return err(
+                    "⚠️ This outlet was deleted from the central server. "
+                    "Please re-register this system using the 'Register Managing Director' button on the login screen.",
+                    403
+                )
+        except Exception:
+            pass
+
+        conn = get_db()
+        now = datetime.now()
+        now_str = now.isoformat()
+
+        attempt = conn.execute('SELECT * FROM login_attempts WHERE username=? COLLATE NOCASE', (username,)).fetchone()
+        if attempt and attempt['locked_until']:
             try:
-                last_failed = datetime.fromisoformat(attempt['last_failed_at']) if attempt['last_failed_at'] else now
+                locked_until = datetime.fromisoformat(attempt['locked_until'])
+                if now < locked_until:
+                    mins_left = max(1, int((locked_until - now).total_seconds() / 60) + 1)
+                    conn.close()
+                    return err(f"Account locked due to 5 consecutive failed login attempts. Please try again after {mins_left} minutes.", 400)
             except Exception:
-                last_failed = now
+                pass
 
-            if now - last_failed < timedelta(minutes=10):
-                new_count = (attempt['failed_count'] or 0) + 1
+        user = conn.execute(
+            'SELECT * FROM users WHERE username=? COLLATE NOCASE AND active=1', (username,)
+        ).fetchone()
+
+        if not user or not check_password_hash(user['password_hash'], password):
+            if attempt:
+                try:
+                    last_failed = datetime.fromisoformat(attempt['last_failed_at']) if attempt['last_failed_at'] else now
+                except Exception:
+                    last_failed = now
+
+                if now - last_failed < timedelta(minutes=10):
+                    new_count = (attempt['failed_count'] or 0) + 1
+                else:
+                    new_count = 1
+
+                if new_count >= 5:
+                    lock_until_str = (now + timedelta(minutes=15)).isoformat()
+                    conn.execute(
+                        'UPDATE login_attempts SET failed_count=?, last_failed_at=?, locked_until=? WHERE username=? COLLATE NOCASE',
+                        (new_count, now_str, lock_until_str, username)
+                    )
+                else:
+                    conn.execute(
+                        'UPDATE login_attempts SET failed_count=?, last_failed_at=?, locked_until=NULL WHERE username=? COLLATE NOCASE',
+                        (new_count, now_str, username)
+                    )
             else:
-                new_count = 1
-
-            if new_count >= 5:
-                lock_until_str = (now + timedelta(minutes=15)).isoformat()
                 conn.execute(
-                    'UPDATE login_attempts SET failed_count=?, last_failed_at=?, locked_until=? WHERE username=? COLLATE NOCASE',
-                    (new_count, now_str, lock_until_str, username)
+                    'INSERT INTO login_attempts (username, failed_count, last_failed_at) VALUES (?, 1, ?)',
+                    (username, now_str)
                 )
-            else:
-                conn.execute(
-                    'UPDATE login_attempts SET failed_count=?, last_failed_at=?, locked_until=NULL WHERE username=? COLLATE NOCASE',
-                    (new_count, now_str, username)
-                )
-        else:
-            conn.execute(
-                'INSERT INTO login_attempts (username, failed_count, last_failed_at) VALUES (?, 1, ?)',
-                (username, now_str)
-            )
 
+            conn.commit()
+            conn.close()
+            return err("Invalid username or password", 401)
+
+        conn.execute('DELETE FROM login_attempts WHERE username=? COLLATE NOCASE', (username,))
+        conn.execute('UPDATE users SET last_login=CURRENT_TIMESTAMP WHERE id=?', (user['id'],))
         conn.commit()
         conn.close()
-        return err("Invalid username or password", 401)
 
-    conn.execute('DELETE FROM login_attempts WHERE username=? COLLATE NOCASE', (username,))
-    conn.execute('UPDATE users SET last_login=CURRENT_TIMESTAMP WHERE id=?', (user['id'],))
-    conn.commit()
-    conn.close()
+        user_dict = dict(user)
+        must_change = bool(user_dict.get('must_change_password', 0))
 
-    user_dict = dict(user)
-    must_change = bool(user_dict.get('must_change_password', 0))
+        # ── Hardware-Binding Cross-Check (non-admin roles only) ────────────────────
+        if user['role'] != 'admin':
+            from license_manager import get_machine_id as _login_mid
+            from database import get_db as _ldb
+            current_mid = _login_mid()
+            lconn = _ldb()
+            oc_row  = lconn.execute("SELECT value FROM shop_settings WHERE key='outlet_code'").fetchone()
+            mid_row = lconn.execute("SELECT value FROM shop_settings WHERE key='system_machine_id'").fetchone()
+            lconn.close()
+            machine_outlet_code = (oc_row['value'] or '').strip().upper()  if oc_row and oc_row['value']  else None
+            machine_sys_id      = (mid_row['value'] or '').strip().upper() if mid_row and mid_row['value'] else None
 
-    # ── Hardware-Binding Cross-Check (non-admin roles only) ────────────────────
-    # admin (developer) can login on any machine; all others must match outlet_code & machine_id
-    if user['role'] != 'admin':
-        from license_manager import get_machine_id as _login_mid
-        from database import get_db as _ldb
-        current_mid = _login_mid()
-        lconn = _ldb()
-        oc_row  = lconn.execute("SELECT value FROM shop_settings WHERE key='outlet_code'").fetchone()
-        mid_row = lconn.execute("SELECT value FROM shop_settings WHERE key='system_machine_id'").fetchone()
-        lconn.close()
-        machine_outlet_code = (oc_row['value'] or '').strip().upper()  if oc_row and oc_row['value']  else None
-        machine_sys_id      = (mid_row['value'] or '').strip().upper() if mid_row and mid_row['value'] else None
+            user_oc_val  = user_dict.get('outlet_code')
+            user_mid_val = user_dict.get('machine_id')
+            user_oc  = (user_oc_val or '').strip().upper()  if user_oc_val  else None
+            user_mid = (user_mid_val or '').strip().upper() if user_mid_val else None
 
-        user_oc_val  = user_dict.get('outlet_code')
-        user_mid_val = user_dict.get('machine_id')
-        user_oc  = (user_oc_val or '').strip().upper()  if user_oc_val  else None
-        user_mid = (user_mid_val or '').strip().upper() if user_mid_val else None
+            if machine_outlet_code and user_oc and user_oc != machine_outlet_code:
+                return err(
+                    f"❌ Access Denied. Your account belongs to outlet {user_oc}. "
+                    f"This machine is outlet {machine_outlet_code}. "
+                    f"Please use the computer assigned to your outlet.", 403
+                )
+            if machine_sys_id and user_mid and user_mid != current_mid:
+                return err(
+                    f"❌ Access Denied. Your account is registered to a different computer. "
+                    f"Contact your Managing Director if you believe this is an error.", 403
+                )
 
-        # Only enforce if both the machine and the user have been bound
-        if machine_outlet_code and user_oc and user_oc != machine_outlet_code:
-            return err(
-                f"❌ Access Denied. Your account belongs to outlet {user_oc}. "
-                f"This machine is outlet {machine_outlet_code}. "
-                f"Please use the computer assigned to your outlet.", 403
-            )
-        if machine_sys_id and user_mid and user_mid != current_mid:
-            return err(
-                f"❌ Access Denied. Your account is registered to a different computer. "
-                f"Contact your Managing Director if you believe this is an error.", 403
-            )
+        session.clear()
+        session['user_id']              = user['id']
+        session['username']             = user['username']
+        session['full_name']            = user['full_name']
+        session['user_role']            = user['role']
+        session['outlet_code']          = user_dict.get('outlet_code') or ''
+        session['must_change_password'] = must_change
+        session.permanent               = True
 
-    session.clear()
-    session['user_id']              = user['id']
-    session['username']             = user['username']
-    session['full_name']            = user['full_name']
-    session['user_role']            = user['role']
-    session['outlet_code']          = user_dict.get('outlet_code') or ''
-    session['must_change_password'] = must_change
-    session.permanent               = True
-
-    resp_data = {
-        'id':                   user['id'],
-        'username':             user['username'],
-        'full_name':            user['full_name'],
-        'role':                 user['role'],
-        'role_label':           ROLE_LABELS.get(user['role'], user['role']),
-        'pages':                ROLE_PAGES.get(user['role'], []),
-        'permissions':          sorted(list(get_user_permissions(user['id']))),
-        'outlet_code':          user_dict.get('outlet_code') or '',
-        'machine_id':           (user_dict.get('machine_id') or '')[:8],
-        'must_change_password': must_change,
-    }
-    return ok(resp_data, "Login successful")
+        resp_data = {
+            'id':                   user['id'],
+            'username':             user['username'],
+            'full_name':            user['full_name'],
+            'role':                 user['role'],
+            'role_label':           ROLE_LABELS.get(user['role'], user['role']),
+            'pages':                ROLE_PAGES.get(user['role'], []),
+            'permissions':          sorted(list(get_user_permissions(user['id']))),
+            'outlet_code':          user_dict.get('outlet_code') or '',
+            'machine_id':           (user_dict.get('machine_id') or '')[:8],
+            'must_change_password': must_change,
+        }
+        return ok(resp_data, "Login successful")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return err(f"Login failure: {str(e)}", 500)
 
 @app.route('/api/auth/register-md', methods=['POST'])
 def register_md():

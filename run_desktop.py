@@ -31,6 +31,11 @@ except ImportError:
 def start_flask():
     """Starts Flask on 127.0.0.1:5173 (desktop-only port to avoid conflicts)."""
     os.environ.setdefault('FLASK_DESKTOP', '1')
+    try:
+        from database import init_db
+        init_db()
+    except Exception as e:
+        print(f"[Desktop DB Init Error] {e}")
     from app import app
     app.run(host='127.0.0.1', port=5173, debug=False, use_reloader=False)
 
