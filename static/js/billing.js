@@ -39,7 +39,7 @@ const Billing = {
                     </button>
                   </div>
                   <div style="display:flex;gap:8px">
-                    <input id="customer-search" class="form-control" placeholder="Search by name or phone…" oninput="Billing.searchCustomer(this.value)" autocomplete="off">
+                    <input id="customer-search" class="form-control" placeholder="Search by name or phone…" oninput="Billing.searchCustomer(this.value)" onfocus="Billing.searchCustomer(this.value)" onclick="Billing.searchCustomer(this.value)" autocomplete="off">
                     <button class="btn btn-secondary btn-icon" onclick="Billing.clearCustomer()" title="Walk-in">👤</button>
                   </div>
                   <div id="customer-results" class="product-search-results"></div>
@@ -630,44 +630,78 @@ const Billing = {
   },
 
   // ─── Customer Selection ───────────────────────────────────────────────────
-  async searchCustomer(query) {
+  async searchCustomer(query = '') {
     const el = document.getElementById('customer-results');
-    if (!query || query.length < 1) { el.classList.remove('show'); return; }
+    if (!el) return;
     try {
-      const customers = await App.api(`/customers?q=${encodeURIComponent(query)}`);
-      if (customers.length === 0) {
-        const safeQ = query.replace(/'/g, "\\'");
-        const isNum = /^\+?\d+$/.test(query);
-        el.innerHTML = `<div class="search-result-item" onclick="Billing.showQuickCustomerModal(); setTimeout(() => { const field = document.getElementById('${isNum ? 'qc-phone' : 'qc-name'}'); if (field) { field.value = '${safeQ}'; field.focus(); } }, 150);" style="cursor:pointer;color:var(--primary);padding:10px">
-          <span>➕ No customer found — <strong style="text-decoration:underline">Click to Add "${query}"</strong></span>
-        </div>`;
+      const qStr = (query || '').trim();
+      const customers = await App.api(`/customers?q=${encodeURIComponent(qStr)}`);
+      this.lastCustomerResults = customers || [];
+      if (!customers || customers.length === 0) {
+        if (qStr.length > 0) {
+          const safeQ = qStr.replace(/'/g, "\\'");
+          const isNum = /^\+?\d+$/.test(qStr);
+          el.innerHTML = `<div class="search-result-item" onclick="Billing.showQuickCustomerModal(); setTimeout(() => { const field = document.getElementById('${isNum ? 'qc-phone' : 'qc-name'}'); if (field) { field.value = '${safeQ}'; field.focus(); } }, 150);" style="cursor:pointer;color:var(--primary);padding:10px">
+            <span>➕ No customer found — <strong style="text-decoration:underline">Click to Add "${qStr}"</strong></span>
+          </div>`;
+        } else {
+          el.innerHTML = `<div class="search-result-item" style="padding:10px;color:var(--text-muted)">
+            <span>No saved customers found. Click "Quick Add Customer" to create one.</span>
+          </div>`;
+        }
       } else {
-        el.innerHTML = customers.map(c => `
-          <div class="search-result-item" onclick="Billing.selectCustomer(${JSON.stringify(JSON.stringify(c))})">
+        el.innerHTML = customers.map((c, idx) => `
+          <div class="search-result-item" onclick="Billing.selectCustomerByIndex(${idx})" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border)">
             <div>
-              <div class="item-name">${c.name}</div>
-              <div class="item-meta">${c.phone || 'No phone'} ${c.gstin ? '• GSTIN:' + c.gstin : ''}</div>
+              <div class="item-name" style="font-weight:600;font-size:14px">${App.escapeHtml(c.name)}</div>
+              <div class="item-meta" style="font-size:12px;color:var(--text-muted)">📞 ${App.escapeHtml(c.phone || 'No phone')} ${c.gstin ? '• GSTIN: ' + App.escapeHtml(c.gstin) : ''}</div>
             </div>
           </div>`).join('');
       }
       el.classList.add('show');
-    } catch(e) { el.classList.remove('show'); }
+    } catch(e) {
+      console.error("Customer search error:", e);
+      el.classList.remove('show');
+    }
+  },
+
+  selectCustomerByIndex(idx) {
+    if (!this.lastCustomerResults || !this.lastCustomerResults[idx]) return;
+    const c = this.lastCustomerResults[idx];
+    this.customer = c;
+
+    const input = document.getElementById('customer-search');
+    if (input) input.value = c.name;
+
+    const el = document.getElementById('customer-results');
+    if (el) el.classList.remove('show');
+
+    const badge = document.getElementById('customer-badge');
+    if (badge) {
+      badge.innerHTML = `👤 <strong>${App.escapeHtml(c.name)}</strong> (${App.escapeHtml(c.phone || 'No phone')})`;
+      badge.className = 'badge badge-gold';
+    }
   },
 
   selectCustomer(cJson) {
     const c = typeof cJson === 'string' ? JSON.parse(cJson) : cJson;
+    if (!c) return;
     this.customer = c;
+    const input = document.getElementById('customer-search');
+    if (input) input.value = c.name;
     document.getElementById('customer-results')?.classList.remove('show');
     const badge = document.getElementById('customer-badge');
     if (badge) {
-      badge.innerHTML = `👤 <strong>${c.name}</strong> (${c.phone || 'No phone'})`;
+      badge.innerHTML = `👤 <strong>${App.escapeHtml(c.name)}</strong> (${App.escapeHtml(c.phone || 'No phone')})`;
       badge.className = 'badge badge-gold';
     }
   },
 
   clearCustomer() {
     this.customer = null;
-    document.getElementById('customer-search').value = '';
+    const input = document.getElementById('customer-search');
+    if (input) input.value = '';
+    document.getElementById('customer-results')?.classList.remove('show');
     const badge = document.getElementById('customer-badge');
     if (badge) {
       badge.innerHTML = '👤 Walk-in Customer';

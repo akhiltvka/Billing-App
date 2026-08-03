@@ -2309,7 +2309,7 @@ def conversion_yield_report():
 # ─── Customers ──────────────────────────────────────────────────────────────
 
 @app.route('/api/customers', methods=['GET'])
-@require_permission('customers.view')
+@require_auth
 def list_customers():
     conn = get_db()
     q = request.args.get('q', '').strip()
