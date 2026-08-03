@@ -886,7 +886,7 @@ textarea.form-control { resize: vertical; min-height: 80px; }
   display: flex;
   flex-direction: column;
   gap: 16px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .pos-right {

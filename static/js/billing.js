@@ -40,7 +40,7 @@ const Billing = {
                   </div>
                   <div style="display:flex;gap:8px">
                     <input id="customer-search" class="form-control" placeholder="Search by name or phone…" oninput="Billing.searchCustomer(this.value)" onfocus="Billing.searchCustomer(this.value)" onclick="Billing.searchCustomer(this.value)" autocomplete="off">
-                    <button class="btn btn-secondary btn-icon" onclick="Billing.clearCustomer()" title="Walk-in">👤</button>
+                    <button id="btn-clear-customer" class="btn btn-secondary" onclick="Billing.clearCustomer()" title="Reset to Walk-in Customer" style="padding:0 12px;font-size:12px;white-space:nowrap;display:flex;align-items:center;gap:4px">👤 Walk-in</button>
                   </div>
                   <div id="customer-results" class="product-search-results" style="position:absolute;top:100%;left:0;right:0;z-index:999;background:var(--bg-card);border:1px solid var(--border-strong);border-radius:var(--r-md);box-shadow:var(--shadow-lg);max-height:280px;overflow-y:auto;display:none"></div>
                 </div>
@@ -687,6 +687,13 @@ const Billing = {
       badge.innerHTML = `👤 <strong>${App.escapeHtml(c.name)}</strong> (${App.escapeHtml(c.phone || 'No phone')})`;
       badge.className = 'badge badge-gold';
     }
+
+    const btnClear = document.getElementById('btn-clear-customer');
+    if (btnClear) {
+      btnClear.innerHTML = '✕ Clear';
+      btnClear.className = 'btn btn-danger';
+      btnClear.title = 'Clear customer selection';
+    }
   },
 
   selectCustomer(cJson) {
@@ -705,6 +712,13 @@ const Billing = {
       badge.innerHTML = `👤 <strong>${App.escapeHtml(c.name)}</strong> (${App.escapeHtml(c.phone || 'No phone')})`;
       badge.className = 'badge badge-gold';
     }
+
+    const btnClear = document.getElementById('btn-clear-customer');
+    if (btnClear) {
+      btnClear.innerHTML = '✕ Clear';
+      btnClear.className = 'btn btn-danger';
+      btnClear.title = 'Clear customer selection';
+    }
   },
 
   clearCustomer() {
@@ -720,6 +734,13 @@ const Billing = {
     if (badge) {
       badge.innerHTML = '👤 Walk-in Customer';
       badge.className = 'badge badge-info';
+    }
+
+    const btnClear = document.getElementById('btn-clear-customer');
+    if (btnClear) {
+      btnClear.innerHTML = '👤 Walk-in';
+      btnClear.className = 'btn btn-secondary';
+      btnClear.title = 'Reset to Walk-in Customer';
     }
   },
 
