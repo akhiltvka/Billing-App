@@ -922,6 +922,15 @@ const App = {
   async init() {
     this.startClock();
 
+    // Prevent mouse scroll wheel from changing values on focused number inputs
+    document.addEventListener('wheel', function(e) {
+      if (document.activeElement && document.activeElement.tagName === 'INPUT' && document.activeElement.type === 'number') {
+        if (e.target === document.activeElement) {
+          e.preventDefault();
+        }
+      }
+    }, { passive: false });
+
     // ── Desktop App Mode Detection ─────────────────────────────────────────
     const checkDesktopMode = () => {
       if (typeof window.pywebview !== 'undefined' || document.body.classList.contains('desktop-mode')) {

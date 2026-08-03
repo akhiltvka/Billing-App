@@ -28,26 +28,8 @@ const Billing = {
           <!-- Left: Product Search + Cart -->
           <div class="pos-left">
 
-            <!-- Customer Panel -->
-            <div class="card customer-panel" style="padding:14px 16px">
-              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-                <div style="flex:1;min-width:240px;position:relative">
-                  <div class="form-label mb-8" style="display:flex;justify-content:space-between;align-items:center">
-                    <span>Customer (optional)</span>
-                    <button class="btn btn-secondary btn-sm" onclick="Billing.showQuickCustomerModal()" title="Shortcut: F11 or Alt+C or Ctrl+N" style="padding:2px 8px;font-size:11px">
-                      ➕ Quick Add Customer <kbd style="font-family:sans-serif;background:rgba(0,0,0,0.12);padding:1px 4px;border-radius:3px;font-size:10px;margin-left:3px">F11 / Alt+C</kbd>
-                    </button>
-                  </div>
-                  <div style="display:flex;gap:8px">
-                    <input id="customer-search" class="form-control" placeholder="Search by name or phone…" oninput="Billing.searchCustomer(this.value)" onfocus="Billing.searchCustomer(this.value)" onclick="Billing.searchCustomer(this.value)" onkeydown="Billing.onCustomerSearchKey(event)" onblur="setTimeout(()=>Billing._hideCustomerDropdown(),250)" autocomplete="off" style="flex:1">
-                    <button id="btn-clear-customer" class="btn btn-secondary" onclick="Billing.clearCustomer()" title="Reset to Walk-in Customer" style="padding:0 12px;font-size:12px;white-space:nowrap;display:flex;align-items:center;gap:4px">👤 Walk-in</button>
-                  </div>
-                </div>
-                <div id="customer-info" style="min-width:180px">
-                  <div class="badge badge-info" id="customer-badge">👤 Walk-in Customer</div>
-                </div>
-              </div>
-            </div>
+            <!-- Customer Panel Container -->
+            <div class="card customer-panel" id="customer-panel-container" style="padding:12px 16px"></div>
 
             <!-- Product Search -->
             <div class="card" style="padding:14px 16px">
@@ -146,32 +128,35 @@ const Billing = {
                 </div>
               </div>
 
-              <!-- Amount Received & Change / Balance Calculation -->
-              <div class="form-group" style="margin-top:6px">
-                <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
-                  <span>Amount Received (₹)</span>
-                  <span style="font-size:11px;color:var(--text-muted)">Cash paid by customer</span>
-                </label>
-                <div class="input-group">
-                  <div class="input-group-prefix" style="font-weight:700">₹</div>
-                  <input class="form-control" id="amount-paid" type="number" step="1" placeholder="0.00" style="font-size:18px;font-weight:700"
-                    value="${this.amountPaid || ''}"
-                    oninput="Billing.calcChange()" onfocus="this.select()">
+              <!-- Cash Payment Details Wrapper -->
+              <div id="cash-payment-details" style="${this.paymentMode === 'cash' ? 'display:block' : 'display:none'}">
+                <!-- Amount Received & Change / Balance Calculation -->
+                <div class="form-group" style="margin-top:6px">
+                  <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
+                    <span>Amount Received (₹)</span>
+                    <span style="font-size:11px;color:var(--text-muted)">Cash paid by customer</span>
+                  </label>
+                  <div class="input-group">
+                    <div class="input-group-prefix" style="font-weight:700">₹</div>
+                    <input class="form-control" id="amount-paid" type="number" step="1" placeholder="0.00" style="font-size:18px;font-weight:700"
+                      value="${this.amountPaid || ''}"
+                      oninput="Billing.calcChange()" onfocus="this.select()">
+                  </div>
+                  <!-- Quick Cash Note Presets -->
+                  <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">
+                    <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash('exact')">Exact</button>
+                    <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash(100)">₹100</button>
+                    <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash(200)">₹200</button>
+                    <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash(500)">₹500</button>
+                    <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash(2000)">₹2000</button>
+                  </div>
                 </div>
-                <!-- Quick Cash Note Presets -->
-                <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">
-                  <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash('exact')">Exact</button>
-                  <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash(100)">₹100</button>
-                  <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash(200)">₹200</button>
-                  <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash(500)">₹500</button>
-                  <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash(2000)">₹2000</button>
-                </div>
-              </div>
 
-              <!-- Balance / Balance Given Output -->
-              <div class="bill-row" style="font-size:14px;font-weight:700;padding:8px 12px;background:var(--bg-input);border-radius:var(--r-sm);margin-top:4px;display:flex;justify-content:space-between;align-items:center">
-                <span id="change-label">Balance Given</span>
-                <span class="amount" id="sum-change" style="font-size:20px;font-weight:800;color:var(--text-muted)">₹0.00</span>
+                <!-- Balance / Balance Given Output -->
+                <div class="bill-row" style="font-size:14px;font-weight:700;padding:8px 12px;background:var(--bg-input);border-radius:var(--r-sm);margin-top:4px;display:flex;justify-content:space-between;align-items:center">
+                  <span id="change-label">Balance Given</span>
+                  <span class="amount" id="sum-change" style="font-size:20px;font-weight:800;color:var(--text-muted)">₹0.00</span>
+                </div>
               </div>
 
               <!-- Notes -->
@@ -227,9 +212,7 @@ const Billing = {
 
     // Restore active cart and selections
     this.renderCart();
-    if (this.customer) {
-      this.selectCustomer(this.customer);
-    }
+    this.renderCustomerPanel();
     if (this.paymentMode) {
       this.setPayment(this.paymentMode);
     }
@@ -266,10 +249,28 @@ const Billing = {
     const changeLabel = document.getElementById('change-label')?.textContent || 'Balance Given';
     const paid      = document.getElementById('amount-paid')?.value || '0.00';
     const payMode   = this.paymentMode || 'cash';
-    const custBadge = document.getElementById('customer-badge')?.textContent || 'Walk-in Customer';
     const notes     = document.getElementById('bill-notes')?.value || '';
     const cgstEl    = document.getElementById('sum-cgst');
     const sgstEl    = document.getElementById('sum-sgst');
+
+    // Retrieve and format customer details cleanly
+    let customerName = 'Walk-in Customer';
+    let customerPhone = '';
+    let customerDuesHtml = '';
+
+    if (this.customer) {
+      customerName = this.customer.name;
+      customerPhone = this.customer.phone || '';
+      const dues = parseFloat(this.customer.total_dues || 0);
+      if (dues > 0) {
+        customerDuesHtml = `<div style="font-size:11px;color:#EF4444;font-weight:700;margin-top:2px">⚠️ Outstanding Dues: ₹${dues.toFixed(2)}</div>`;
+      }
+    } else {
+      const searchVal = document.getElementById('customer-search')?.value?.trim();
+      if (searchVal) {
+        customerName = searchVal;
+      }
+    }
 
     const cartRows = (this.cart || []).map(i => `
       <tr>
@@ -290,15 +291,26 @@ const Billing = {
           <button class="modal-close" onclick="App.closeModal()">✕</button>
         </div>
 
-        <!-- Customer & Payment row -->
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
-          <div style="background:var(--bg-input);border-radius:var(--r-sm);padding:10px 12px;border:1px solid var(--border)">
-            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Customer</div>
-            <div style="font-weight:700;font-size:13px">${App.escapeHtml(custBadge.replace(/^👤\s*/,''))}</div>
+        <!-- Customer, Phone & Payment info row -->
+        <div style="display:grid;grid-template-columns:1.2fr 0.8fr;gap:12px;margin-bottom:12px">
+          <!-- Left box: Customer Info -->
+          <div style="background:var(--bg-input);border-radius:var(--r-sm);padding:10px 12px;border:1px solid var(--border);display:flex;flex-direction:column;gap:4px">
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Customer Details</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+              <span style="font-weight:700;font-size:13px;color:var(--text-primary)">👤 ${App.escapeHtml(customerName)}</span>
+              ${customerPhone ? `<span style="font-size:12px;color:var(--text-secondary);background:rgba(0,0,0,0.06);padding:2px 6px;border-radius:4px;font-family:monospace">${App.escapeHtml(customerPhone)}</span>` : ''}
+            </div>
+            ${customerDuesHtml}
           </div>
-          <div style="background:var(--bg-input);border-radius:var(--r-sm);padding:10px 12px;border:1px solid var(--border)">
-            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Payment Mode</div>
-            <div style="font-weight:700;font-size:13px;text-transform:capitalize">${payMode === 'cash' ? '💵' : payMode === 'upi' ? '📱' : '💳'} ${payMode.toUpperCase()}</div>
+
+          <!-- Right box: Payment Mode Selection -->
+          <div style="background:var(--bg-input);border-radius:var(--r-sm);padding:10px 12px;border:1px solid var(--border);display:flex;flex-direction:column;justify-content:center;gap:4px">
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px">Payment Mode</div>
+            <select id="popup-payment-mode" class="form-control" style="font-size:13px;font-weight:700;padding:2px 4px;height:28px;background:var(--bg-card);color:var(--text-primary);border:1px solid var(--border);border-radius:4px" onchange="Billing.updatePopupPayment(this.value)">
+              <option value="cash" ${payMode === 'cash' ? 'selected' : ''}>💵 CASH</option>
+              <option value="upi" ${payMode === 'upi' ? 'selected' : ''}>📱 UPI</option>
+              <option value="card" ${payMode === 'card' ? 'selected' : ''}>💳 CARD</option>
+            </select>
           </div>
         </div>
 
@@ -334,7 +346,7 @@ const Billing = {
                 <td style="padding:10px 8px;font-size:16px;font-weight:800">Grand Total</td>
                 <td style="padding:10px 8px;text-align:right;font-size:24px;font-weight:900;color:var(--gold)">${total}</td>
               </tr>
-              <tr style="border-top:1px dashed var(--border)">
+              <tr id="popup-cash-row" style="border-top:1px dashed var(--border);display:${payMode === 'cash' ? 'table-row' : 'none'}">
                 <td style="padding:6px 8px;color:var(--text-muted);vertical-align:middle">Amount Paid</td>
                 <td style="padding:6px 8px;text-align:right">
                   <div style="display:inline-flex;align-items:center;position:relative">
@@ -346,7 +358,7 @@ const Billing = {
                   </div>
                 </td>
               </tr>
-              <tr>
+              <tr id="popup-change-row" style="display:${payMode === 'cash' ? 'table-row' : 'none'}">
                 <td style="padding:6px 8px;font-weight:700" id="popup-change-label">${App.escapeHtml(changeLabel)}</td>
                 <td style="padding:6px 8px;text-align:right;font-size:18px;font-weight:900;color:#10B981" id="popup-change-value">${change}</td>
               </tr>
@@ -417,6 +429,59 @@ const Billing = {
       const screenChangeEl = document.getElementById('sum-change');
       if (screenChangeEl) {
         popupChangeVal.style.color = screenChangeEl.style.color;
+      }
+    }
+  },
+
+  updatePopupPayment(mode) {
+    this.setPayment(mode);
+  },
+
+  showPrintPreviewModal(billId, format = 'thermal', token = '') {
+    const urlSuffix = format === 'thermal' ? '/thermal' : '';
+    const tokenParam = token ? `?token=${token}` : '';
+    const sep = tokenParam ? '&' : '?';
+    const url = `/invoice/${billId}${urlSuffix}${tokenParam}${sep}v=2026s`;
+
+    App.showModal(`
+      <div class="modal" style="max-width:850px;width:95vw;height:85vh;display:flex;flex-direction:column;padding:0">
+        <div class="modal-header" style="padding:12px 16px;border-bottom:1px solid var(--border)">
+          <div class="modal-title">🖨️ Invoice Print Preview</div>
+          <button class="modal-close" onclick="App.closeModal()">✕</button>
+        </div>
+        <div style="flex:1;position:relative;background:#f0f0f0;overflow:hidden">
+          <iframe id="print-preview-iframe" src="${url}" style="width:100%;height:100%;border:none;"></iframe>
+        </div>
+        <div class="modal-footer" style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:var(--bg-card)">
+          <div>
+            <button class="btn btn-secondary btn-sm" onclick="Billing.togglePreviewFormat(${billId}, '${format}', '${token}')">
+              🔄 Switch to ${format === 'thermal' ? 'A4 Invoice' : 'Thermal Receipt'}
+            </button>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-gold" onclick="Billing.printIframeContent()" style="padding:8px 20px;font-weight:700">
+              🖨️ Print Now
+            </button>
+            <button class="btn btn-secondary" onclick="App.closeModal()">Close</button>
+          </div>
+        </div>
+      </div>
+    `);
+  },
+
+  togglePreviewFormat(billId, currentFormat, token) {
+    const nextFormat = currentFormat === 'thermal' ? 'a4' : 'thermal';
+    this.showPrintPreviewModal(billId, nextFormat, token);
+  },
+
+  printIframeContent() {
+    const iframe = document.getElementById('print-preview-iframe');
+    if (iframe) {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch (e) {
+        App.toast('Could not open print dialog: ' + e.message, 'error');
       }
     }
   },
@@ -1098,41 +1163,60 @@ const Billing = {
     const c = typeof cJson === 'string' ? JSON.parse(cJson) : cJson;
     if (!c) return;
     this.customer = c;
-    const input = document.getElementById('customer-search');
-    if (input) input.value = c.name;
     this._hideCustomerDropdown();
-
-    const badge = document.getElementById('customer-badge');
-    if (badge) {
-      const dues = parseFloat(c.total_dues || 0);
-      const duesInfo = dues > 0 ? ` <span class="text-danger" style="font-size:11px;font-weight:700">(Dues: ₹${dues.toFixed(2)})</span>` : '';
-      badge.innerHTML = `👤 <strong>${App.escapeHtml(c.name)}</strong> (${App.escapeHtml(c.phone || 'No phone')})${duesInfo}`;
-      badge.className = 'badge badge-gold';
-    }
-
-    const btnClear = document.getElementById('btn-clear-customer');
-    if (btnClear) {
-      btnClear.innerHTML = '✕ Clear';
-      btnClear.className = 'btn btn-danger';
-      btnClear.title = 'Clear customer selection';
-    }
+    this.renderCustomerPanel();
   },
 
   clearCustomer() {
     this.customer = null;
-    const input = document.getElementById('customer-search');
-    if (input) input.value = '';
     this._hideCustomerDropdown();
-    const badge = document.getElementById('customer-badge');
-    if (badge) {
-      badge.innerHTML = '👤 Walk-in Customer';
-      badge.className = 'badge badge-info';
-    }
-    const btnClear = document.getElementById('btn-clear-customer');
-    if (btnClear) {
-      btnClear.innerHTML = '👤 Walk-in';
-      btnClear.className = 'btn btn-secondary';
-      btnClear.title = 'Reset to Walk-in Customer';
+    this.renderCustomerPanel();
+  },
+
+  renderCustomerPanel() {
+    const container = document.getElementById('customer-panel-container');
+    if (!container) return;
+
+    if (this.customer) {
+      const dues = parseFloat(this.customer.total_dues || 0);
+      const duesHtml = dues > 0 
+        ? `<span class="badge badge-danger" style="font-weight:700;font-size:11px;padding:3px 8px;margin-left:8px;border-radius:4px">Dues: ₹${dues.toFixed(2)}</span>` 
+        : '';
+      
+      container.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;background:linear-gradient(135deg, rgba(217,119,6,0.08) 0%, rgba(217,119,6,0.02) 100%);border:1px solid rgba(217,119,6,0.22);padding:10px 14px;border-radius:var(--r-md);width:100%;box-shadow:inset 0 1px 2px rgba(0,0,0,0.02);animation:fadeIn var(--t-fast) ease-out">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg, rgba(217,119,6,0.18), rgba(217,119,6,0.04));display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--gold);box-shadow:0 2px 4px rgba(0,0,0,0.04)">👤</div>
+            <div>
+              <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px">
+                <span style="font-weight:800;font-size:14px;color:var(--text-primary);letter-spacing:0.1px">${App.escapeHtml(this.customer.name)}</span>
+                ${duesHtml}
+              </div>
+              <div style="font-size:12px;color:var(--text-secondary);font-family:monospace;margin-top:2px;display:flex;align-items:center;gap:4px">
+                <span style="opacity:0.7">📱 Phone:</span> <strong style="color:var(--text-primary)">${App.escapeHtml(this.customer.phone || 'No phone')}</strong>
+              </div>
+            </div>
+          </div>
+          <button class="btn btn-danger btn-sm" onclick="Billing.clearCustomer()" style="padding:6px 12px;font-weight:700;display:flex;align-items:center;gap:4px">
+            ✕ Remove
+          </button>
+        </div>`;
+    } else {
+      container.innerHTML = `
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;width:100%">
+          <div style="flex:1;min-width:240px;position:relative">
+            <div class="form-label mb-8" style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-weight:700;color:var(--text-secondary)">👤 Customer Details (Optional)</span>
+              <button class="btn btn-secondary btn-sm" onclick="Billing.showQuickCustomerModal()" title="Shortcut: Alt+C or Ctrl+N" style="padding:2px 8px;font-size:11px">
+                ➕ Quick Add Customer <kbd style="font-family:sans-serif;background:rgba(0,0,0,0.12);padding:1px 4px;border-radius:3px;font-size:10px;margin-left:3px">Alt+C</kbd>
+              </button>
+            </div>
+            <div style="display:flex;gap:8px">
+              <input id="customer-search" class="form-control" placeholder="Search customer by name or 10-digit phone number…" oninput="Billing.searchCustomer(this.value)" onfocus="Billing.searchCustomer(this.value)" onclick="Billing.searchCustomer(this.value)" onkeydown="Billing.onCustomerSearchKey(event)" onblur="setTimeout(()=>Billing._hideCustomerDropdown(),250)" autocomplete="off" style="flex:1">
+              <div class="badge badge-info" style="display:flex;align-items:center;padding:0 14px;border:1px solid var(--border);border-radius:var(--r-sm);font-weight:600;font-size:12px;background:rgba(0,0,0,0.03);color:var(--text-secondary)">👤 Walk-in Customer</div>
+            </div>
+          </div>
+        </div>`;
     }
   },
 
@@ -1151,6 +1235,27 @@ const Billing = {
     document.querySelectorAll('.payment-mode-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.mode === mode);
     });
+
+    const cashDetails = document.getElementById('cash-payment-details');
+    if (cashDetails) {
+      cashDetails.style.display = (mode === 'cash') ? 'block' : 'none';
+    }
+
+    const popupCashRow = document.getElementById('popup-cash-row');
+    if (popupCashRow) {
+      popupCashRow.style.display = (mode === 'cash') ? 'table-row' : 'none';
+    }
+    const popupChangeRow = document.getElementById('popup-change-row');
+    if (popupChangeRow) {
+      popupChangeRow.style.display = (mode === 'cash') ? 'table-row' : 'none';
+    }
+
+    const popPayMode = document.getElementById('popup-payment-mode');
+    if (popPayMode) {
+      popPayMode.value = mode;
+    }
+
+    this.calcChange();
   },
 
   updateTotals() {
@@ -1246,7 +1351,10 @@ const Billing = {
     try {
       const totalEl = document.getElementById('sum-total');
       const total = parseFloat(totalEl?.textContent?.replace(/[₹,]/g,'') || 0);
-      const paid = parseFloat(document.getElementById('amount-paid')?.value || total);
+      let paid = parseFloat(document.getElementById('amount-paid')?.value);
+      if (isNaN(paid) || this.paymentMode !== 'cash') {
+        paid = total;
+      }
 
       const payload = {
         customer_id:     this.customer?.id || null,
@@ -1279,11 +1387,7 @@ const Billing = {
 
       if (print) {
         const fmt = (this.settings && this.settings.default_print_format) === 'thermal' ? 'thermal' : 'a4';
-        if (fmt === 'thermal') {
-          window.open(`/invoice/${bill.id}/thermal`, '_blank');
-        } else {
-          window.open(`/invoice/${bill.id}`, '_blank');
-        }
+        this.showPrintPreviewModal(bill.id, fmt, bill.print_token || '');
       }
 
       this.render();
@@ -1381,8 +1485,8 @@ const Billing = {
                        </div>`}</td>
                   <td>
                     <div style="display:flex;gap:6px">
-                      <button class="btn btn-secondary btn-sm" onclick="window.open('/invoice/${b.id}','_blank')" title="Print Full Invoice (A4)">🖨️</button>
-                      <button class="btn btn-secondary btn-sm" onclick="window.open('/invoice/${b.id}/thermal','_blank')" title="Print Thermal Receipt">🧾</button>
+                      <button class="btn btn-secondary btn-sm" onclick="Billing.showPrintPreviewModal(${b.id}, 'a4', '${b.print_token || ''}')" title="Print Full Invoice (A4)">🖨️</button>
+                      <button class="btn btn-secondary btn-sm" onclick="Billing.showPrintPreviewModal(${b.id}, 'thermal', '${b.print_token || ''}')" title="Print Thermal Receipt">🧾</button>
                       ${b.status === 'paid' && Auth.can('billing.void_bill')
                         ? `<button class="btn btn-danger btn-sm" onclick="Billing.promptCancelBill(${b.id},'${b.bill_no}')" title="Cancel Bill">✕ Cancel</button>`
                         : ''}

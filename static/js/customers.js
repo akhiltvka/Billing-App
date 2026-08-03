@@ -187,8 +187,8 @@ const Customers = {
                         <td class="td-muted">${App.fmtDateTime(b.date)}</td>
                         <td class="td-number">${App.fmt(b.grand_total)}</td>
                         <td>
-                          <button class="btn btn-secondary btn-sm" onclick="window.open('/invoice/${b.id}','_blank')" title="Print Full Invoice (A4)">🖨️ Print</button>
-                          <button class="btn btn-secondary btn-sm" onclick="window.open('/invoice/${b.id}/thermal','_blank')" title="Print Thermal Receipt">🧾 Thermal</button>
+                          <button class="btn btn-secondary btn-sm" onclick="Billing.showPrintPreviewModal(${b.id}, 'a4', '${b.print_token || ''}')" title="Print Full Invoice (A4)">🖨️ Print</button>
+                          <button class="btn btn-secondary btn-sm" onclick="Billing.showPrintPreviewModal(${b.id}, 'thermal', '${b.print_token || ''}')" title="Print Thermal Receipt">🧾 Thermal</button>
                         </td>
                       </tr>`).join('')}
                   </tbody>

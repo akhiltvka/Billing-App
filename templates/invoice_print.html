@@ -120,7 +120,7 @@
     .print-btn.secondary { background: #fff; color: #333; border: 1px solid #ccc; }
   </style>
 </head>
-<body>
+<body class="a4-mode">
 
 <div class="no-print">
   <button class="print-btn secondary" onclick="toggleA4()">Toggle A4 / Receipt</button>
@@ -138,9 +138,37 @@
   const billId = parseInt(window.location.pathname.split('/').pop());
   let billData = null;
 
-  function toggleA4() {
-    document.body.classList.toggle('a4-mode');
+  function updatePageStyle(isA4) {
+    let styleEl = document.getElementById('dynamic-page-style');
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = 'dynamic-page-style';
+      document.head.appendChild(styleEl);
+    }
+    if (isA4) {
+      styleEl.textContent = `
+        @media print {
+          @page { size: A4 portrait; margin: 15mm; }
+          .page { width: 100%; max-width: 100%; padding: 0; box-shadow: none; margin: 0; }
+        }
+      `;
+    } else {
+      styleEl.textContent = `
+        @media print {
+          @page { size: 80mm auto; margin: 0; }
+          .page { width: 100%; padding: 12px; box-shadow: none; margin: 0; }
+        }
+      `;
+    }
   }
+
+  function toggleA4() {
+    const isA4 = document.body.classList.toggle('a4-mode');
+    updatePageStyle(isA4);
+  }
+
+  // Initialize dynamic print size page styling
+  updatePageStyle(document.body.classList.contains('a4-mode'));
 
   function numberToWords(num) {
     if (num === 0) return 'Zero';
@@ -175,7 +203,8 @@
 
   async function loadInvoice() {
     try {
-      const res = await fetch('/api/bills/' + billId);
+      const token = new URLSearchParams(window.location.search).get('token') || '';
+      const res = await fetch('/api/bills/' + billId + (token ? '?token=' + token : ''));
       const json = await res.json();
       if (json.status === 'error') throw new Error(json.message);
       billData = json.data;
@@ -374,6 +403,10 @@
       </div>`;
   }
 
+  if (window.self !== window.top) {
+    const el = document.querySelector('.no-print');
+    if (el) el.style.display = 'none';
+  }
   loadInvoice();
 </script>
 </body>

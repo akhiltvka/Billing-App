@@ -262,6 +262,30 @@ def require_permission(*codes):
     return decorator
 
 
+import hmac
+import hashlib
+
+def generate_bill_token(bill_id):
+    secret = app.secret_key
+    if isinstance(secret, str):
+        secret = secret.encode('utf-8')
+    return hmac.new(secret, str(bill_id).encode('utf-8'), hashlib.sha256).hexdigest()
+
+def verify_bill_token(bill_id, token):
+    if not token:
+        return False
+    expected = generate_bill_token(bill_id)
+    return hmac.compare_digest(expected, token)
+
+def add_print_tokens_to_bills(bills_list):
+    res = []
+    for b in bills_list:
+        b_dict = dict(b) if not isinstance(b, dict) else b
+        b_dict['print_token'] = generate_bill_token(b_dict['id'])
+        res.append(b_dict)
+    return res
+
+
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
 def ok(data=None, message="Success"):
@@ -2435,7 +2459,7 @@ def get_customer(cid):
     ).fetchall()
     conn.close()
     result = dict_row(row)
-    result['bills'] = dict_rows(bills)
+    result['bills'] = add_print_tokens_to_bills(dict_rows(bills))
     return ok(result)
 
 @app.route('/api/customers/<int:cid>/dues', methods=['GET'])
@@ -2458,7 +2482,7 @@ def get_customer_dues(cid):
     conn.close()
 
     res = dict_row(cust)
-    res['due_bills'] = dict_rows(bills)
+    res['due_bills'] = add_print_tokens_to_bills(dict_rows(bills))
     res['total_due'] = round(total_due, 2)
     return ok(res)
 
@@ -3177,11 +3201,22 @@ def list_bills():
     total = conn.execute('SELECT COUNT(*) FROM bills WHERE status != "cancelled"').fetchone()[0]
     rows = conn.execute(sql + sql_order + ' LIMIT ? OFFSET ?', params + [limit, offset]).fetchall()
     conn.close()
-    return ok({"bills": dict_rows(rows), "total": total})
+    return ok({"bills": add_print_tokens_to_bills(dict_rows(rows)), "total": total})
 
 @app.route('/api/bills/<int:bid>', methods=['GET'])
-@require_permission('billing.view')
 def get_bill(bid):
+    token = request.args.get('token')
+    if verify_bill_token(bid, token):
+        pass
+    else:
+        # Require standard permission
+        if 'user_id' not in session:
+            return jsonify({'status': 'error', 'message': 'Authentication required'}), 401
+        user_id = session.get('user_id')
+        user_perms = get_user_permissions(user_id)
+        if '*' not in user_perms and 'billing.view' not in user_perms:
+            return jsonify({'status': 'error', 'message': 'Permission denied'}), 403
+
     conn = get_db()
     bill = conn.execute('SELECT * FROM bills WHERE id=?', (bid,)).fetchone()
     if not bill: conn.close(); return err("Bill not found", 404)
@@ -3193,6 +3228,7 @@ def get_bill(bid):
     result['items']    = dict_rows(items)
     result['payments'] = dict_rows(payments)
     result['settings'] = settings
+    result['print_token'] = generate_bill_token(bid)
     return ok(result)
 
 @app.route('/api/bills/<int:bid>/share-link', methods=['GET'])
@@ -3488,7 +3524,10 @@ def create_bill():
         bill       = conn.execute('SELECT * FROM bills WHERE id=?', (bill_id,)).fetchone()
         bill_items = conn.execute('SELECT * FROM bill_items WHERE bill_id=?', (bill_id,)).fetchall()
         payments   = conn.execute('SELECT * FROM bill_payments WHERE bill_id=? ORDER BY paid_at ASC', (bill_id,)).fetchall()
-        result = dict_row(bill); result['items'] = dict_rows(bill_items); result['payments'] = dict_rows(payments)
+        result = dict_row(bill)
+        result['items'] = dict_rows(bill_items)
+        result['payments'] = dict_rows(payments)
+        result['print_token'] = generate_bill_token(bill_id)
         log_activity('CREATE_BILL', f"Bill {bill_no} created — ₹{grand_total} for {d.get('customer_name','Walk-in')}", 'bills', bill_id)
         return ok(result, f"Bill {bill_no} created"), 201
     except InsufficientStockError:
