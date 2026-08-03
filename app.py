@@ -5972,7 +5972,7 @@ def backup():
 def backup_cloud_now():
     success, msg = run_cloud_backup_job()
     if success:
-        return ok(message=f"Cloud Backup Success: {msg}")
+        return ok(data={'message': msg}, message=f"Cloud Backup Success: {msg}")
     return err(f"Cloud Backup Failed: {msg}", 400)
 
 # ─── Main ────────────────────────────────────────────────────────────────────

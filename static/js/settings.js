@@ -608,9 +608,11 @@ const Settings = {
     App.toast('Starting cloud database backup...', 'info');
     try {
       const res = await App.api('/backup/cloud-now', 'POST');
-      App.toast(res.message || 'Database snapshot uploaded to cloud!', 'success');
+      const msg = (res && typeof res === 'object' && res.message) ? res.message : (typeof res === 'string' ? res : 'Database snapshot uploaded to cloud!');
+      App.toast(`Cloud Backup: ${msg}`, 'success');
     } catch(e) {
-      App.toast(`Cloud Backup Failed: ${e.message}`, 'error');
+      const errDetail = (e && e.message) ? e.message : (typeof e === 'string' ? e : 'Connection error');
+      App.toast(`Cloud Backup Failed: ${errDetail}`, 'error');
     }
   },
 };
