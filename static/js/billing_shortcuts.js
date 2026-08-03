@@ -74,9 +74,10 @@ const BillingShortcuts = (function () {
   // to override inside a focused web app / kiosk window)
   const CTRL_KEYMAP = {
     '1': 'onBillSummary',
+    '2': 'onSwitchBills',
     's': 'onSaveAndPrint',
     'p': 'onReprintLast',
-    'q': '__quickCodeFocus', // focuses the quick-code field; actual add happens on Enter
+    'q': '__quickCodeFocus',
     'f': 'onSearchItem',
     'd': 'onLineDiscount',
     'n': 'onNewCustomer',
@@ -251,13 +252,14 @@ const BillingShortcuts = (function () {
       'F3': 'Search customer',
       'F4': 'Bill-level discount',
       'F5': 'Hold bill',
-      'F6': 'Recall held bill',
+      'F6': 'Switch bills / held bills picker',
       'F7': 'Change payment mode',
       'F8': 'Save & print',
       'F9': 'Save without printing',
       'F10': 'Open cash drawer',
       'F12': 'Void bill (needs supervisor PIN)',
       'Ctrl+1': 'Bill Summary popup',
+      'Ctrl+2': 'Switch bills / held bills picker',
       'Ctrl+P': 'Reprint last invoice',
       'Ctrl+Q': 'Focus quick-code entry',
       'Ctrl+D': 'Line-item discount',

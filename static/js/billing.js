@@ -66,10 +66,15 @@ const Billing = {
                 <div style="font-family:'Inter',sans-serif;font-size:14px;font-weight:700">📋 Bill Summary <kbd style="font-family:sans-serif;background:rgba(0,0,0,0.12);padding:1px 4px;border-radius:3px;font-size:10px;margin-left:4px">Ctrl+1</kbd></div>
                 <div style="font-size:11px;color:var(--text-muted)">Upcoming: <span id="pos-bill-no" class="font-bold text-gold">Loading…</span></div>
               </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <button class="btn btn-secondary btn-sm" onclick="Billing.showSwitchBillsModal()" title="Switch Bills (Ctrl+2 / F6)" style="border:1.5px solid var(--gold);color:var(--gold);background:rgba(201,168,76,.1);padding:6px 10px;font-weight:600;font-size:12px">
+                🔄 Bills <span id="switch-bills-badge" style="font-size:11px;background:var(--gold);color:#0f172a;border-radius:10px;padding:1px 6px;font-weight:700;margin-left:2px"></span>
+              </button>
               ${Auth.can('billing.hold') ? `
-              <button class="btn btn-secondary btn-sm" onclick="Billing.showHeldBillsModal()" title="Held Bills (F6)">
-                ⏸️ Held Bills <span id="held-bills-badge"></span>
+              <button class="btn btn-warning btn-sm" onclick="Billing.holdCurrentBill()" title="Hold Bill (F5)" style="padding:6px 10px;font-weight:600;font-size:12px">
+                ⏸️ Hold
               </button>` : ''}
+            </div>
             </div>
 
             <div class="customer-panel" style="padding:6px 16px">
@@ -235,10 +240,11 @@ const Billing = {
         onSearchCustomer: () => document.getElementById('customer-search')?.focus(),
         onNewCustomer:    () => Billing.showQuickCustomerModal(),
         onHoldBill:       () => Billing.holdCurrentBill(),
-        onRecallBill:     () => Billing.loadHeldBills(),
+        onRecallBill:     () => Billing.showSwitchBillsModal(),
         onSaveAndPrint:   () => Billing.saveBill(true),
         onSaveOnly:       () => Billing.saveBill(false),
         onBillSummary:    () => Billing.showBillSummaryPopup(),
+        onSwitchBills:    () => Billing.showSwitchBillsModal(),
         onEscape:         () => App.closeModal(),
       });
     }
