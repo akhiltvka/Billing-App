@@ -16,7 +16,7 @@ const Customers = {
               <h1>👥 Customers</h1>
               <p>${customers.length} registered customers</p>
             </div>
-            <button class="btn btn-primary" onclick="Customers.showModal()">➕ Add Customer</button>
+            ${Auth.can('customers.manage') ? '<button class="btn btn-primary" onclick="Customers.showModal()">➕ Add Customer</button>' : ''}
           </div>
 
           <div class="filter-row">
@@ -51,8 +51,9 @@ const Customers = {
                           <td>
                             <div style="display:flex;gap:6px">
                               <button class="btn btn-secondary btn-sm" onclick="Customers.viewHistory(${c.id},'${c.name}')" title="View Bills">📋</button>
+                              ${Auth.can('customers.manage') ? `
                               <button class="btn btn-secondary btn-sm btn-icon" onclick="Customers.showModal(${JSON.stringify(JSON.stringify(c))})" title="Edit">✏️</button>
-                              <button class="btn btn-danger btn-sm btn-icon" onclick="Customers.delete(${c.id},'${c.name}')" title="Delete">🗑️</button>
+                              <button class="btn btn-danger btn-sm btn-icon" onclick="Customers.delete(${c.id},'${c.name}')" title="Delete">🗑️</button>` : ''}
                             </div>
                           </td>
                         </tr>`).join('')}

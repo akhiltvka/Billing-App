@@ -11,10 +11,10 @@ const App = {
 
   // ── Navigation ──────────────────────────────────────────────────────────
   navigate(page) {
-    // Role gate — silently redirect to dashboard if not permitted
-    if (Auth.currentUser && !Auth.can(page)) {
-      const role = Auth.currentUser.role;
-      const fallback = (Auth.ROLE_PAGES[role] || ['billing'])[0];
+    // Permission gate — redirect to first permitted page if not permitted
+    if (!Auth.can(page)) {
+      const allPages = ['billing','bills','dashboard','inventory','stock-in','purchase-orders','categories','customers','suppliers','expenses','accounts','reports','settings','users'];
+      const fallback = allPages.find(p => Auth.can(p)) || 'billing';
       if (page !== fallback) { this.navigate(fallback); return; }
       return;
     }

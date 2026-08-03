@@ -34,9 +34,10 @@ const Billing = {
                 <div style="flex:1;min-width:240px">
                   <div class="form-label mb-8" style="display:flex;justify-content:space-between;align-items:center">
                     <span>Customer (optional)</span>
+                    ${Auth.can('customers.manage') ? `
                     <button class="btn btn-secondary btn-sm" onclick="Billing.showQuickCustomerModal()" style="padding:2px 8px;font-size:11px">
                       ➕ Quick Add Customer
-                    </button>
+                    </button>` : ''}
                   </div>
                   <div style="display:flex;gap:8px">
                     <input id="customer-search" class="form-control" placeholder="Search by name or phone…" oninput="Billing.searchCustomer(this.value)" autocomplete="off">
@@ -82,21 +83,22 @@ const Billing = {
                 <div style="font-family:'Inter',sans-serif;font-size:15px;font-weight:700">📄 Bill Summary</div>
                 <div style="font-size:12px;color:var(--text-muted)">Upcoming: <span id="pos-bill-no" class="font-bold text-gold">Loading…</span></div>
               </div>
-              <button class="btn btn-secondary btn-sm" onclick="Billing.showHeldBillsModal()" title="Held Bills">
-                ⏸️ Held Bills (${heldCount})
-              </button>
+              ${Auth.can('billing.hold') ? `
+              <button class="btn btn-secondary btn-sm" onclick="Billing.showHeldBillsModal()" title="Held Bills (F6)">
+                ⏸️ Held Bills <span id="held-bills-badge"></span>
+              </button>` : ''}
             </div>
 
             <div class="customer-panel" style="padding:12px 16px">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-                <span class="form-label">Discount %</span>
+                <span class="form-label">Discount % ${!Auth.can('billing.give_discount') ? '<span class="text-muted" style="font-size:10px">(Staff Cap: 10%)</span>' : ''}</span>
                 <span id="discount-display" class="text-gold font-bold">0%</span>
               </div>
-              <input type="range" id="discount-slider" min="0" max="50" value="0" step="0.5"
+              <input type="range" id="discount-slider" min="0" max="${Auth.can('billing.give_discount') ? 50 : 10}" value="0" step="0.5"
                 style="width:100%;accent-color:var(--crimson);cursor:pointer"
                 oninput="Billing.setDiscount(this.value)">
               <div style="display:flex;gap:6px;margin-top:8px">
-                ${[0,5,10,15,20].map(d =>
+                ${(Auth.can('billing.give_discount') ? [0,5,10,15,20] : [0,2.5,5,7.5,10]).map(d =>
                   `<button class="btn btn-secondary btn-sm" style="flex:1;padding:4px" onclick="Billing.setDiscount(${d})">${d}%</button>`
                 ).join('')}
               </div>
@@ -172,7 +174,7 @@ const Billing = {
                 <button class="btn btn-secondary btn-sm" onclick="Billing.saveBill(false)">
                   💾 Save Only
                 </button>
-                <button class="btn btn-warning btn-sm" onclick="Billing.holdCurrentBill()" title="Hold Bill">
+                <button class="btn btn-warning btn-sm" onclick="Billing.holdCurrentBill()" title="Hold Bill (F5)">
                   ⏸️ Hold Bill
                 </button>
                 <button class="btn btn-danger btn-sm" onclick="Billing.clearCart()">
@@ -184,15 +186,20 @@ const Billing = {
         </div>
       </div>`;
 
-    // Load products & upcoming bill number
+    // Load products & upcoming bill number & held count
     try {
-      const [prods, nextNumData] = await Promise.all([
+      const [prods, nextNumData, heldData] = await Promise.all([
         App.api('/products?active=true'),
         App.api('/bills/next-number'),
+        App.api('/billing/held')
       ]);
       this.products = prods;
       const el = document.getElementById('pos-bill-no');
       if (el) el.textContent = nextNumData.next_bill_no;
+
+      const heldList = Array.isArray(heldData) ? heldData : (heldData.held_bills || heldData.data || []);
+      const badgeEl = document.getElementById('held-bills-badge');
+      if (badgeEl) badgeEl.textContent = `(${heldList.length})`;
     } catch(e) { App.toast('Could not load POS data', 'error'); }
   },
 
@@ -248,9 +255,9 @@ const Billing = {
     } catch(e) { App.toast(e.message, 'error'); }
   },
 
-  // ─── Hold & Resume Bills ───────────────────────────────────────────────────
-  holdCurrentBill() {
-    if (this.cart.length === 0) {
+  // ─── Hold & Recall Bills ───────────────────────────────────────────────────
+  async holdCurrentBill() {
+    if (!this.cart || this.cart.length === 0) {
       App.toast('Cart is empty. Add products before holding.', 'warning');
       return;
     }
@@ -258,99 +265,120 @@ const Billing = {
     const totalEl = document.getElementById('sum-total');
     const total = parseFloat(totalEl?.textContent?.replace(/[₹,]/g,'') || 0);
 
-    const heldItem = {
-      id: Date.now(),
-      timestamp: new Date().toISOString(),
-      customer: this.customer,
-      cart: [...this.cart],
-      discountPct: this.discountPct,
-      paymentMode: this.paymentMode,
-      total,
+    const payload = {
+      terminal_id: 'POS-1',
+      customer_id: this.customer?.id || null,
+      customer_name: this.customer?.name || null,
+      items: this.cart,
+      discount_percent: this.discountPct,
+      payment_mode: this.paymentMode,
+      total: total,
+      notes: document.getElementById('bill-notes')?.value || ''
     };
 
-    this._heldBills.push(heldItem);
-    localStorage.setItem('mpi_held_bills', JSON.stringify(this._heldBills));
-    App.toast(`Bill held! Total: ${App.fmt(total)} (${heldItem.cart.length} items)`, 'info');
+    try {
+      const res = await App.api('/billing/hold', 'POST', payload);
+      const ref = res.reference_code || res.reference || (res.data && (res.data.reference_code || res.data.reference)) || 'Held';
+      App.toast(`Bill held! Reference: ${ref} (${this.cart.length} items)`, 'info');
 
-    // Reset current active cart
-    this.cart = [];
-    this.customer = null;
-    this.discountPct = 0;
-    this.render();
+      // Reset current active cart
+      this.cart = [];
+      this.customer = null;
+      this.discountPct = 0;
+      this._selectedCartIndex = undefined;
+      this.render();
+    } catch(e) {
+      App.toast('Failed to hold bill: ' + e.message, 'error');
+    }
   },
 
-  showHeldBillsModal() {
-    const held = this._heldBills;
-    App.showModal(`
-      <div class="modal modal-lg">
-        <div class="modal-header">
-          <div class="modal-title"><span class="modal-title-icon">⏸️</span> Held Bills (${held.length})</div>
-          <button class="modal-close" onclick="App.closeModal()">✕</button>
-        </div>
-        ${held.length === 0
-          ? '<div class="empty-state"><div class="empty-state-icon">⏸️</div><h3>No held bills</h3><p>You can hold active bills on the POS screen.</p></div>'
-          : `<div style="display:flex;flex-direction:column;gap:12px;max-height:400px;overflow-y:auto">
-              ${held.map((h, index) => `
-                <div style="padding:16px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--r-md);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
-                  <div>
-                    <div style="font-weight:700;font-size:15px;color:var(--text-primary)">
-                      ${h.customer ? `👤 ${h.customer.name}` : '👤 Walk-in Customer'}
+  async showHeldBillsModal() {
+    try {
+      const res = await App.api('/billing/held');
+      const heldList = Array.isArray(res) ? res : (res.held_bills || res.data || []);
+      const canDelete = typeof Auth !== 'undefined' && Auth.isRole && Auth.isRole('admin', 'manager', 'md');
+
+      App.showModal(`
+        <div class="modal modal-lg">
+          <div class="modal-header">
+            <div class="modal-title"><span class="modal-title-icon">⏸️</span> Held Bills (${heldList.length})</div>
+            <button class="modal-close" onclick="App.closeModal()">✕</button>
+          </div>
+          ${heldList.length === 0
+            ? '<div class="empty-state"><div class="empty-state-icon">⏸️</div><h3>No held bills</h3><p>You can hold active bills on the POS screen (Press F5).</p></div>'
+            : `<div style="display:flex;flex-direction:column;gap:12px;max-height:400px;overflow-y:auto">
+                ${heldList.map(h => `
+                  <div style="padding:16px;background:var(--bg-input);border:1px solid var(--border);border-radius:var(--r-md);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+                    <div>
+                      <div style="display:flex;align-items:center;gap:8px">
+                        <span class="badge badge-gold font-bold" style="font-family:monospace;font-size:12px">${h.reference || ('HOLD-' + h.id)}</span>
+                        <span style="font-weight:700;font-size:15px;color:var(--text-primary)">
+                          ${h.customer_name ? `👤 ${h.customer_name}` : (h.customer_master_name ? `👤 ${h.customer_master_name}` : '👤 Walk-in Customer')}
+                        </span>
+                      </div>
+                      <div class="text-muted text-xs mt-4">
+                        Held at ${App.fmtDateTime(h.time_held || h.created_at)} • ${h.item_count || (h.items || []).length} item${(h.items || []).length !== 1 ? 's' : ''} • Terminal: ${h.terminal_id || 'POS-1'} ${h.cashier_name ? '• By: ' + h.cashier_name : ''}
+                      </div>
+                      <div style="font-size:12px;margin-top:4px;color:var(--text-secondary)">
+                        ${(h.items || []).map(i => `${i.product_name || i.name} (${i.quantity} ${i.unit || 'unit'})`).join(', ')}
+                      </div>
                     </div>
-                    <div class="text-muted text-xs mt-4">
-                      Held on ${App.fmtDateTime(h.timestamp)} • ${h.cart.length} item${h.cart.length !== 1 ? 's' : ''}
+                    <div style="display:flex;align-items:center;gap:12px">
+                      <div style="font-size:18px;font-weight:800;color:var(--gold)">${App.fmt(h.total || h.total_amount)}</div>
+                      <button class="btn btn-success btn-sm" onclick="Billing.resumeHeldBill(${h.id})">▶️ Recall</button>
+                      ${canDelete ? `<button class="btn btn-danger btn-sm btn-icon" onclick="Billing.discardHeldBill(${h.id}, '${h.reference || ('HOLD-' + h.id)}')">🗑️</button>` : ''}
                     </div>
-                    <div style="font-size:12px;margin-top:4px;color:var(--text-secondary)">
-                      ${h.cart.map(i => `${i.product_name} (${i.quantity} ${i.unit})`).join(', ')}
-                    </div>
-                  </div>
-                  <div style="display:flex;align-items:center;gap:12px">
-                    <div style="font-size:18px;font-weight:800;color:var(--gold)">${App.fmt(h.total)}</div>
-                    <button class="btn btn-success btn-sm" onclick="Billing.resumeHeldBill(${index})">▶️ Resume</button>
-                    <button class="btn btn-danger btn-sm btn-icon" onclick="Billing.discardHeldBill(${index})">🗑️</button>
-                  </div>
-                </div>`).join('')}
-             </div>`}
-        <div class="modal-footer">
-          <button class="btn btn-secondary" onclick="App.closeModal()">Close</button>
-        </div>
-      </div>`);
+                  </div>`).join('')}
+               </div>`}
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="App.closeModal()">Close</button>
+          </div>
+        </div>`);
+    } catch(e) {
+      App.toast('Failed to load held bills: ' + e.message, 'error');
+    }
   },
 
-  resumeHeldBill(index) {
-    const item = this._heldBills[index];
-    if (!item) return;
-
+  async resumeHeldBill(id) {
     if (this.cart.length > 0) {
-      App.confirm('Your current active cart is not empty. Replace current cart with held bill?', 'Resume Bill', () => {
-        this._doResumeHeldBill(index);
+      App.confirm('Your current active cart is not empty. Replace active cart with recalled bill?', 'Recall Bill', () => {
+        this._doResumeHeldBill(id);
       });
       return;
     }
 
-    this._doResumeHeldBill(index);
+    this._doResumeHeldBill(id);
   },
 
-  _doResumeHeldBill(index) {
-    const item = this._heldBills[index];
-    this.cart = [...item.cart];
-    this.customer = item.customer;
-    this.discountPct = item.discountPct || 0;
-    this.paymentMode = item.paymentMode || 'cash';
+  async _doResumeHeldBill(id) {
+    try {
+      const res = await App.api(`/billing/recall/${id}`, 'POST');
+      const data = res.data || res;
+      this.cart = data.cart || data.items || [];
+      this.customer = data.customer_id ? { id: data.customer_id, name: data.customer_name } : null;
+      this.discountPct = data.discount_percent || 0;
+      this.paymentMode = data.payment_mode || 'cash';
+      this._selectedCartIndex = undefined;
 
-    // Remove from held array
-    this._heldBills.splice(index, 1);
-    localStorage.setItem('mpi_held_bills', JSON.stringify(this._heldBills));
-
-    App.closeModal();
-    App.toast('Held bill resumed into active cart!', 'success');
-    this.render();
+      App.closeModal();
+      const ref = data.reference_code || data.reference || `HOLD-${id}`;
+      App.toast(`Held bill ${ref} recalled into active cart!`, 'success');
+      this.render();
+    } catch(e) {
+      App.toast('Failed to recall bill: ' + e.message, 'error');
+    }
   },
 
-  discardHeldBill(index) {
-    this._heldBills.splice(index, 1);
-    localStorage.setItem('mpi_held_bills', JSON.stringify(this._heldBills));
-    App.toast('Held bill discarded', 'warning');
-    this.showHeldBillsModal();
+  async discardHeldBill(id, refCode) {
+    App.confirm(`Delete held bill ${refCode || id}?`, 'Delete Held Bill', async () => {
+      try {
+        await App.api(`/billing/held/${id}`, 'DELETE');
+        App.toast(`Held bill ${refCode || id} deleted`, 'warning');
+        this.showHeldBillsModal();
+      } catch(e) {
+        App.toast('Failed to delete held bill: ' + e.message, 'error');
+      }
+    });
   },
 
   // ─── Product Search ───────────────────────────────────────────────────────
@@ -466,25 +494,27 @@ const Billing = {
         <tbody>
           ${this.cart.map((item, idx) => {
             const lineAmt = item.quantity * item.unit_price;
+            const isSelected = this._selectedCartIndex === idx || (this._selectedCartIndex === undefined && idx === this.cart.length - 1);
+            if (isSelected) this._selectedCartIndex = idx;
             return `
-              <tr style="border-bottom:1px solid var(--border)">
+              <tr class="${isSelected ? 'selected' : ''}" style="border-bottom:1px solid var(--border);cursor:pointer;${isSelected ? 'background:rgba(217,119,6,0.15);' : ''}" onclick="Billing.selectCartRow(${idx})">
                 <td style="padding:10px 14px">
                   <div style="font-weight:600">${item.product_name} <span class="badge badge-gold" style="font-family:monospace;font-size:10px;padding:1px 4px">[${item.code || ''}]</span></div>
                   <div style="font-size:11px;color:var(--text-muted)">${item.unit} ${App.isGstEnabled() && item.hsn_code ? '• HSN:' + item.hsn_code : ''}</div>
                 </td>
                 <td style="padding:10px 8px;text-align:center">
-                  <div style="display:inline-flex;align-items:center;gap:4px">
+                  <div style="display:inline-flex;align-items:center;gap:4px" onclick="event.stopPropagation()">
                     <button class="btn btn-secondary btn-sm btn-icon" style="width:24px;height:24px;font-size:12px" onclick="Billing.changeQty(${idx}, -0.5)">−</button>
                     <input type="number" value="${item.quantity}" step="0.05" min="0.001" style="width:65px;text-align:center;padding:2px 4px;font-weight:700" class="form-control" onchange="Billing.setQty(${idx}, this.value)">
                     <button class="btn btn-secondary btn-sm btn-icon" style="width:24px;height:24px;font-size:12px" onclick="Billing.changeQty(${idx}, 0.5)">+</button>
                   </div>
                 </td>
-                <td style="padding:10px 14px;text-align:right">
+                <td style="padding:10px 14px;text-align:right" onclick="event.stopPropagation()">
                   <input type="number" value="${item.unit_price}" step="0.50" style="width:75px;text-align:right;padding:2px 4px" class="form-control" onchange="Billing.setPrice(${idx}, this.value)">
                 </td>
                 ${App.isGstEnabled() ? `<td style="padding:10px 14px;text-align:right;font-size:12px;color:var(--text-muted)">${item.gst_rate}%</td>` : ''}
                 <td style="padding:10px 14px;text-align:right;font-weight:700;color:var(--gold)">${App.fmt(lineAmt)}</td>
-                <td style="padding:10px 8px;text-align:center">
+                <td style="padding:10px 8px;text-align:center" onclick="event.stopPropagation()">
                   <button class="btn btn-danger btn-sm btn-icon" style="width:24px;height:24px;font-size:11px" onclick="Billing.removeItem(${idx})">✕</button>
                 </td>
               </tr>`;
@@ -493,6 +523,16 @@ const Billing = {
       </table>`;
 
     this.updateTotals();
+  },
+
+  selectCartRow(idx) {
+    this._selectedCartIndex = idx;
+    const rows = document.querySelectorAll('#cart-table tbody tr');
+    rows.forEach((r, i) => {
+      const isSel = i === idx;
+      r.classList.toggle('selected', isSel);
+      r.style.background = isSel ? 'rgba(217,119,6,0.15)' : '';
+    });
   },
 
   changeQty(idx, delta) {
@@ -780,7 +820,7 @@ const Billing = {
                     <div style="display:flex;gap:6px">
                       <button class="btn btn-secondary btn-sm" onclick="window.open('/invoice/${b.id}','_blank')" title="Print Full Invoice (A4)">🖨️</button>
                       <button class="btn btn-secondary btn-sm" onclick="window.open('/invoice/${b.id}/thermal','_blank')" title="Print Thermal Receipt">🧾</button>
-                      ${b.status === 'paid' && Auth.isRole('admin', 'manager')
+                      ${b.status === 'paid' && Auth.can('billing.void_bill')
                         ? `<button class="btn btn-danger btn-sm" onclick="Billing.promptCancelBill(${b.id},'${b.bill_no}')" title="Cancel Bill">✕ Cancel</button>`
                         : ''}
                     </div>

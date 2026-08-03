@@ -102,7 +102,7 @@ const TallyInventory = {
         <div class="tally-header-date">📅 ${today}</div>
         <div class="tally-header-btns">
           <button class="tally-hbtn" onclick="TallyInventory.render()">↺ Refresh</button>
-          <button class="tally-hbtn tally-hbtn-primary" onclick="TallyInventory.openVoucher('stock-in')">+ Stock-In</button>
+          ${Auth.can('stock.in') ? '<button class="tally-hbtn tally-hbtn-primary" onclick="TallyInventory.openVoucher(\'stock-in\')">+ Stock-In</button>' : ''}
         </div>
       </div>`;
   },
@@ -123,34 +123,34 @@ const TallyInventory = {
   },
 
   _renderFKeyBar(context = 'summary') {
-    const keys = {
+    const rawKeys = {
       summary: [
         { key:'F2', desc:'Period', onclick:"document.getElementById('tally-from')?.focus()" },
-        { key:'F5', desc:'Stock-In',      onclick:"TallyInventory.openVoucher('stock-in')" },
-        { key:'F6', desc:'Wastage',        onclick:"TallyInventory.openVoucher('wastage')" },
-        { key:'F8', desc:'Purchase Order', onclick:"TallyInventory.openVoucher('po')" },
-        { key:'F9', desc:'Categories',     onclick:"TallyInventory.openCategories()" },
-        { key:'F10', desc:'Products',      onclick:"TallyInventory.openProducts()" },
-        { key:'Enter', desc:'Drill Down',  onclick:"TallyInventory._drillDown()" },
+        { key:'F5', desc:'Stock-In',      perm:'stock.in', onclick:"TallyInventory.openVoucher('stock-in')" },
+        { key:'F6', desc:'Wastage',       perm:'stock.wastage', onclick:"TallyInventory.openVoucher('wastage')" },
+        { key:'F8', desc:'Purchase Order', perm:'purchase.view', onclick:"TallyInventory.openVoucher('po')" },
+        { key:'F9', desc:'Categories',    perm:'inventory.view', onclick:"TallyInventory.openCategories()" },
+        { key:'F10', desc:'Products',     perm:'inventory.view', onclick:"TallyInventory.openProducts()" },
+        { key:'Enter', desc:'Drill Down', onclick:"TallyInventory._drillDown()" },
       ],
       ledger: [
-        { key:'Esc', desc:'Back',          onclick:"TallyInventory.render()" },
-        { key:'F5', desc:'Stock-In',       onclick:"TallyInventory.openVoucher('stock-in',TallyInventory._currentProduct)" },
-        { key:'F6', desc:'Wastage',        onclick:"TallyInventory.openVoucher('wastage',TallyInventory._currentProduct)" },
-        { key:'F3', desc:'Batch Detail',   onclick:"TallyInventory._toggleBatchSection()" },
+        { key:'Esc', desc:'Back',         onclick:"TallyInventory.render()" },
+        { key:'F5', desc:'Stock-In',      perm:'stock.in', onclick:"TallyInventory.openVoucher('stock-in',TallyInventory._currentProduct)" },
+        { key:'F6', desc:'Wastage',       perm:'stock.wastage', onclick:"TallyInventory.openVoucher('wastage',TallyInventory._currentProduct)" },
+        { key:'F3', desc:'Batch Detail',  onclick:"TallyInventory._toggleBatchSection()" },
       ],
       voucher: [
-        { key:'Alt+S', desc:'Save',         onclick:"TallyInventory._submitVoucher()" },
-        { key:'Alt+D', desc:'Add Row',      onclick:"TallyInventory._addVoucherRow()" },
-        { key:'Esc',   desc:'Cancel',       onclick:"TallyInventory.render()" },
+        { key:'Alt+S', desc:'Save',        onclick:"TallyInventory._submitVoucher()" },
+        { key:'Alt+D', desc:'Add Row',     onclick:"TallyInventory._addVoucherRow()" },
+        { key:'Esc',   desc:'Cancel',      onclick:"TallyInventory.render()" },
       ],
       categories: [
-        { key:'Esc', desc:'Back',           onclick:"TallyInventory.render()" },
-        { key:'F5', desc:'Add Category',    onclick:"Inventory.showCategoryModal()" },
+        { key:'Esc', desc:'Back',          onclick:"TallyInventory.render()" },
+        { key:'F5', desc:'Add Category',   perm:'inventory.create', onclick:"Inventory.showCategoryModal()" },
       ],
     };
 
-    const bar = keys[context] || keys.summary;
+    const bar = (rawKeys[context] || rawKeys.summary).filter(k => !k.perm || Auth.can(k.perm));
     return `
       <div class="tally-fkey-bar">
         ${bar.map(k => `

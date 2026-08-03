@@ -11,7 +11,7 @@ import sqlite3
 import urllib.parse
 from functools import wraps
 from datetime import datetime, date, timedelta
-from flask import Flask, jsonify, request, render_template, send_file, session
+from flask import Flask, jsonify, request, render_template, send_file, session, render_template_string, redirect
 from flask_cors import CORS
 from io import BytesIO
 import openpyxl
@@ -89,7 +89,7 @@ def require_auth(f):
         if 'user_id' not in session:
             return jsonify({'status': 'error', 'message': 'Authentication required'}), 401
         if session.get('must_change_password'):
-            if request.endpoint not in ('change_password', 'logout', 'get_me'):
+            if request.endpoint not in ('change_password', 'logout', 'me'):
                 return jsonify({
                     'status': 'error',
                     'must_change_password': True,
@@ -115,6 +115,116 @@ def require_role(*roles):
             user_role = session.get('user_role')
             if user_role not in ['admin', 'md'] and user_role not in roles:
                 return jsonify({'status': 'error', 'message': 'Insufficient permissions for this action'}), 403
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
+
+
+def get_user_permissions(user_id):
+    """Fetch all permission codes granted to the user via their role_id or legacy role."""
+    if not user_id:
+        return set()
+    conn = get_db()
+    user = conn.execute('SELECT id, role, role_id FROM users WHERE id=?', (user_id,)).fetchone()
+    if not user:
+        conn.close()
+        return set()
+
+    role_id = user['role_id']
+    if not role_id:
+        legacy_map = {'admin': 1, 'md': 1, 'manager': 2, 'accountant': 3, 'counter_staff': 4, 'tester': 4}
+        role_id = legacy_map.get(user['role'], 4)
+
+    rows = conn.execute('''
+        SELECT p.code FROM permissions p
+        JOIN role_permissions rp ON p.id = rp.permission_id
+        WHERE rp.role_id = ?
+    ''', (role_id,)).fetchall()
+    conn.close()
+
+    perms = {r['code'] for r in rows}
+    if user['role'] in ('admin', 'md') or role_id == 1:
+        perms.add('*')
+    return perms
+
+
+def log_permission_audit(user_id, username, permission_code, route, method, allowed):
+    """Record an entry to audit_log table."""
+    try:
+        conn = get_db()
+        conn.execute('''
+            INSERT INTO audit_log (user_id, username, permission_code, route, method, allowed)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (user_id, username, permission_code, route, method, 1 if allowed else 0))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[Audit Log Error] {e}")
+
+
+def require_permission(code):
+    """
+    Decorator enforcing granular role-based permissions.
+    1. Checks if current user's role has the specified permission code (or '*').
+    2. Logs denied attempts to audit_log and returns 403 error/redirect.
+    3. Audits allowed sensitive actions (settings.gst_toggle, billing.void_bill, inventory.edit_price).
+    """
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            is_ajax = request.is_json or request.path.startswith('/api/') or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+            if 'user_id' not in session:
+                if is_ajax:
+                    return jsonify({'status': 'error', 'message': 'Authentication required'}), 401
+                return redirect('/#login')
+
+            if session.get('must_change_password'):
+                if request.endpoint not in ('change_password', 'logout', 'me'):
+                    return jsonify({
+                        'status': 'error',
+                        'must_change_password': True,
+                        'message': 'Password change required before accessing system features'
+                    }), 403
+
+            user_id = session.get('user_id')
+            username = session.get('username', 'unknown')
+            route = request.path
+            method = request.method
+
+            user_perms = get_user_permissions(user_id)
+            is_allowed = (code in user_perms) or ('*' in user_perms)
+
+            # Special discount cap check for billing.give_discount
+            eval_code = code
+            if is_allowed and code == 'billing.create':
+                d = request.get_json(silent=True) or {}
+                disc = float(d.get('discount_percent', 0))
+                if disc > 0 and 'billing.give_discount' not in user_perms and '*' not in user_perms:
+                    conn = get_db()
+                    cap_row = conn.execute("SELECT value FROM shop_settings WHERE key='max_discount_staff'").fetchone()
+                    conn.close()
+                    try:
+                        max_disc = float(cap_row['value']) if cap_row and cap_row['value'] else 10.0
+                    except (ValueError, TypeError):
+                        max_disc = 10.0
+
+                    if disc > max_disc:
+                        is_allowed = False
+                        eval_code = 'billing.give_discount'
+
+            if not is_allowed:
+                log_permission_audit(user_id, username, eval_code, route, method, allowed=0)
+                if is_ajax:
+                    return jsonify({
+                        'status': 'error',
+                        'message': f'Permission denied: requires "{eval_code}" permission'
+                    }), 403
+                return render_template_string('<h1>403 Forbidden</h1><p>You do not have permission ({{ code }}) to access this page.</p>', code=eval_code), 403
+
+            # Audit ALLOWED sensitive actions
+            if eval_code in ('settings.gst_toggle', 'billing.void_bill', 'inventory.edit_price'):
+                log_permission_audit(user_id, username, eval_code, route, method, allowed=1)
+
             return f(*args, **kwargs)
         return decorated
     return decorator
@@ -439,7 +549,18 @@ def update_stock(conn, product_id, delta, tx_type, unit_price=0, ref=None,
 
     return deducted_cost if delta < 0 else tx_id
 
-# ─── Root ───────────────────────────────────────────────────────────────────
+# ─── Root & Jinja Helpers ───────────────────────────────────────────────────
+
+@app.context_processor
+def utility_processor():
+    def can(permission_code):
+        if 'user_id' not in session:
+            return False
+        perms = get_user_permissions(session['user_id'])
+        return (permission_code in perms) or ('*' in perms)
+
+    user_perms = sorted(list(get_user_permissions(session.get('user_id')))) if 'user_id' in session else []
+    return dict(can=can, user_permissions=user_perms)
 
 @app.route('/')
 def index():
@@ -595,6 +716,7 @@ def login():
         'role':                 user['role'],
         'role_label':           ROLE_LABELS.get(user['role'], user['role']),
         'pages':                ROLE_PAGES.get(user['role'], []),
+        'permissions':          sorted(list(get_user_permissions(user['id']))),
         'outlet_code':          user['outlet_code'] or '',
         'machine_id':           (user['machine_id'] or '')[:8],
         'must_change_password': must_change,
@@ -851,6 +973,7 @@ def me():
         'role':                 user['role'],
         'role_label':           ROLE_LABELS.get(user['role'], user['role']),
         'pages':                ROLE_PAGES.get(user['role'], []),
+        'permissions':          sorted(list(get_user_permissions(user['id']))),
         'last_login':           user['last_login'],
         'must_change_password': must_change,
     })
@@ -879,7 +1002,7 @@ def change_password():
 # ─── User Management & Role Administration ────────────────────────────────────
 
 @app.route('/api/auth/users', methods=['GET'])
-@require_role('admin', 'md', 'manager')
+@require_permission('users.view')
 def list_users():
     conn = get_db()
     current_role = session.get('user_role')
@@ -899,7 +1022,7 @@ def list_users():
     return ok(result)
 
 @app.route('/api/auth/users', methods=['POST'])
-@require_role('admin', 'md', 'manager')
+@require_permission('users.manage')
 def create_user():
     d = request.get_json()
     if d is None:
@@ -954,7 +1077,7 @@ def create_user():
         return err("Username already exists")
 
 @app.route('/api/auth/users/<int:uid>', methods=['PUT'])
-@require_role('admin', 'md', 'manager')
+@require_permission('users.manage')
 def update_user(uid):
     d = request.get_json()
     if d is None:
@@ -1019,7 +1142,7 @@ def update_user(uid):
     return ok(result)
 
 @app.route('/api/auth/users/<int:uid>', methods=['DELETE'])
-@require_role('admin', 'md', 'manager')
+@require_permission('users.manage')
 def delete_user(uid):
     if uid == session['user_id']:
         return err("Cannot delete your own account")
@@ -1047,7 +1170,7 @@ def delete_user(uid):
 # ─── Notifications (Managing Director Alerts) ────────────────────────────────
 
 @app.route('/api/notifications', methods=['GET'])
-@require_role('admin', 'md')
+@require_permission('notifications.view')
 def get_notifications():
     conn = get_db()
     rows = conn.execute(
@@ -1060,7 +1183,7 @@ def get_notifications():
     return ok({'notifications': dict_rows(rows), 'unread_count': unread_count})
 
 @app.route('/api/notifications/read', methods=['POST'])
-@require_role('admin')
+@require_permission('notifications.view')
 def mark_notifications_read():
     conn = get_db()
     conn.execute('UPDATE notifications SET read=1 WHERE target_role="admin"')
@@ -1071,6 +1194,7 @@ def mark_notifications_read():
 # ─── Settings ───────────────────────────────────────────────────────────────
 
 @app.route('/api/settings', methods=['GET'])
+@require_permission('settings.view')
 def get_settings():
     conn = get_db()
     rows = conn.execute('SELECT key, value FROM shop_settings').fetchall()
@@ -1078,7 +1202,7 @@ def get_settings():
     return ok({r['key']: r['value'] for r in rows})
 
 @app.route('/api/settings', methods=['POST'])
-@require_role('admin', 'md', 'manager')
+@require_permission('settings.manage')
 def update_settings():
     data = request.get_json()
     if data is None or not isinstance(data, dict):
@@ -1100,7 +1224,7 @@ def update_settings():
     return ok(message="Settings saved")
 
 @app.route('/api/settings/toggle-gst', methods=['POST'])
-@require_role('admin', 'md', 'manager')
+@require_permission('settings.gst_toggle')
 def toggle_gst():
     d = request.get_json() or {}
     enabled = d.get('enabled', True)
@@ -1116,7 +1240,7 @@ def toggle_gst():
 # ─── Activity Audit Log ──────────────────────────────────────────────────────
 
 @app.route('/api/activity-log', methods=['GET'])
-@require_role('admin', 'md')
+@require_permission('activity.view')
 def get_activity_log():
     page     = max(int(request.args.get('page', 1)), 1)
     per_page = int(request.args.get('per_page', 50))
@@ -1148,7 +1272,7 @@ def get_activity_log():
 # ─── Categories ─────────────────────────────────────────────────────────────
 
 @app.route('/api/categories', methods=['GET'])
-@require_auth
+@require_permission('inventory.view')
 def list_categories():
     conn = get_db()
     rows = conn.execute('SELECT * FROM categories ORDER BY name').fetchall()
@@ -1170,7 +1294,7 @@ def list_categories():
     return ok(cat_list)
 
 @app.route('/api/categories', methods=['POST'])
-@require_role('admin', 'manager')
+@require_permission('inventory.create')
 def create_category():
     d = request.get_json()
     if d is None:
@@ -1192,7 +1316,7 @@ def create_category():
         return err("Category name already exists")
 
 @app.route('/api/categories/<int:cat_id>', methods=['PUT'])
-@require_role('admin', 'manager')
+@require_permission('inventory.edit')
 def update_category(cat_id):
     d = request.get_json()
     if d is None:
@@ -1225,7 +1349,7 @@ def update_category(cat_id):
         return err("Category name already exists")
 
 @app.route('/api/categories/<int:cat_id>', methods=['DELETE'])
-@require_role('admin', 'manager')
+@require_permission('inventory.delete')
 def delete_category(cat_id):
     conn = get_db()
     conn.execute('DELETE FROM categories WHERE id=?', (cat_id,))
@@ -1235,7 +1359,7 @@ def delete_category(cat_id):
 # ─── Products ───────────────────────────────────────────────────────────────
 
 @app.route('/api/products', methods=['GET'])
-@require_auth
+@require_permission('inventory.view')
 def list_products():
     conn = get_db()
     active_only = request.args.get('active', 'true').lower() == 'true'
@@ -1300,7 +1424,7 @@ def list_products():
     return ok(product_list)
 
 @app.route('/api/products/<int:pid>', methods=['GET'])
-@require_auth
+@require_permission('inventory.view')
 def get_product(pid):
     conn = get_db()
     row = conn.execute(
@@ -1318,7 +1442,7 @@ def get_product(pid):
     return ok(p)
 
 @app.route('/api/products/barcode/<barcode>', methods=['GET'])
-@require_auth
+@require_permission('inventory.view')
 def get_product_by_barcode(barcode):
     b = (barcode or '').strip()
     if not b:
@@ -1339,7 +1463,7 @@ def get_product_by_barcode(barcode):
     return ok(dict_row(row))
 
 @app.route('/api/products', methods=['POST'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('inventory.create')
 def create_product():
     d = request.get_json()
     if not d.get('name'): return err("Product name is required")
@@ -1409,7 +1533,7 @@ def create_product():
         return err(str(e))
 
 @app.route('/api/products/<int:pid>', methods=['PUT'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('inventory.edit')
 def update_product(pid):
     d = request.get_json()
     code = (d.get('code') or '').strip().upper()
@@ -1439,6 +1563,13 @@ def update_product(pid):
     lead_time = int(d.get('reorder_lead_time_days', 7 if ptype == 'general' else 1))
 
     conn = get_db()
+    old_prod = conn.execute('SELECT selling_price, purchase_price FROM products WHERE id=?', (pid,)).fetchone()
+    if old_prod:
+        new_sp = float(d.get('selling_price', old_prod['selling_price']))
+        new_pp = float(d.get('purchase_price', old_prod['purchase_price']))
+        if new_sp != old_prod['selling_price'] or new_pp != old_prod['purchase_price']:
+            log_permission_audit(session.get('user_id'), session.get('username'), 'inventory.edit_price', request.path, request.method, allowed=1)
+
     try:
         conn.execute(
             '''UPDATE products SET
@@ -1468,7 +1599,7 @@ def update_product(pid):
         return err(str(e))
 
 @app.route('/api/products/<int:pid>', methods=['DELETE'])
-@require_role('admin', 'manager')
+@require_permission('inventory.delete')
 def delete_product(pid):
     conn = get_db()
     conn.execute('UPDATE products SET active=0 WHERE id=?', (pid,))
@@ -1519,7 +1650,7 @@ def low_stock():
 # ─── Stock Conversions / Processing Journals ──────────────────────────────
 
 @app.route('/api/stock/conversions', methods=['POST'])
-@require_role('admin', 'manager')
+@require_permission('stock.conversions')
 def create_stock_conversion():
     d = request.get_json()
     if d is None:
@@ -1699,7 +1830,7 @@ def create_stock_conversion():
 
 
 @app.route('/api/stock/conversions', methods=['GET'])
-@require_auth
+@require_permission('inventory.view')
 def list_stock_conversions():
     date_from = request.args.get('from', '')
     date_to   = request.args.get('to', '')
@@ -1773,7 +1904,7 @@ def list_stock_conversions():
 
 
 @app.route('/api/stock/conversions/<int:cid>', methods=['GET'])
-@require_auth
+@require_permission('inventory.view')
 def get_stock_conversion(cid):
     conn = get_db()
     row = conn.execute('''
@@ -1803,7 +1934,7 @@ def get_stock_conversion(cid):
 # ─── Stock Conversion Templates & Yield Variance ─────────────────────────
 
 @app.route('/api/conversion-templates', methods=['GET'])
-@require_auth
+@require_permission('inventory.view')
 def list_conversion_templates():
     input_pid = request.args.get('input_product_id', '')
     conn = get_db()
@@ -1836,7 +1967,7 @@ def list_conversion_templates():
 
 
 @app.route('/api/conversion-templates/<int:tid>', methods=['GET'])
-@require_auth
+@require_permission('inventory.view')
 def get_conversion_template(tid):
     conn = get_db()
     t = conn.execute('''
@@ -1864,7 +1995,7 @@ def get_conversion_template(tid):
 
 
 @app.route('/api/conversion-templates', methods=['POST'])
-@require_role('admin', 'manager')
+@require_permission('stock.conversions')
 def create_conversion_template():
     d = request.get_json()
     if d is None:
@@ -1922,7 +2053,7 @@ def create_conversion_template():
 
 
 @app.route('/api/conversion-templates/<int:tid>', methods=['PUT'])
-@require_role('admin', 'manager')
+@require_permission('stock.conversions')
 def update_conversion_template(tid):
     d = request.get_json()
     if d is None:
@@ -1971,7 +2102,7 @@ def update_conversion_template(tid):
 
 
 @app.route('/api/conversion-templates/<int:tid>', methods=['DELETE'])
-@require_role('admin', 'manager')
+@require_permission('stock.conversions')
 def delete_conversion_template(tid):
     conn = get_db()
     t = conn.execute('SELECT * FROM conversion_templates WHERE id=? AND is_active=1', (tid,)).fetchone()
@@ -1986,7 +2117,7 @@ def delete_conversion_template(tid):
 
 
 @app.route('/api/conversion-templates/<int:tid>/prefill', methods=['GET'])
-@require_auth
+@require_permission('inventory.view')
 def prefill_conversion_template(tid):
     try:
         input_qty = float(request.args.get('input_quantity', 0))
@@ -2030,7 +2161,7 @@ def prefill_conversion_template(tid):
 
 
 @app.route('/api/reports/conversion-yield', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('reports.view')
 def conversion_yield_report():
     date_from = request.args.get('from', str(date.today().replace(day=1)))
     date_to   = request.args.get('to', str(date.today()))
@@ -2153,7 +2284,7 @@ def conversion_yield_report():
 # ─── Customers ──────────────────────────────────────────────────────────────
 
 @app.route('/api/customers', methods=['GET'])
-@require_auth
+@require_permission('customers.view')
 def list_customers():
     conn = get_db()
     q = request.args.get('q', '').strip()
@@ -2193,7 +2324,7 @@ def list_customers():
     return ok(dict_rows(rows))
 
 @app.route('/api/customers/<int:cid>', methods=['GET'])
-@require_auth
+@require_permission('customers.view')
 def get_customer(cid):
     conn = get_db()
     row = conn.execute('SELECT * FROM customers WHERE id=?', (cid,)).fetchone()
@@ -2208,7 +2339,7 @@ def get_customer(cid):
     return ok(result)
 
 @app.route('/api/customers/<int:cid>/dues', methods=['GET'])
-@require_auth
+@require_permission('customers.view')
 def get_customer_dues(cid):
     conn = get_db()
     cust = conn.execute('SELECT * FROM customers WHERE id=?', (cid,)).fetchone()
@@ -2232,7 +2363,7 @@ def get_customer_dues(cid):
     return ok(res)
 
 @app.route('/api/customers', methods=['POST'])
-@require_auth
+@require_permission('customers.manage')
 def create_customer():
     d = request.get_json()
     if d is None:
@@ -2249,7 +2380,7 @@ def create_customer():
     return ok(dict_row(row)), 201
 
 @app.route('/api/customers/<int:cid>', methods=['PUT'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('customers.manage')
 def update_customer(cid):
     d = request.get_json()
     if d is None:
@@ -2266,7 +2397,7 @@ def update_customer(cid):
     return ok(dict_row(row))
 
 @app.route('/api/customers/<int:cid>', methods=['DELETE'])
-@require_role('admin', 'manager')
+@require_permission('customers.manage')
 def delete_customer(cid):
     conn = get_db()
     conn.execute('DELETE FROM customers WHERE id=?', (cid,))
@@ -2276,7 +2407,7 @@ def delete_customer(cid):
 # ─── Suppliers ──────────────────────────────────────────────────────────────
 
 @app.route('/api/suppliers', methods=['GET'])
-@require_auth
+@require_permission('suppliers.view')
 def list_suppliers():
     conn = get_db()
     q = request.args.get('q', '').strip()
@@ -2316,7 +2447,7 @@ def list_suppliers():
     return ok(dict_rows(rows))
 
 @app.route('/api/suppliers/<int:sid>', methods=['GET'])
-@require_auth
+@require_permission('suppliers.view')
 def get_supplier(sid):
     conn = get_db()
     row = conn.execute('SELECT * FROM suppliers WHERE id=?', (sid,)).fetchone()
@@ -2325,7 +2456,7 @@ def get_supplier(sid):
     return ok(dict_row(row))
 
 @app.route('/api/suppliers/<int:sid>/ledger', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('suppliers.view')
 def supplier_ledger(sid):
     conn = get_db()
     supplier = conn.execute('SELECT * FROM suppliers WHERE id=?', (sid,)).fetchone()
@@ -2393,7 +2524,7 @@ def supplier_ledger(sid):
     })
 
 @app.route('/api/suppliers', methods=['POST'])
-@require_role('admin', 'manager')
+@require_permission('suppliers.manage')
 def create_supplier():
     d = request.get_json()
     if d is None:
@@ -2411,7 +2542,7 @@ def create_supplier():
     return ok(dict_row(row)), 201
 
 @app.route('/api/suppliers/<int:sid>', methods=['PUT'])
-@require_role('admin', 'manager')
+@require_permission('suppliers.manage')
 def update_supplier(sid):
     d = request.get_json()
     if d is None:
@@ -2429,7 +2560,7 @@ def update_supplier(sid):
     return ok(dict_row(row))
 
 @app.route('/api/suppliers/<int:sid>', methods=['DELETE'])
-@require_role('admin', 'manager')
+@require_permission('suppliers.manage')
 def delete_supplier(sid):
     conn = get_db()
     conn.execute('DELETE FROM suppliers WHERE id=?', (sid,))
@@ -2439,7 +2570,7 @@ def delete_supplier(sid):
 # ─── Stock ──────────────────────────────────────────────────────────────────
 
 @app.route('/api/stock/transactions', methods=['GET'])
-@require_auth
+@require_permission('inventory.view')
 def stock_transactions():
     conn = get_db()
     pid = request.args.get('product_id')
@@ -2471,7 +2602,7 @@ def stock_transactions():
 
 
 @app.route('/api/stock/summary', methods=['GET'])
-@require_auth
+@require_permission('inventory.view')
 def stock_summary():
     """
     Returns all products with period-based inward / outward totals for the
@@ -2535,7 +2666,7 @@ def stock_summary():
     return ok(result)
 
 @app.route('/api/stock/in', methods=['POST'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('stock.in')
 def stock_in():
     d = request.get_json()
     if d is None:
@@ -2576,7 +2707,7 @@ def stock_in():
     return ok(dict_row(row), "Stock updated and approved")
 
 @app.route('/api/stock/pending', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('stock.verify')
 def list_pending_stock():
     conn = get_db()
     rows = conn.execute('''
@@ -2591,7 +2722,7 @@ def list_pending_stock():
     return ok(dict_rows(rows))
 
 @app.route('/api/stock/verify/<int:tx_id>', methods=['POST'])
-@require_role('admin', 'manager')
+@require_permission('stock.verify')
 def verify_stock(tx_id):
     d = request.get_json() or {}
     action = d.get('action')
@@ -2629,7 +2760,7 @@ def verify_stock(tx_id):
     return ok(message=msg)
 
 @app.route('/api/stock/wastage', methods=['POST'])
-@require_role('admin', 'manager')
+@require_permission('stock.wastage')
 def stock_wastage():
     d = request.get_json()
     if d is None:
@@ -2676,7 +2807,7 @@ def stock_wastage():
     return ok(dict_row(row), f"Wastage of {qty_sale} {prod['sale_unit'] or 'units'} recorded")
 
 @app.route('/api/stock/adjustment', methods=['POST'])
-@require_role('admin', 'manager')
+@require_permission('stock.adjustment')
 def stock_adjustment():
     d = request.get_json()
     if d is None:
@@ -2695,13 +2826,160 @@ def stock_adjustment():
     update_stock(conn, d['product_id'], delta, 'adjustment', notes=d.get('notes', 'Manual adjustment'))
     conn.commit()
     row = conn.execute('SELECT * FROM products WHERE id=?', (d['product_id'],)).fetchone()
+# ─── Hold & Recall Bills ───────────────────────────────────────────────────
+
+@app.route('/billing/hold', methods=['POST'])
+@app.route('/api/billing/hold', methods=['POST'])
+@require_permission('billing.hold')
+def hold_bill():
+    d = request.get_json() or {}
+    items = d.get('items') or d.get('cart') or []
+    if not items or len(items) == 0:
+        return err("Cart is empty. Add products before holding.", 400)
+
+    terminal_id = d.get('terminal_id', 'POS-1')
+    cashier_id = session.get('user_id')
+    customer_id = d.get('customer_id') or (d.get('customer', {}).get('id') if isinstance(d.get('customer'), dict) else None)
+    customer_name = d.get('customer_name') or (d.get('customer', {}).get('name') if isinstance(d.get('customer'), dict) else None)
+    discount_pct = float(d.get('discount_percent') or d.get('discountPct') or 0)
+    payment_mode = d.get('payment_mode') or d.get('paymentMode') or 'cash'
+    notes = d.get('notes', '')
+    total = float(d.get('total') or d.get('total_amount') or 0)
+
+    items_json = json.dumps(items)
+
+    conn = get_db()
+    c = conn.execute(
+        '''INSERT INTO held_bills
+           (terminal_id, cashier_user_id, customer_id, customer_name, items_json,
+            discount_percent, payment_mode, total_amount, notes, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'held')''',
+        (terminal_id, cashier_id, customer_id, customer_name, items_json,
+         discount_pct, payment_mode, total, notes)
+    )
+    held_id = c.lastrowid
+    ref_code = f"HOLD-{held_id:04d}"
+    conn.execute('UPDATE held_bills SET reference_code = ? WHERE id = ?', (ref_code, held_id))
+    conn.commit()
     conn.close()
-    return ok(dict_row(row), "Stock adjusted")
+
+    # Clear server-side cart if tracked in session
+    session.pop('cart', None)
+
+    log_activity('hold_bill', f"Held bill {ref_code} ({len(items)} items, Total ₹{total})", 'held_bills', held_id)
+
+    return ok({
+        'id': held_id,
+        'reference_code': ref_code,
+        'reference': ref_code,
+        'terminal_id': terminal_id,
+        'total': total,
+        'item_count': len(items)
+    }, f"Bill held successfully as {ref_code}")
+
+
+@app.route('/billing/held', methods=['GET'])
+@app.route('/api/billing/held', methods=['GET'])
+@require_permission('billing.hold')
+def list_held_bills():
+    terminal_id = request.args.get('terminal_id')
+    conn = get_db()
+    sql = '''
+        SELECT hb.*, u.full_name AS cashier_name, c.name AS customer_master_name, c.phone AS customer_phone
+        FROM held_bills hb
+        LEFT JOIN users u ON hb.cashier_user_id = u.id
+        LEFT JOIN customers c ON hb.customer_id = c.id
+        WHERE hb.status = 'held'
+    '''
+    params = []
+    if terminal_id:
+        sql += ' AND hb.terminal_id = ?'
+        params.append(terminal_id)
+
+    sql += ' ORDER BY hb.id DESC'
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+
+    held_bills = []
+    for r in rows:
+        hb = dict_row(r)
+        try:
+            items = json.loads(hb['items_json']) if hb.get('items_json') else []
+        except Exception:
+            items = []
+        item_count = sum(float(i.get('quantity', 1)) for i in items) if isinstance(items, list) else 0
+        hb['items'] = items
+        hb['item_count'] = item_count
+        hb['reference'] = hb.get('reference_code') or f"HOLD-{hb['id']:04d}"
+        hb['time_held'] = hb.get('created_at')
+        hb['total'] = float(hb.get('total_amount') or 0)
+        held_bills.append(hb)
+
+    return ok(held_bills)
+
+
+@app.route('/billing/recall/<int:bill_id>', methods=['POST'])
+@app.route('/api/billing/recall/<int:bill_id>', methods=['POST'])
+@require_permission('billing.hold')
+def recall_held_bill(bill_id):
+    conn = get_db()
+    bill = conn.execute('SELECT * FROM held_bills WHERE id = ? AND status = "held"', (bill_id,)).fetchone()
+    if not bill:
+        conn.close()
+        return err("Held bill not found or already recalled", 404)
+
+    conn.execute('UPDATE held_bills SET status = "recalled" WHERE id = ?', (bill_id,))
+    conn.commit()
+    conn.close()
+
+    b_dict = dict_row(bill)
+    try:
+        items = json.loads(b_dict['items_json'])
+    except Exception:
+        items = []
+
+    session['cart'] = items
+    ref = b_dict.get('reference_code') or f"HOLD-{bill_id:04d}"
+    log_activity('recall_held_bill', f"Recalled held bill {ref}", 'held_bills', bill_id)
+
+    return ok({
+        'id': bill_id,
+        'reference_code': ref,
+        'reference': ref,
+        'cart': items,
+        'items': items,
+        'customer_id': b_dict.get('customer_id'),
+        'customer_name': b_dict.get('customer_name'),
+        'discount_percent': float(b_dict.get('discount_percent') or 0),
+        'payment_mode': b_dict.get('payment_mode') or 'cash',
+        'notes': b_dict.get('notes') or '',
+        'total': float(b_dict.get('total_amount') or 0)
+    }, f"Bill {ref} recalled successfully")
+
+
+@app.route('/billing/held/<int:bill_id>', methods=['DELETE'])
+@app.route('/api/billing/held/<int:bill_id>', methods=['DELETE'])
+@require_permission('billing.delete_held')
+def delete_held_bill(bill_id):
+    conn = get_db()
+    bill = conn.execute('SELECT * FROM held_bills WHERE id = ?', (bill_id,)).fetchone()
+    if not bill:
+        conn.close()
+        return err("Held bill not found", 404)
+
+    ref = bill['reference_code'] or f"HOLD-{bill_id:04d}"
+    conn.execute('DELETE FROM held_bills WHERE id = ?', (bill_id,))
+    conn.commit()
+    conn.close()
+
+    log_activity('delete_held_bill', f"Deleted held bill {ref}", 'held_bills', bill_id)
+    return ok(message=f"Held bill {ref} deleted successfully")
+
 
 # ─── Bills ──────────────────────────────────────────────────────────────────
 
 @app.route('/api/bills', methods=['GET'])
-@require_auth
+@require_permission('billing.view')
 def list_bills():
     conn = get_db()
     date_from = request.args.get('from', '')
@@ -2766,7 +3044,7 @@ def list_bills():
     return ok({"bills": dict_rows(rows), "total": total})
 
 @app.route('/api/bills/<int:bid>', methods=['GET'])
-@require_auth
+@require_permission('billing.view')
 def get_bill(bid):
     conn = get_db()
     bill = conn.execute('SELECT * FROM bills WHERE id=?', (bid,)).fetchone()
@@ -2782,7 +3060,7 @@ def get_bill(bid):
     return ok(result)
 
 @app.route('/api/bills/<int:bid>/share-link', methods=['GET'])
-@require_auth
+@require_permission('billing.view')
 def bill_share_link(bid):
     conn = get_db()
     bill = conn.execute('SELECT * FROM bills WHERE id=?', (bid,)).fetchone()
@@ -2831,7 +3109,7 @@ def bill_share_link(bid):
     })
 
 @app.route('/api/bills', methods=['POST'])
-@require_auth
+@require_permission('billing.create')
 def create_bill():
     lic = get_license_info()
     if lic.get('is_locked'):
@@ -3085,7 +3363,7 @@ def create_bill():
     return ok(result, f"Bill {bill_no} created"), 201
 
 @app.route('/api/bills/next-number', methods=['GET'])
-@require_auth
+@require_permission('billing.view')
 def get_next_bill_number():
     conn = get_db()
     if session.get('user_role') == 'tester':
@@ -3099,7 +3377,7 @@ def get_next_bill_number():
     return ok({'next_bill_no': f"{prefix}-{n:05d}", 'is_test': False})
 
 @app.route('/api/bills/<int:bid>', methods=['DELETE'])
-@require_role('admin', 'manager')
+@require_permission('billing.void_bill')
 def cancel_bill(bid):
     d = request.get_json() or {}
     reason = (d.get('reason') or '').strip()
@@ -3131,7 +3409,7 @@ def cancel_bill(bid):
     return ok(message=f"Bill {bill['bill_no']} cancelled and stock restored")
 
 @app.route('/api/bills/<int:bid>/payments', methods=['POST'])
-@require_auth
+@require_permission('billing.payment')
 def add_bill_payment(bid):
     d = request.get_json()
     if d is None:
@@ -3220,7 +3498,7 @@ def add_bill_payment(bid):
 # ─── Credit Notes ─────────────────────────────────────────────────────────────
 
 @app.route('/api/bills/<int:bid>/credit-note', methods=['POST'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('billing.credit_note')
 def create_credit_note(bid):
     d = request.get_json()
     if d is None:
@@ -3439,7 +3717,7 @@ def create_credit_note(bid):
 
 
 @app.route('/api/credit-notes', methods=['GET'])
-@require_auth
+@require_permission('billing.view')
 def list_credit_notes():
     conn = get_db()
     date_from  = request.args.get('from', '')
@@ -3498,7 +3776,7 @@ def list_credit_notes():
 
 
 @app.route('/api/credit-notes/<int:cnid>', methods=['GET'])
-@require_auth
+@require_permission('billing.view')
 def get_credit_note(cnid):
     conn = get_db()
     cn = conn.execute('''
@@ -3520,7 +3798,7 @@ def get_credit_note(cnid):
 
 
 @app.route('/api/bills/<int:bid>/credit-notes', methods=['GET'])
-@require_auth
+@require_permission('billing.view')
 def list_bill_credit_notes(bid):
     conn = get_db()
     bill = conn.execute('SELECT id FROM bills WHERE id=?', (bid,)).fetchone()
@@ -3560,7 +3838,7 @@ def list_bill_credit_notes(bid):
 # ─── Purchase Orders ─────────────────────────────────────────────────────────
 
 @app.route('/api/purchase-orders', methods=['GET'])
-@require_auth
+@require_permission('purchase.view')
 def list_purchase_orders():
     conn = get_db()
     date_from    = request.args.get('from', '')
@@ -3610,7 +3888,7 @@ def list_purchase_orders():
     return ok(dict_rows(rows))
 
 @app.route('/api/purchase-orders/<int:oid>', methods=['GET'])
-@require_auth
+@require_permission('purchase.view')
 def get_purchase_order(oid):
     conn = get_db()
     po = conn.execute('SELECT * FROM purchase_orders WHERE id=?', (oid,)).fetchone()
@@ -3622,7 +3900,7 @@ def get_purchase_order(oid):
     return ok(result)
 
 @app.route('/api/purchase-orders', methods=['POST'])
-@require_role('admin', 'manager')
+@require_permission('purchase.manage')
 def create_purchase_order():
     d = request.get_json()
     if d is None:
@@ -3712,7 +3990,7 @@ def create_purchase_order():
     return ok(result, f"Purchase order {po_no} created"), 201
 
 @app.route('/api/purchase-orders/<int:oid>/payments', methods=['POST'])
-@require_role('admin', 'manager')
+@require_permission('purchase.manage')
 def add_po_payment(oid):
     d = request.get_json()
     if d is None:
@@ -3800,7 +4078,7 @@ def add_po_payment(oid):
 # ─── Expenses & Other Income ─────────────────────────────────────────────────
 
 @app.route('/api/expenses', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('expenses.view')
 def list_expenses():
     conn = get_db()
     date_from    = request.args.get('from', '')
@@ -3852,7 +4130,7 @@ def list_expenses():
     return ok(result_rows)
 
 @app.route('/api/expenses', methods=['POST'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('expenses.manage')
 def create_expense():
     d = request.get_json()
     if d is None:
@@ -3926,7 +4204,7 @@ def create_expense():
     return ok(dict_row(row)), 201
 
 @app.route('/api/expenses/<int:eid>', methods=['DELETE'])
-@require_role('admin', 'md', 'manager', 'accountant')
+@require_permission('expenses.manage')
 def delete_expense(eid):
     conn = get_db()
     exp = conn.execute('SELECT category, amount FROM expenses WHERE id=?', (eid,)).fetchone()
@@ -3939,7 +4217,7 @@ def delete_expense(eid):
 # ─── Reports ─────────────────────────────────────────────────────────────────
 
 @app.route('/api/reports/dashboard', methods=['GET'])
-@require_auth
+@require_permission('reports.view')
 def dashboard():
     if is_counter_staff():
         return err("Counter Staff do not have access to reports and financial data.", 403)
@@ -3979,7 +4257,7 @@ def dashboard():
     })
 
 @app.route('/api/reports/sales', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('reports.view')
 def sales_report():
     conn = get_db()
     date_from = request.args.get('from', str(date.today()))
@@ -4081,7 +4359,7 @@ def sales_report():
                "from": date_from, "to": date_to})
 
 @app.route('/api/reports/gst', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('reports.view')
 def gst_report():
     conn = get_db()
     date_from = request.args.get('from', str(date.today().replace(day=1)))
@@ -4119,7 +4397,7 @@ def gst_report():
     return ok({"gst_summary": dict_rows(rows), "from": date_from, "to": date_to})
 
 @app.route('/api/reports/stock', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('reports.view')
 def stock_report():
     ptype = request.args.get('product_type', '').strip().lower()
     conn = get_db()
@@ -4152,7 +4430,7 @@ def stock_report():
     return ok({"products": result, "total_value": total_value})
 
 @app.route('/api/reports/top-products', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('reports.view')
 def top_products():
     conn = get_db()
     date_from = request.args.get('from', str(date.today().replace(day=1)))
@@ -4168,7 +4446,7 @@ def top_products():
     return ok(dict_rows(rows))
 
 @app.route('/api/reports/expiring-soon', methods=['GET'])
-@require_role('admin', 'manager', 'accountant', 'counter_staff')
+@require_permission('reports.view')
 def report_expiring_soon():
     days_param = request.args.get('days', '3')
     try:
@@ -4221,7 +4499,7 @@ def report_expiring_soon():
     return ok({"batches": dict_rows(rows), "days": days})
 
 @app.route('/api/reports/wastage', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('reports.view')
 def wastage_report():
     conn = get_db()
     date_from = request.args.get('from', str(date.today().replace(day=1)))
@@ -4315,7 +4593,7 @@ def wastage_report():
     })
 
 @app.route('/api/reports/margin-by-category', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('reports.view')
 def margin_by_category():
     # Approximation Note: Cost is computed as (quantity * p.purchase_price) using the product's CURRENT purchase_price.
     # Future enhancement candidate: snapshot purchase_price onto bill_items at sale time for exact historical margin.
@@ -4413,7 +4691,7 @@ def margin_by_category():
     })
 
 @app.route('/api/reports/dues', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('reports.view')
 def dues_report():
     conn = get_db()
     rows = conn.execute('''
@@ -4458,7 +4736,7 @@ def dues_report():
     })
 
 @app.route('/api/reports/payables', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('reports.view')
 def payables_report():
     conn = get_db()
     rows = conn.execute('''
@@ -4758,7 +5036,7 @@ def build_gstr1_data(conn, date_from='', date_to=''):
 
 
 @app.route('/api/reports/gstr1', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('reports.view')
 def get_gstr1_report():
     date_from = request.args.get('from', '')
     date_to = request.args.get('to', '')
@@ -4769,7 +5047,7 @@ def get_gstr1_report():
 
 
 @app.route('/api/reports/gstr3b', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('reports.view')
 def get_gstr3b_report():
     date_from = request.args.get('from', '')
     date_to = request.args.get('to', '')
@@ -4849,7 +5127,7 @@ def get_gstr3b_report():
 
 
 @app.route('/api/reports/gstr1/export', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('reports.view')
 def export_gstr1_report():
     date_from = request.args.get('from', '')
     date_to = request.args.get('to', '')
@@ -4953,7 +5231,7 @@ def export_gstr1_report():
 # ─── Double-Entry Ledger Chart of Accounts ───────────────────────────────────
 
 @app.route('/api/ledger/accounts', methods=['GET'])
-@require_auth
+@require_permission('accounts.view_ledger')
 def list_ledger_accounts():
     conn = get_db()
     rows = conn.execute('SELECT * FROM ledger_accounts ORDER BY account_group, name').fetchall()
@@ -4962,7 +5240,7 @@ def list_ledger_accounts():
 
 
 @app.route('/api/ledger/accounts', methods=['POST'])
-@require_role('admin', 'manager')
+@require_permission('accounts.manage')
 def create_ledger_account():
     d = request.get_json()
     if d is None:
@@ -5007,7 +5285,7 @@ def create_ledger_account():
 
 
 @app.route('/api/ledger/accounts/<int:acc_id>', methods=['PUT'])
-@require_role('admin', 'manager')
+@require_permission('accounts.manage')
 def update_ledger_account(acc_id):
     d = request.get_json()
     if d is None:
@@ -5073,7 +5351,7 @@ def update_ledger_account(acc_id):
 # ─── Financial Statements & Ledger Statements ──────────────────────────────
 
 @app.route('/api/reports/trial-balance', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('accounts.view_ledger')
 def trial_balance_report():
     as_of = request.args.get('as_of', str(date.today()))
     conn = get_db()
@@ -5174,7 +5452,7 @@ def trial_balance_report():
 
 
 @app.route('/api/reports/profit-loss', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('accounts.view_ledger')
 def profit_loss_report():
     date_from = request.args.get('from', '')
     date_to = request.args.get('to', '')
@@ -5268,7 +5546,7 @@ def profit_loss_report():
 
 
 @app.route('/api/reports/balance-sheet', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('accounts.view_ledger')
 def balance_sheet_report():
     as_of = request.args.get('as_of', str(date.today()))
     conn = get_db()
@@ -5374,7 +5652,7 @@ def balance_sheet_report():
 
 
 @app.route('/api/ledger/accounts/<int:acc_id>/statement', methods=['GET'])
-@require_auth
+@require_permission('accounts.view_ledger')
 def get_ledger_account_statement(acc_id):
     date_from = request.args.get('from', '')
     date_to = request.args.get('to', '')
@@ -5490,7 +5768,7 @@ def get_tally_parent_group(acc_name, acc_group, acc_type):
 
 
 @app.route('/api/ledger/accounts/export-tally-masters', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('accounts.view_ledger')
 def export_tally_masters():
     conn = get_db()
     accounts = conn.execute('SELECT * FROM ledger_accounts ORDER BY account_group, name').fetchall()
@@ -5550,7 +5828,7 @@ def export_tally_masters():
 
 
 @app.route('/api/ledger/export-tally-vouchers', methods=['GET'])
-@require_role('admin', 'manager', 'accountant')
+@require_permission('accounts.view_ledger')
 def export_tally_vouchers():
     date_from = request.args.get('from', '')
     date_to = request.args.get('to', '')
@@ -5671,7 +5949,7 @@ def export_tally_vouchers():
         download_name=filename
     )
 @app.route('/api/backup', methods=['GET'])
-@require_role('admin')
+@require_permission('backup.manage')
 def backup():
     from database import DB_PATH
     if not os.path.exists(DB_PATH):
@@ -5681,7 +5959,7 @@ def backup():
     return send_file(DB_PATH, as_attachment=True, download_name=backup_name)
 
 @app.route('/api/backup/cloud-now', methods=['POST'])
-@require_auth
+@require_permission('backup.manage')
 def backup_cloud_now():
     success, msg = run_cloud_backup_job()
     if success:

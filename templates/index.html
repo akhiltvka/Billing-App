@@ -8,6 +8,9 @@
   <link rel="stylesheet" href="/static/css/style.css?v=2026b">
   <link rel="stylesheet" href="/static/css/tally_inventory.css?v=2026b">
   <link rel="icon" href="/static/logo.png">
+  <script>
+    window.USER_PERMISSIONS = {{ user_permissions|tojson|safe }};
+  </script>
 </head>
 <body class="{{ 'desktop-mode' if is_desktop else '' }}">
 
@@ -195,71 +198,116 @@
     </div>
 
     <nav class="sidebar-nav">
+      {% if can('reports.view') %}
       <div class="nav-section-label">Main</div>
-      <div class="nav-item active" data-page="dashboard" onclick="App.navigate('dashboard')">
+      <div class="nav-item active" data-page="dashboard" data-perm="reports.view" onclick="App.navigate('dashboard')">
         <span class="nav-icon">📊</span>
         <span>Dashboard</span>
       </div>
-      <div class="nav-item" data-page="billing" onclick="App.navigate('billing')">
+      {% endif %}
+
+      {% if can('billing.create') %}
+      <div class="nav-item" data-page="billing" data-perm="billing.create" onclick="App.navigate('billing')">
         <span class="nav-icon">🧾</span>
         <span>New Bill / POS</span>
       </div>
-      <div class="nav-item" data-page="bills" onclick="App.navigate('bills')">
+      {% endif %}
+
+      {% if can('billing.view') %}
+      <div class="nav-item" data-page="bills" data-perm="billing.view" onclick="App.navigate('bills')">
         <span class="nav-icon">📋</span>
         <span>Bill History</span>
       </div>
+      {% endif %}
 
+      {% if can('inventory.view') or can('stock.in') or can('purchase.view') %}
       <div class="nav-section-label">Inventory</div>
-      <div class="nav-item" data-page="inventory" onclick="App.navigate('inventory')">
+      {% if can('inventory.view') %}
+      <div class="nav-item" data-page="inventory" data-perm="inventory.view" onclick="App.navigate('inventory')">
         <span class="nav-icon">📦</span>
         <span>Products</span>
       </div>
-      <div class="nav-item" data-page="stock-in" onclick="App.navigate('stock-in')">
+      {% endif %}
+
+      {% if can('stock.in') %}
+      <div class="nav-item" data-page="stock-in" data-perm="stock.in" onclick="App.navigate('stock-in')">
         <span class="nav-icon">⬆️</span>
         <span>Stock In</span>
       </div>
-      <div class="nav-item" data-page="purchase-orders" onclick="App.navigate('purchase-orders')">
+      {% endif %}
+
+      {% if can('purchase.view') %}
+      <div class="nav-item" data-page="purchase-orders" data-perm="purchase.view" onclick="App.navigate('purchase-orders')">
         <span class="nav-icon">🛒</span>
         <span>Purchase Orders</span>
       </div>
-      <div class="nav-item" data-page="categories" onclick="App.navigate('categories')">
+      {% endif %}
+
+      {% if can('inventory.view') %}
+      <div class="nav-item" data-page="categories" data-perm="inventory.view" onclick="App.navigate('categories')">
         <span class="nav-icon">🏷️</span>
         <span>Categories</span>
       </div>
+      {% endif %}
+      {% endif %}
 
+      {% if can('customers.view') or can('suppliers.view') %}
       <div class="nav-section-label">People</div>
-      <div class="nav-item" data-page="customers" onclick="App.navigate('customers')">
+      {% if can('customers.view') %}
+      <div class="nav-item" data-page="customers" data-perm="customers.view" onclick="App.navigate('customers')">
         <span class="nav-icon">👥</span>
         <span>Customers</span>
       </div>
-      <div class="nav-item" data-page="suppliers" onclick="App.navigate('suppliers')">
+      {% endif %}
+
+      {% if can('suppliers.view') %}
+      <div class="nav-item" data-page="suppliers" data-perm="suppliers.view" onclick="App.navigate('suppliers')">
         <span class="nav-icon">🚚</span>
         <span>Suppliers</span>
       </div>
+      {% endif %}
+      {% endif %}
 
+      {% if can('expenses.view') or can('accounts.view_ledger') or can('reports.view') %}
       <div class="nav-section-label">Finance</div>
-      <div class="nav-item" data-page="expenses" onclick="App.navigate('expenses')">
+      {% if can('expenses.view') %}
+      <div class="nav-item" data-page="expenses" data-perm="expenses.view" onclick="App.navigate('expenses')">
         <span class="nav-icon">💸</span>
         <span>Income &amp; Expenses</span>
       </div>
-      <div class="nav-item" data-page="accounts" onclick="App.navigate('accounts')">
+      {% endif %}
+
+      {% if can('accounts.view_ledger') %}
+      <div class="nav-item" data-page="accounts" data-perm="accounts.view_ledger" onclick="App.navigate('accounts')">
         <span class="nav-icon">📒</span>
         <span>Chart of Accounts</span>
       </div>
-      <div class="nav-item" data-page="reports" onclick="App.navigate('reports')">
+      {% endif %}
+
+      {% if can('reports.view') %}
+      <div class="nav-item" data-page="reports" data-perm="reports.view" onclick="App.navigate('reports')">
         <span class="nav-icon">📈</span>
         <span>Reports</span>
       </div>
+      {% endif %}
+      {% endif %}
 
+      {% if can('settings.view') or can('users.view') %}
       <div class="nav-section-label">System</div>
-      <div class="nav-item" data-page="settings" onclick="App.navigate('settings')">
+      {% if can('settings.view') %}
+      <div class="nav-item" data-page="settings" data-perm="settings.view" onclick="App.navigate('settings')">
         <span class="nav-icon">⚙️</span>
         <span>Settings</span>
       </div>
-      <div class="nav-item" data-page="users" onclick="App.navigate('users')" id="nav-users" style="display:none">
+      {% endif %}
+
+      {% if can('users.view') %}
+      <div class="nav-item" data-page="users" data-perm="users.view" onclick="App.navigate('users')" id="nav-users" style="display:none">
         <span class="nav-icon">👤</span>
         <span>User Management</span>
       </div>
+      {% endif %}
+      {% endif %}
     </nav>
 
     <div class="sidebar-footer">
@@ -281,14 +329,18 @@
       </div>
       <div class="topbar-actions">
         <div class="topbar-date" id="topbar-date"></div>
+        {% if can('billing.create') %}
         <button class="btn btn-primary" id="quick-bill-btn" onclick="App.navigate('billing')">
           ➕ New Bill
         </button>
+        {% endif %}
         <!-- Notification button for Managing Director -->
+        {% if can('notifications.view') %}
         <button class="btn btn-secondary btn-icon" id="notif-btn" onclick="Auth.showNotificationsModal()" style="display:none;position:relative" title="Password Audit Notifications">
           🔔
           <span id="notif-badge" class="nav-badge" style="position:absolute;top:-4px;right:-4px;display:none;background:var(--danger)">0</span>
         </button>
+        {% endif %}
         <!-- User widget -->
         <div class="topbar-user" id="topbar-user-btn" onclick="Auth.toggleDropdown()">
           <div class="topbar-user-avatar" id="topbar-avatar">A</div>
@@ -325,6 +377,7 @@
 <!-- ── Scripts ── -->
 <script src="/static/js/auth.js?v=2026b"></script>
 <script src="/static/js/billing.js?v=2026b"></script>
+<script src="/static/js/billing_shortcuts.js?v=2026b"></script>
 <script src="/static/js/tally_inventory.js?v=2026b"></script>
 <script src="/static/js/inventory.js?v=2026b"></script>
 <script src="/static/js/customers.js?v=2026b"></script>
@@ -333,6 +386,91 @@
 <script src="/static/js/reports.js?v=2026b"></script>
 <script src="/static/js/settings.js?v=2026b"></script>
 <script src="/static/js/app.js?v=2026b"></script>
+
+<script>
+  // Initialize MPI Billing Screen Keyboard Shortcuts
+  BillingShortcuts.init({
+    onNewBill:        () => { if (App.currentPage === 'billing') Billing.clearCart(); },
+    onSearchItem:     () => { if (App.currentPage === 'billing') document.getElementById('product-search')?.focus(); },
+    onSearchCustomer: () => { if (App.currentPage === 'billing') document.getElementById('customer-search')?.focus(); },
+    onBillDiscount:   () => { if (App.currentPage === 'billing') document.getElementById('discount-slider')?.focus(); },
+    onHoldBill:       () => { if (App.currentPage === 'billing') Billing.holdCurrentBill(); },
+    onRecallBill:     () => { if (App.currentPage === 'billing') Billing.showHeldBillsModal(); },
+    onChangePayment:  () => {
+      if (App.currentPage !== 'billing') return;
+      const modes = ['cash', 'upi', 'card'];
+      const next = modes[(modes.indexOf(Billing.paymentMode) + 1) % modes.length];
+      Billing.setPayment(next);
+    },
+    onSaveAndPrint:   () => { if (App.currentPage === 'billing') Billing.saveBill(true); },
+    onSaveOnly:       () => { if (App.currentPage === 'billing') Billing.saveBill(false); },
+
+    // TODO Stubs for feature-gap shortcuts:
+    onOpenDrawer:     () => {
+      /* TODO: Hardware Cash Drawer endpoint integration (/billing/open-drawer) */
+      console.log('[BillingShortcuts TODO] Open Cash Drawer (F10)');
+      App.toast('Cash drawer integration (F10) is a TODO feature', 'info');
+    },
+    onVoidBill:       () => {
+      /* TODO: Supervisor PIN modal for voiding bill */
+      console.log('[BillingShortcuts TODO] Void Bill with Supervisor PIN (F12)');
+      App.toast('Void bill with PIN (F12) is a TODO feature', 'info');
+    },
+    onReprintLast:    () => {
+      /* TODO: Reprint last invoice function */
+      console.log('[BillingShortcuts TODO] Reprint Last Invoice (Ctrl+P)');
+      App.toast('Reprint last invoice (Ctrl+P) is a TODO feature', 'info');
+    },
+    onLineDiscount:   () => {
+      /* TODO: Line-item discount modal */
+      console.log('[BillingShortcuts TODO] Line Discount (Ctrl+D)');
+      App.toast('Line item discount (Ctrl+D) is a TODO feature', 'info');
+    },
+    onDaySummary:     () => {
+      /* TODO: Open day summary panel */
+      console.log('[BillingShortcuts TODO] Day Summary Panel (Ctrl+G)');
+      App.toast('Day summary panel (Ctrl+G) is a TODO feature', 'info');
+    },
+    onGroupJump:      (n) => {
+      /* TODO: Jump to item group n */
+      console.log('[BillingShortcuts TODO] Jump to Item Group ' + n + ' (Alt+' + n + ')');
+    },
+
+    onQuickCode:      (code, qty) => {
+      if (App.currentPage !== 'billing') return;
+      const p = (Billing.products || []).find(item =>
+        (item.code && item.code.toLowerCase() === code.toLowerCase()) ||
+        (item.barcode && item.barcode === code)
+      );
+      if (p) {
+        Billing.addToCart(p);
+        if (qty && qty !== 1) {
+          const idx = Billing.cart.findIndex(i => i.product_id === p.id);
+          if (idx !== -1) {
+            Billing.cart[idx].quantity = qty;
+            Billing.renderCart();
+          }
+        }
+      } else {
+        App.toast(`Item code "${code}" not found`, 'warning');
+      }
+    },
+    onQtyChange:      (delta) => {
+      if (App.currentPage !== 'billing' || !Billing.cart || Billing.cart.length === 0) return;
+      const idx = Billing._selectedCartIndex !== undefined ? Billing._selectedCartIndex : Billing.cart.length - 1;
+      Billing.changeQty(idx, delta);
+    },
+    onDeleteLine:     () => {
+      if (App.currentPage !== 'billing' || !Billing.cart || Billing.cart.length === 0) return;
+      const idx = Billing._selectedCartIndex !== undefined ? Billing._selectedCartIndex : Billing.cart.length - 1;
+      Billing.removeItem(idx);
+    },
+    onNewCustomer:    () => { if (App.currentPage === 'billing') Billing.showQuickCustomerModal(); },
+    onEscape:         () => { if (typeof App.closeModal === 'function') App.closeModal(); },
+    isModalOpen:      () => document.querySelector('.modal-overlay.active, .modal') !== null,
+    getSelectedRow:   () => document.querySelector('#cart-table tr.selected') || null,
+  }, { quickCodeFieldId: 'product-search' });
+</script>
 
 </body>
 </html>

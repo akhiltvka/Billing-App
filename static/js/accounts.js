@@ -15,7 +15,7 @@ const Accounts = {
             <h1>📒 Chart of Accounts &amp; Assets</h1>
             <p>Manage double-entry ledger accounts, opening balances, assets, liabilities, equity &amp; view account statements</p>
           </div>
-          <button class="btn btn-primary" onclick="Accounts.showAddAccountModal()">➕ Add Ledger Account / Asset</button>
+          ${Auth.can('accounts.manage') ? '<button class="btn btn-primary" onclick="Accounts.showAddAccountModal()">➕ Add Ledger Account / Asset</button>' : ''}
         </div>
 
         <div class="filter-row mb-16" style="justify-content:space-between">

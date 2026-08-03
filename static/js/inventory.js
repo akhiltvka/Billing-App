@@ -59,8 +59,8 @@ const Inventory = {
             <div style="display:flex;gap:4px;flex-direction:column;align-items:flex-end">
               ${lowBadge}
               <div style="display:flex;gap:4px">
-                <button class="btn btn-secondary btn-sm btn-icon" onclick="Inventory.showProductModal(${JSON.stringify(JSON.stringify(p))})" title="Edit">✏️</button>
-                <button class="btn btn-danger btn-sm btn-icon" onclick="Inventory.deleteProduct(${p.id},'${p.name}')" title="Deactivate">🗑️</button>
+                ${Auth.can('inventory.edit') ? `<button class="btn btn-secondary btn-sm btn-icon" onclick="Inventory.showProductModal(${JSON.stringify(JSON.stringify(p))})" title="Edit">✏️</button>` : ''}
+                ${Auth.can('inventory.delete') ? `<button class="btn btn-danger btn-sm btn-icon" onclick="Inventory.deleteProduct(${p.id},'${p.name}')" title="Deactivate">🗑️</button>` : ''}
               </div>
             </div>
           </div>
@@ -91,9 +91,10 @@ const Inventory = {
           </div>
 
           <div style="margin-top:12px;display:flex;gap:6px">
+            ${Auth.can('stock.in') ? `
             <button class="btn btn-success btn-sm" style="flex:1" onclick="Inventory.quickStockIn(${JSON.stringify(JSON.stringify(p))})">
               ⬆️ Stock In
-            </button>
+            </button>` : ''}
             <button class="btn btn-secondary btn-sm" onclick="Inventory.showStockHistory(${p.id},'${p.name}')">
               📋 History
             </button>
@@ -154,17 +155,17 @@ const Inventory = {
         </div>
         <div class="form-row">
           <div class="form-group">
-            <label class="form-label required">Purchase Price (₹)</label>
+            <label class="form-label required">Purchase Price (₹) ${!Auth.can('inventory.edit_price') ? '<span class="text-muted" style="font-size:10px">(Read-only)</span>' : ''}</label>
             <div class="input-group">
               <div class="input-group-prefix">₹</div>
-              <input class="form-control" id="p-purchase" type="number" step="0.01" value="${p?.purchase_price || ''}">
+              <input class="form-control" id="p-purchase" type="number" step="0.01" value="${p?.purchase_price || ''}" ${!Auth.can('inventory.edit_price') ? 'readonly title="Requires inventory.edit_price permission"' : ''}>
             </div>
           </div>
           <div class="form-group">
-            <label class="form-label required">Selling Price (₹)</label>
+            <label class="form-label required">Selling Price (₹) ${!Auth.can('inventory.edit_price') ? '<span class="text-muted" style="font-size:10px">(Read-only)</span>' : ''}</label>
             <div class="input-group">
               <div class="input-group-prefix">₹</div>
-              <input class="form-control" id="p-selling" type="number" step="0.01" value="${p?.selling_price || ''}">
+              <input class="form-control" id="p-selling" type="number" step="0.01" value="${p?.selling_price || ''}" ${!Auth.can('inventory.edit_price') ? 'readonly title="Requires inventory.edit_price permission"' : ''}>
             </div>
           </div>
         </div>

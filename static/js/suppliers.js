@@ -16,7 +16,7 @@ const Suppliers = {
               <h1>🚚 Suppliers</h1>
               <p>${suppliers.length} registered suppliers</p>
             </div>
-            <button class="btn btn-primary" onclick="Suppliers.showModal()">➕ Add Supplier</button>
+            ${Auth.can('suppliers.manage') ? '<button class="btn btn-primary" onclick="Suppliers.showModal()">➕ Add Supplier</button>' : ''}
           </div>
 
           ${suppliers.length === 0
@@ -29,11 +29,12 @@ const Suppliers = {
                         <div style="font-size:16px;font-weight:700">${s.name}</div>
                         ${s.contact_person ? `<div class="text-muted text-sm">Contact: ${s.contact_person}</div>` : ''}
                       </div>
+                      ${Auth.can('suppliers.manage') ? `
                       <div style="display:flex;gap:6px">
                         <button class="btn btn-secondary btn-sm btn-icon" onclick="Suppliers.showModal(${JSON.stringify(JSON.stringify(s))})" title="Edit">✏️</button>
                         <button class="btn btn-danger btn-sm btn-icon" onclick="Suppliers.delete(${s.id},'${s.name}')" title="Delete">🗑️</button>
-                      </div>
-                    </div>
+                      </div>` : ''}
+                    </div>`
                     <div style="display:flex;flex-direction:column;gap:8px">
                       ${s.phone ? `<div style="display:flex;align-items:center;gap:8px;font-size:13px"><span>📞</span><span>${s.phone}</span></div>` : ''}
                       ${s.email ? `<div style="display:flex;align-items:center;gap:8px;font-size:13px"><span>✉️</span><span class="text-muted">${s.email}</span></div>` : ''}

@@ -11,8 +11,42 @@
 
 const Auth = {
   currentUser: null,
+  permissions: null,
   _notifications: [],
   _unreadCount: 0,
+
+  can(code) {
+    if (!this.permissions) {
+      if (this.currentUser && this.currentUser.permissions) {
+        this.permissions = new Set(this.currentUser.permissions);
+      } else if (window.USER_PERMISSIONS && Array.isArray(window.USER_PERMISSIONS)) {
+        this.permissions = new Set(window.USER_PERMISSIONS);
+      } else {
+        return false;
+      }
+    }
+    if (this.permissions.has('*')) return true;
+
+    const pageMap = {
+      dashboard:         'reports.view',
+      billing:           'billing.create',
+      bills:             'billing.view',
+      inventory:         'inventory.view',
+      'stock-in':        'stock.in',
+      'purchase-orders': 'purchase.view',
+      categories:        'inventory.view',
+      customers:         'customers.view',
+      suppliers:         'suppliers.view',
+      expenses:          'expenses.view',
+      accounts:          'accounts.view_ledger',
+      reports:           'reports.view',
+      settings:          'settings.view',
+      users:            'users.view'
+    };
+
+    const permCode = pageMap[code] || code;
+    return this.permissions.has(permCode);
+  },
 
   // Pages each role is allowed to access
   ROLE_PAGES: {
@@ -439,7 +473,11 @@ const Auth = {
 
   // ── Apply role-based UI ────────────────────────────────────────────────────
   applyRoleUI(user) {
-    const allowedPages = user.pages || Auth.ROLE_PAGES[user.role] || [];
+    if (user && user.permissions) {
+      Auth.permissions = new Set(user.permissions);
+    } else if (window.USER_PERMISSIONS) {
+      Auth.permissions = new Set(window.USER_PERMISSIONS);
+    }
 
     // Update topbar user widget
     const name     = user.full_name || user.username;
@@ -448,23 +486,43 @@ const Auth = {
     document.getElementById('topbar-user-name').textContent = name;
     document.getElementById('topbar-user-role').textContent = Auth.ROLE_LABELS[user.role] || user.role;
 
-    // Show/hide Users management link (for admin, md and manager)
+    // Show/hide Users management link (for users with users.view permission)
     const navUsers = document.getElementById('nav-users');
-    if (navUsers) navUsers.style.display = (['admin','md','manager'].includes(user.role)) ? '' : 'none';
+    if (navUsers) navUsers.style.display = Auth.can('users.view') ? '' : 'none';
 
-    // Show/hide Notification button (for admin and md)
+    // Show/hide Notification button
     const notifBtn = document.getElementById('notif-btn');
     if (notifBtn) {
-      notifBtn.style.display = (user.role === 'admin' || user.role === 'md') ? '' : 'none';
-      if (user.role === 'admin' || user.role === 'md') Auth.fetchNotifications();
+      const canNotif = Auth.can('notifications.view') || user.role === 'admin' || user.role === 'md';
+      notifBtn.style.display = canNotif ? '' : 'none';
+      if (canNotif) Auth.fetchNotifications();
     }
 
-    // Grey-out / hide nav items not allowed for this role
+    // Hide/disable nav items not allowed for this permission
     document.querySelectorAll('.nav-item[data-page]').forEach(el => {
       const page = el.dataset.page;
-      const allowed = allowedPages.includes(page);
+      const allowed = Auth.can(page);
+      el.style.display = allowed ? '' : 'none';
       el.classList.toggle('nav-disabled', !allowed);
     });
+
+    // Hide section labels if all sibling nav items are hidden
+    document.querySelectorAll('.sidebar-nav .nav-section-label').forEach(label => {
+      let next = label.nextElementSibling;
+      let hasVisible = false;
+      while (next && next.classList.contains('nav-item')) {
+        if (next.style.display !== 'none') {
+          hasVisible = true;
+          break;
+        }
+        next = next.nextElementSibling;
+      }
+      label.style.display = hasVisible ? '' : 'none';
+    });
+
+    // Show/hide Quick Bill topbar button
+    const quickBillBtn = document.getElementById('quick-bill-btn');
+    if (quickBillBtn) quickBillBtn.style.display = Auth.can('billing.create') ? '' : 'none';
   },
 
   // ── Notifications (Managing Director Alerts) ───────────────────────────────

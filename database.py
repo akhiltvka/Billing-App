@@ -234,10 +234,43 @@ def init_db():
             password_hash         TEXT NOT NULL,
             full_name             TEXT NOT NULL,
             role                  TEXT NOT NULL CHECK(role IN ('admin','md','manager','accountant','counter_staff','tester')),
+            role_id               INTEGER REFERENCES roles(id) ON DELETE SET NULL,
             active                INTEGER DEFAULT 1,
             must_change_password  INTEGER DEFAULT 0,
             last_login            TEXT,
             created_at            TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Roles master table
+        CREATE TABLE IF NOT EXISTS roles (
+            id   INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE
+        );
+
+        -- Granular permissions table
+        CREATE TABLE IF NOT EXISTS permissions (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            code        TEXT NOT NULL UNIQUE,
+            description TEXT
+        );
+
+        -- Role-Permission mappings
+        CREATE TABLE IF NOT EXISTS role_permissions (
+            role_id       INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+            permission_id INTEGER NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+            PRIMARY KEY(role_id, permission_id)
+        );
+
+        -- RBAC & Sensitive Action Audit Log
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            username        TEXT,
+            permission_code TEXT NOT NULL,
+            route           TEXT NOT NULL,
+            method          TEXT NOT NULL,
+            allowed         INTEGER NOT NULL,
+            timestamp       TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
         -- Audit & Notification logs (e.g., password changes by managers)
@@ -270,6 +303,23 @@ def init_db():
             failed_count   INTEGER DEFAULT 0,
             last_failed_at TEXT,
             locked_until   TEXT
+        );
+
+        -- Held bills queue (POS hold & recall feature)
+        CREATE TABLE IF NOT EXISTS held_bills (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            reference_code   TEXT,
+            terminal_id      TEXT DEFAULT 'POS-1',
+            cashier_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+            customer_id      INTEGER REFERENCES customers(id) ON DELETE SET NULL,
+            customer_name    TEXT,
+            items_json       TEXT NOT NULL,
+            discount_percent REAL DEFAULT 0,
+            payment_mode     TEXT DEFAULT 'cash',
+            total_amount     REAL DEFAULT 0,
+            notes            TEXT,
+            status           TEXT DEFAULT 'held' CHECK(status IN ('held', 'recalled')),
+            created_at       TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
         -- Batch tracking for perishable stock (FEFO)
@@ -489,17 +539,127 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
-    # Recreate users table if old CHECK constraint exists without 'md'
-    try:
-        users_sql = c.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()
-        if users_sql and users_sql[0] and "('admin','manager'" in users_sql[0]:
-            c.execute("CREATE TABLE users_new (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL, full_name TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','md','manager','accountant','counter_staff','tester')), active INTEGER DEFAULT 1, last_login TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
-            c.execute("INSERT OR IGNORE INTO users_new SELECT id, username, password_hash, full_name, role, active, last_login, created_at FROM users")
-            c.execute("DROP TABLE users")
-            c.execute("ALTER TABLE users_new RENAME TO users")
-            conn.commit()
-    except Exception:
-        pass
+    # RBAC Users column migration & Seeding
+    u_cols = [r[1] for r in c.execute("PRAGMA table_info(users)").fetchall()]
+    if 'role_id' not in u_cols:
+        try:
+            c.execute("ALTER TABLE users ADD COLUMN role_id INTEGER REFERENCES roles(id) ON DELETE SET NULL")
+        except Exception:
+            pass
+
+    default_roles = [
+        (1, 'Admin'),
+        (2, 'Manager'),
+        (3, 'Accountant'),
+        (4, 'Billing Staff'),
+        (5, 'Auditor')
+    ]
+    for r_id, r_name in default_roles:
+        c.execute("INSERT OR IGNORE INTO roles (id, name) VALUES (?, ?)", (r_id, r_name))
+
+    all_permissions = [
+        ('*', 'Superuser all permissions'),
+        ('users.view', 'View user accounts'),
+        ('users.manage', 'Create, update, delete user accounts'),
+        ('settings.view', 'View shop settings'),
+        ('settings.manage', 'Update shop settings'),
+        ('settings.gst_toggle', 'Toggle GST system ON/OFF'),
+        ('activity.view', 'View activity log'),
+        ('notifications.view', 'View notifications'),
+        ('inventory.view', 'View products, categories, stock'),
+        ('inventory.create', 'Create products & categories'),
+        ('inventory.edit', 'Update products & categories'),
+        ('inventory.edit_price', 'Edit product selling or purchase price'),
+        ('inventory.delete', 'Delete products & categories'),
+        ('stock.in', 'Record incoming stock'),
+        ('stock.verify', 'Verify & approve stock entries'),
+        ('stock.wastage', 'Record stock wastage'),
+        ('stock.adjustment', 'Manual stock adjustment'),
+        ('stock.conversions', 'Manage stock conversions & butchery templates'),
+        ('customers.view', 'View customer master'),
+        ('customers.manage', 'Create, update, delete customers'),
+        ('suppliers.view', 'View supplier master'),
+        ('suppliers.manage', 'Create, update, delete suppliers'),
+        ('billing.create', 'Create sales invoices'),
+        ('billing.view', 'View sales invoices & history'),
+        ('billing.hold', 'Hold and recall sales bills'),
+        ('billing.delete_held', 'Delete held bills'),
+        ('billing.give_discount', 'Apply discounts on sales bills'),
+        ('billing.void_bill', 'Void / cancel sales invoices'),
+        ('billing.payment', 'Record invoice payment'),
+        ('billing.credit_note', 'Issue credit notes'),
+        ('purchase.view', 'View purchase orders'),
+        ('purchase.manage', 'Create purchase orders & payments'),
+        ('expenses.view', 'View income & expenses'),
+        ('expenses.manage', 'Create and delete expenses'),
+        ('accounts.view_ledger', 'View ledger accounts, trial balance, P&L, balance sheet'),
+        ('accounts.manage', 'Create and update ledger accounts'),
+        ('reports.view', 'View dashboard & reports'),
+        ('backup.manage', 'Manage database backup & cloud sync'),
+        ('license.view', 'View license status'),
+        ('license.manage', 'Manage system license & cloud activation'),
+    ]
+
+    for p_code, p_desc in all_permissions:
+        c.execute("INSERT OR IGNORE INTO permissions (code, description) VALUES (?, ?)", (p_code, p_desc))
+
+    perm_rows = c.execute("SELECT id, code FROM permissions").fetchall()
+    perm_map = {p['code']: p['id'] for p in perm_rows}
+
+    manager_perms = [
+        'inventory.view', 'inventory.create', 'inventory.edit', 'inventory.edit_price', 'inventory.delete',
+        'stock.in', 'stock.verify', 'stock.wastage', 'stock.adjustment', 'stock.conversions',
+        'customers.view', 'customers.manage', 'suppliers.view', 'suppliers.manage',
+        'billing.create', 'billing.view', 'billing.hold', 'billing.delete_held', 'billing.give_discount',
+        'billing.void_bill', 'billing.payment', 'billing.credit_note',
+        'purchase.view', 'purchase.manage', 'expenses.view', 'expenses.manage',
+        'reports.view', 'settings.view', 'activity.view', 'notifications.view', 'license.view'
+    ]
+
+    accountant_perms = [
+        'accounts.view_ledger', 'accounts.manage', 'expenses.view', 'expenses.manage',
+        'reports.view', 'customers.view', 'suppliers.view', 'billing.view', 'purchase.view',
+        'inventory.view', 'stock.in', 'stock.verify', 'billing.credit_note'
+    ]
+
+    billing_staff_perms = [
+        'billing.create', 'billing.view', 'billing.hold', 'billing.payment',
+        'customers.view', 'customers.manage', 'inventory.view', 'reports.view'
+    ]
+
+    auditor_perms = [
+        'inventory.view', 'billing.view', 'customers.view', 'suppliers.view',
+        'purchase.view', 'expenses.view', 'reports.view', 'accounts.view_ledger',
+        'settings.view', 'license.view', 'users.view', 'activity.view'
+    ]
+
+    role_mapping_defs = [
+        (1, ['*']),
+        (2, manager_perms),
+        (3, accountant_perms),
+        (4, billing_staff_perms),
+        (5, auditor_perms)
+    ]
+
+    for role_id, p_codes in role_mapping_defs:
+        for code in p_codes:
+            p_id = perm_map.get(code)
+            if p_id:
+                c.execute("INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)", (role_id, p_id))
+
+    legacy_map = {
+        'admin': 1,
+        'md': 1,
+        'manager': 2,
+        'accountant': 3,
+        'counter_staff': 4,
+        'tester': 4
+    }
+    for leg_role, r_id in legacy_map.items():
+        c.execute("UPDATE users SET role_id = ? WHERE role = ? AND (role_id IS NULL OR role_id = 0)", (r_id, leg_role))
+
+    c.execute("UPDATE users SET role_id = 4 WHERE role_id IS NULL OR role_id = 0")
+    conn.commit()
 
     # Products & Categories multi-type and hierarchy migrations
     p_cols = [r[1] for r in c.execute("PRAGMA table_info(products)").fetchall()]
