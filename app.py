@@ -121,7 +121,7 @@ def require_role(*roles):
 
 
 def get_user_permissions(user_id):
-    """Fetch all permission codes granted to the user via their role_id or legacy role."""
+    """Fetch all permission codes granted to the user, respecting role hierarchy (superiors inherit subordinate permissions)."""
     if not user_id:
         return set()
     conn = get_db()
@@ -135,16 +135,25 @@ def get_user_permissions(user_id):
         legacy_map = {'admin': 1, 'md': 1, 'manager': 2, 'accountant': 3, 'counter_staff': 4, 'tester': 4}
         role_id = legacy_map.get(user['role'], 4)
 
-    rows = conn.execute('''
-        SELECT p.code FROM permissions p
+    # Superior roles inherit all permissions of subordinate roles
+    role_ids = [role_id]
+    if user['role'] in ('admin', 'md') or role_id == 1:
+        conn.close()
+        return {'*'}
+    elif user['role'] == 'manager' or role_id == 2:
+        role_ids.extend([3, 4, 5])
+    elif user['role'] == 'accountant' or role_id == 3:
+        role_ids.append(4)
+
+    placeholders = ','.join('?' for _ in role_ids)
+    rows = conn.execute(f'''
+        SELECT DISTINCT p.code FROM permissions p
         JOIN role_permissions rp ON p.id = rp.permission_id
-        WHERE rp.role_id = ?
-    ''', (role_id,)).fetchall()
+        WHERE rp.role_id IN ({placeholders})
+    ''', role_ids).fetchall()
     conn.close()
 
     perms = {r['code'] for r in rows}
-    if user['role'] in ('admin', 'md') or role_id == 1:
-        perms.add('*')
     return perms
 
 

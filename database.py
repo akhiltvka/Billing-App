@@ -606,32 +606,29 @@ def init_db():
     perm_rows = c.execute("SELECT id, code FROM permissions").fetchall()
     perm_map = {p['code']: p['id'] for p in perm_rows}
 
-    manager_perms = [
-        'inventory.view', 'inventory.create', 'inventory.edit', 'inventory.edit_price', 'inventory.delete',
-        'stock.in', 'stock.verify', 'stock.wastage', 'stock.adjustment', 'stock.conversions',
-        'customers.view', 'customers.manage', 'suppliers.view', 'suppliers.manage',
-        'billing.create', 'billing.view', 'billing.hold', 'billing.delete_held', 'billing.give_discount',
-        'billing.void_bill', 'billing.payment', 'billing.credit_note',
-        'purchase.view', 'purchase.manage', 'expenses.view', 'expenses.manage',
-        'reports.view', 'settings.view', 'activity.view', 'notifications.view', 'license.view'
-    ]
-
-    accountant_perms = [
-        'accounts.view_ledger', 'accounts.manage', 'expenses.view', 'expenses.manage',
-        'reports.view', 'customers.view', 'suppliers.view', 'billing.view', 'purchase.view',
-        'inventory.view', 'stock.in', 'stock.verify', 'billing.credit_note'
-    ]
-
     billing_staff_perms = [
         'billing.create', 'billing.view', 'billing.hold', 'billing.payment',
         'customers.view', 'customers.manage', 'inventory.view', 'reports.view'
     ]
+
+    accountant_perms = list(set(billing_staff_perms + [
+        'accounts.view_ledger', 'accounts.manage', 'expenses.view', 'expenses.manage',
+        'reports.view', 'customers.view', 'suppliers.view', 'billing.view', 'purchase.view',
+        'inventory.view', 'stock.in', 'stock.verify', 'billing.credit_note'
+    ]))
 
     auditor_perms = [
         'inventory.view', 'billing.view', 'customers.view', 'suppliers.view',
         'purchase.view', 'expenses.view', 'reports.view', 'accounts.view_ledger',
         'settings.view', 'license.view', 'users.view', 'activity.view'
     ]
+
+    manager_perms = list(set(accountant_perms + billing_staff_perms + auditor_perms + [
+        'inventory.create', 'inventory.edit', 'inventory.edit_price', 'inventory.delete',
+        'stock.wastage', 'stock.adjustment', 'stock.conversions', 'suppliers.manage',
+        'purchase.manage', 'billing.delete_held', 'billing.give_discount', 'billing.void_bill',
+        'notifications.view'
+    ]))
 
     role_mapping_defs = [
         (1, ['*']),

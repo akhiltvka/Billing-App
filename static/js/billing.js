@@ -170,7 +170,10 @@ const Billing = {
               <button class="btn btn-gold btn-xl w-full" id="btn-save-bill" onclick="Billing.saveBill()">
                 💾 Save & Print Bill
               </button>
-              <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px">
+              <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px">
+                <button class="btn btn-primary btn-sm" onclick="Billing.startNewBill()" title="Start New Bill (F1)">
+                  ✨ New Bill
+                </button>
                 <button class="btn btn-secondary btn-sm" onclick="Billing.saveBill(false)">
                   💾 Save Only
                 </button>
@@ -561,6 +564,26 @@ const Billing = {
   removeItem(idx) {
     this.cart.splice(idx, 1);
     this.renderCart();
+  },
+
+  startNewBill() {
+    if (this.cart && this.cart.length > 0) {
+      App.confirm('Start a new bill? Current cart items will be cleared.', 'Start New Bill', () => {
+        this.cart = [];
+        this.customer = null;
+        this.discountPct = 0;
+        this._selectedCartIndex = undefined;
+        this.render();
+        App.toast('New bill started', 'info');
+      });
+      return;
+    }
+    this.cart = [];
+    this.customer = null;
+    this.discountPct = 0;
+    this._selectedCartIndex = undefined;
+    this.render();
+    App.toast('New bill started', 'info');
   },
 
   clearCart() {
