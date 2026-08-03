@@ -285,82 +285,101 @@ const Billing = {
 
     App.showModal(`
       <div class="modal" style="max-width:520px;width:95vw">
-        <div class="modal-header" style="background:linear-gradient(135deg,var(--crimson),#c2410c);color:#fff;border-radius:var(--r-lg) var(--r-lg) 0 0">
-          <div class="modal-title" style="color:#fff">📋 Bill Summary — <span style="color:#fde68a">#${App.escapeHtml(billNo)}</span></div>
-          <button class="modal-close" onclick="App.closeModal()" style="color:#fff">✕</button>
+        <div class="modal-header">
+          <div class="modal-title">📋 Bill Summary — <span class="text-gold" style="font-family:monospace;font-weight:700">#${App.escapeHtml(billNo)}</span></div>
+          <button class="modal-close" onclick="App.closeModal()">✕</button>
         </div>
-        <div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px">
 
-          <!-- Customer & Payment row -->
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-            <div style="background:var(--bg-input);border-radius:var(--r-sm);padding:10px 12px">
-              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Customer</div>
-              <div style="font-weight:700;font-size:13px">${App.escapeHtml(custBadge.replace(/^👤\s*/,''))}</div>
-            </div>
-            <div style="background:var(--bg-input);border-radius:var(--r-sm);padding:10px 12px">
-              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Payment Mode</div>
-              <div style="font-weight:700;font-size:13px;text-transform:capitalize">${payMode === 'cash' ? '💵' : payMode === 'upi' ? '📱' : '💳'} ${payMode.toUpperCase()}</div>
-            </div>
+        <!-- Customer & Payment row -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div style="background:var(--bg-input);border-radius:var(--r-sm);padding:10px 12px;border:1px solid var(--border)">
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Customer</div>
+            <div style="font-weight:700;font-size:13px">${App.escapeHtml(custBadge.replace(/^👤\s*/,''))}</div>
           </div>
-
-          <!-- Items table -->
-          <div style="border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;max-height:250px;overflow-y:auto">
-            <table style="width:100%;border-collapse:collapse">
-              <thead>
-                <tr style="background:var(--bg-input)">
-                  <th style="padding:8px;text-align:left;font-size:12px;font-weight:600">Product</th>
-                  <th style="padding:8px;text-align:center;font-size:12px;font-weight:600">Qty</th>
-                  <th style="padding:8px;text-align:right;font-size:12px;font-weight:600">Rate</th>
-                  <th style="padding:8px;text-align:right;font-size:12px;font-weight:600">Amount</th>
-                </tr>
-              </thead>
-              <tbody>${cartRows || '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text-muted)">No items in cart</td></tr>'}</tbody>
-            </table>
+          <div style="background:var(--bg-input);border-radius:var(--r-sm);padding:10px 12px;border:1px solid var(--border)">
+            <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Payment Mode</div>
+            <div style="font-weight:700;font-size:13px;text-transform:capitalize">${payMode === 'cash' ? '💵' : payMode === 'upi' ? '📱' : '💳'} ${payMode.toUpperCase()}</div>
           </div>
+        </div>
 
-          <!-- Totals -->
-          <div style="border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden">
-            <table style="width:100%;border-collapse:collapse">
-              <tbody>
-                <tr>
-                  <td style="padding:6px 8px;color:var(--text-muted)">Subtotal</td>
-                  <td style="padding:6px 8px;text-align:right;font-weight:600">${subtotal}</td>
-                </tr>
-                <tr>
-                  <td style="padding:6px 8px;color:var(--text-muted)">Discount</td>
-                  <td style="padding:6px 8px;text-align:right;color:#EF4444;font-weight:600">${discount}</td>
-                </tr>
-                ${gstRows}
-                <tr style="background:rgba(217,119,6,0.1)">
-                  <td style="padding:10px 8px;font-size:16px;font-weight:800">Grand Total</td>
-                  <td style="padding:10px 8px;text-align:right;font-size:24px;font-weight:900;color:var(--gold)">${total}</td>
-                </tr>
-                <tr style="border-top:1px dashed var(--border)">
-                  <td style="padding:6px 8px;color:var(--text-muted);vertical-align:middle">Amount Paid</td>
-                  <td style="padding:6px 8px;text-align:right">
-                    <div style="display:inline-flex;align-items:center;position:relative">
-                      <span style="font-weight:700;margin-right:4px">₹</span>
-                      <input id="popup-amount-paid" type="number" step="1" style="width:110px;text-align:right;font-weight:700;font-size:15px;padding:4px 6px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--bg-input);color:var(--text-primary)" 
-                        value="${parseFloat(paid||0).toFixed(2)}"
-                        oninput="Billing.updatePopupPaid(this.value)"
-                        onkeydown="Billing.handlePopupPaidKey(event)">
-                    </div>
-                  </td>
-                </tr>
-                <tr>
-                  <td style="padding:6px 8px;font-weight:700" id="popup-change-label">${App.escapeHtml(changeLabel)}</td>
-                  <td style="padding:6px 8px;text-align:right;font-size:18px;font-weight:900;color:#10B981" id="popup-change-value">${change}</td>
-                </tr>
-              </tbody>
-            </table>
+        <!-- Items table -->
+        <div style="border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;max-height:180px;overflow-y:auto;margin-bottom:12px">
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr style="background:var(--bg-input)">
+                <th style="padding:8px;text-align:left;font-size:12px;font-weight:600">Product</th>
+                <th style="padding:8px;text-align:center;font-size:12px;font-weight:600">Qty</th>
+                <th style="padding:8px;text-align:right;font-size:12px;font-weight:600">Rate</th>
+                <th style="padding:8px;text-align:right;font-size:12px;font-weight:600">Amount</th>
+              </tr>
+            </thead>
+            <tbody>${cartRows || '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text-muted)">No items in cart</td></tr>'}</tbody>
+          </table>
+        </div>
+
+        <!-- Totals -->
+        <div style="border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;margin-bottom:12px">
+          <table style="width:100%;border-collapse:collapse">
+            <tbody>
+              <tr>
+                <td style="padding:6px 8px;color:var(--text-muted)">Subtotal</td>
+                <td style="padding:6px 8px;text-align:right;font-weight:600">${subtotal}</td>
+              </tr>
+              <tr>
+                <td style="padding:6px 8px;color:var(--text-muted)">Discount</td>
+                <td style="padding:6px 8px;text-align:right;color:#EF4444;font-weight:600">${discount}</td>
+              </tr>
+              ${gstRows}
+              <tr style="background:rgba(217,119,6,0.1)">
+                <td style="padding:10px 8px;font-size:16px;font-weight:800">Grand Total</td>
+                <td style="padding:10px 8px;text-align:right;font-size:24px;font-weight:900;color:var(--gold)">${total}</td>
+              </tr>
+              <tr style="border-top:1px dashed var(--border)">
+                <td style="padding:6px 8px;color:var(--text-muted);vertical-align:middle">Amount Paid</td>
+                <td style="padding:6px 8px;text-align:right">
+                  <div style="display:inline-flex;align-items:center;position:relative">
+                    <span style="font-weight:700;margin-right:4px">₹</span>
+                    <input id="popup-amount-paid" type="number" step="1" style="width:110px;text-align:right;font-weight:700;font-size:15px;padding:4px 6px;border:1px solid var(--border);border-radius:var(--r-sm);background:var(--bg-input);color:var(--text-primary)" 
+                      value="${parseFloat(paid||0).toFixed(2)}"
+                      oninput="Billing.updatePopupPaid(this.value)"
+                      onkeydown="Billing.handlePopupPaidKey(event)">
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td style="padding:6px 8px;font-weight:700" id="popup-change-label">${App.escapeHtml(changeLabel)}</td>
+                <td style="padding:6px 8px;text-align:right;font-size:18px;font-weight:900;color:#10B981" id="popup-change-value">${change}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        ${notes ? `<div style="background:var(--bg-input);border-radius:var(--r-sm);padding:8px 12px;font-size:13px;margin-bottom:12px;border:1px solid var(--border)"><strong>Note:</strong> ${App.escapeHtml(notes)}</div>` : ''}
+
+        <!-- Footer Actions -->
+        <div class="modal-footer" style="margin-top:16px;padding-top:16px;display:flex;flex-direction:column;gap:10px;width:100%">
+          <!-- Save & Print -->
+          <button class="btn btn-gold btn-xl w-full" onclick="App.closeModal(); Billing.saveBill(true)" style="font-size:16px;padding:12px">
+            💾 Save &amp; Print Bill
+          </button>
+          <!-- Grid of other actions -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%">
+            <button class="btn btn-primary" onclick="App.closeModal(); Billing.startNewBill()" style="padding:8px;font-weight:600">
+              ✨ New Bill
+            </button>
+            <button class="btn btn-secondary" onclick="App.closeModal(); Billing.saveBill(false)" style="padding:8px;font-weight:600">
+              💾 Save Only
+            </button>
+            <button class="btn btn-warning" onclick="App.closeModal(); Billing.holdCurrentBill()" style="padding:8px;font-weight:600">
+              ⏸️ Hold Bill
+            </button>
+            <button class="btn btn-danger" onclick="App.closeModal(); Billing.clearCart()" style="padding:8px;font-weight:600">
+              🗑️ Clear Cart
+            </button>
           </div>
-
-          ${notes ? `<div style="background:var(--bg-input);border-radius:var(--r-sm);padding:8px 12px;font-size:13px"><strong>Note:</strong> ${App.escapeHtml(notes)}</div>` : ''}
-
-          <!-- Action buttons -->
-          <div style="display:flex;gap:10px;justify-content:flex-end">
+          <!-- Close button -->
+          <div style="display:flex;justify-content:flex-end;width:100%;margin-top:4px">
             <button class="btn btn-secondary" onclick="App.closeModal()">Close</button>
-            <button class="btn btn-gold" onclick="App.closeModal();Billing.saveBill(true)">💾 Save &amp; Print</button>
           </div>
         </div>
       </div>`);
