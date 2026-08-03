@@ -674,6 +674,12 @@ def init_db():
         c.execute("UPDATE users SET role_id = ? WHERE role = ? AND (role_id IS NULL OR role_id = 0)", (r_id, leg_role))
 
     c.execute("UPDATE users SET role_id = 4 WHERE role_id IS NULL OR role_id = 0")
+
+    # Ensure role_id 4 (counter_staff / billing staff) always has customer creation & management permissions
+    c.execute('''
+        INSERT OR IGNORE INTO role_permissions (role_id, permission_id)
+        SELECT 4, id FROM permissions WHERE code IN ('customers.view', 'customers.manage', 'customers.create', 'billing.create', 'billing.view', 'billing.hold', 'billing.payment')
+    ''')
     conn.commit()
 
     # Products & Categories multi-type and hierarchy migrations

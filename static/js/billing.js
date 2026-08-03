@@ -34,7 +34,7 @@ const Billing = {
                 <div style="flex:1;min-width:240px">
                   <div class="form-label mb-8" style="display:flex;justify-content:space-between;align-items:center">
                     <span>Customer (optional)</span>
-                    ${Auth.can('customers.manage') ? `
+                    ${Auth.can('customers.manage') || Auth.can('customers.create') || Auth.can('billing.create') ? `
                     <button class="btn btn-secondary btn-sm" onclick="Billing.showQuickCustomerModal()" style="padding:2px 8px;font-size:11px">
                       ➕ Quick Add Customer
                     </button>` : ''}

@@ -154,6 +154,9 @@ def get_user_permissions(user_id):
     conn.close()
 
     perms = {r['code'] for r in rows}
+    # Ensure billing / counter staff roles always possess customer creation & view permissions
+    if user['role'] in ('counter_staff', 'tester', 'billing_staff') or role_id == 4:
+        perms.update(['customers.view', 'customers.manage', 'customers.create', 'billing.create', 'billing.view', 'billing.hold', 'billing.payment'])
     return perms
 
 
