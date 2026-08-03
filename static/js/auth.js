@@ -299,12 +299,17 @@ const Auth = {
       // If the MD has multiple outlets registered, ask them to confirm their outlet code
       if (userData.role === 'md' && userData.outlet_code) {
         const machineOC = App.sysInfo?.outlet_code || userData.outlet_code;
-        // Ask cloud how many outlets this MD has (non-blocking, best-effort)
+        // Ask cloud how many outlets this MD has (non-blocking, 2.5s timeout best-effort)
         let mdOutlets = [];
         try {
-          const mdRes = await fetch(`https://mpi-license-server.onrender.com/api/v1/outlet/md-outlets?md_username=${encodeURIComponent(username)}`);
-          const mdJson = await mdRes.json();
-          mdOutlets = mdJson.outlets || [];
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 2500);
+          const mdRes = await fetch(`https://mpi-license-server.onrender.com/api/v1/outlet/md-outlets?md_username=${encodeURIComponent(username)}`, { signal: controller.signal });
+          clearTimeout(timer);
+          if (mdRes.ok) {
+            const mdJson = await mdRes.json();
+            mdOutlets = mdJson.outlets || [];
+          }
         } catch(_) {}
 
         if (mdOutlets.length > 1) {
@@ -348,7 +353,8 @@ const Auth = {
       Auth.currentUser = userData;
       Auth.onLoginSuccess(userData);
     } catch(e) {
-      Auth.showLoginError('Connection error. Is the server running?');
+      console.error('[Auth.login Error]', e);
+      Auth.showLoginError((e && e.message) ? e.message : 'Connection error. Is the server running?');
     } finally {
       btn.disabled = false;
       btn.textContent = '🔑 Sign In';
