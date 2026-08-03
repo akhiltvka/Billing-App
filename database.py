@@ -595,6 +595,11 @@ def init_db():
         ('accounts.view_ledger', 'View ledger accounts, trial balance, P&L, balance sheet'),
         ('accounts.manage', 'Create and update ledger accounts'),
         ('reports.view', 'View dashboard & reports'),
+        ('settings.view', 'View system settings'),
+        ('settings.gst_toggle', 'Enable or disable GST calculations'),
+        ('settings.manage', 'Update shop info, GST, invoice & backup settings'),
+        ('users.view', 'View user accounts & activity logs'),
+        ('users.manage', 'Create, update, reset password & manage user roles'),
         ('backup.manage', 'Manage database backup & cloud sync'),
         ('license.view', 'View license status'),
         ('license.manage', 'Manage system license & cloud activation'),
@@ -614,7 +619,8 @@ def init_db():
     accountant_perms = list(set(billing_staff_perms + [
         'accounts.view_ledger', 'accounts.manage', 'expenses.view', 'expenses.manage',
         'reports.view', 'customers.view', 'suppliers.view', 'billing.view', 'purchase.view',
-        'inventory.view', 'stock.in', 'stock.verify', 'billing.credit_note'
+        'inventory.view', 'stock.in', 'stock.verify', 'billing.credit_note',
+        'settings.view', 'settings.gst_toggle'
     ]))
 
     auditor_perms = [
@@ -627,7 +633,7 @@ def init_db():
         'inventory.create', 'inventory.edit', 'inventory.edit_price', 'inventory.delete',
         'stock.wastage', 'stock.adjustment', 'stock.conversions', 'suppliers.manage',
         'purchase.manage', 'billing.delete_held', 'billing.give_discount', 'billing.void_bill',
-        'notifications.view'
+        'settings.view', 'settings.gst_toggle', 'settings.manage', 'users.view', 'notifications.view'
     ]))
 
     role_mapping_defs = [

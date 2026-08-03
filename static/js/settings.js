@@ -94,10 +94,10 @@ const Settings = {
                 </div>
                 <div style="display:flex;flex-direction:column;gap:12px;margin-top:8px">
                   <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
-                    <input type="checkbox" id="s-gst" ${settings.gst_enabled === 'true' ? 'checked' : ''} ${!Auth.can('settings.gst_toggle') ? 'disabled title="Requires settings.gst_toggle permission"' : ''}
+                    <input type="checkbox" id="s-gst" ${settings.gst_enabled === 'true' ? 'checked' : ''} ${(Auth.can('settings.gst_toggle') || Auth.isRole('admin', 'md', 'manager', 'accountant')) ? '' : 'disabled title="Requires permission"'}
                       style="width:18px;height:18px;accent-color:var(--crimson)">
                     <div>
-                      <div class="font-semibold">Enable GST on Bills ${!Auth.can('settings.gst_toggle') ? '<span class="text-muted" style="font-size:10px">(Restricted to Admin / Accountant)</span>' : ''}</div>
+                      <div class="font-semibold">Enable GST on Bills ${(Auth.can('settings.gst_toggle') || Auth.isRole('admin', 'md', 'manager', 'accountant')) ? '' : '<span class="text-muted" style="font-size:10px">(Restricted to Admin / MD / Manager / Accountant)</span>'}</div>
                       <div class="text-muted text-sm">Show CGST + SGST breakdown in invoices</div>
                     </div>
                   </label>
