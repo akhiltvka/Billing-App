@@ -380,36 +380,66 @@ def get_setting(key, conn=None):
     if close: conn.close()
     return row['value'] if row else None
 
+# Intentionally atomic SQL read-and-increment to prevent duplicate bill numbers under concurrent requests
 def next_bill_no(conn):
-    if session.get('user_role') == 'tester':
-        n = int(get_setting('next_test_no', conn) or 1)
-        bill_no = f"TEST-{n:05d}"
-        conn.execute("UPDATE shop_settings SET value=? WHERE key='next_test_no'", (str(n + 1),))
-        return bill_no
+    is_tester = False
+    try:
+        from flask import has_request_context
+        if has_request_context() and session.get('user_role') == 'tester':
+            is_tester = True
+    except Exception:
+        pass
 
-    n = int(get_setting('next_bill_no', conn) or 1)
+    if is_tester:
+        row = conn.execute(
+            "INSERT INTO shop_settings (key, value) VALUES ('next_test_no', '2') "
+            "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
+            "RETURNING CAST(value AS INTEGER) - 1 AS old_val"
+        ).fetchone()
+        n = row[0] if row else 1
+        return f"TEST-{n:05d}"
+
     prefix = get_setting('bill_prefix', conn) or 'MPI'
-    bill_no = f"{prefix}-{n:05d}"
-    conn.execute("UPDATE shop_settings SET value=? WHERE key='next_bill_no'", (str(n + 1),))
-    return bill_no
+    row = conn.execute(
+        "INSERT INTO shop_settings (key, value) VALUES ('next_bill_no', '2') "
+        "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
+        "RETURNING CAST(value AS INTEGER) - 1 AS old_val"
+    ).fetchone()
+    n = row[0] if row else 1
+    return f"{prefix}-{n:05d}"
 
+
+# Intentionally atomic SQL read-and-increment to prevent duplicate purchase order numbers under concurrent requests
 def next_po_no(conn):
-    n = int(get_setting('next_po_no', conn) or 1)
-    po_no = f"PO-{n:05d}"
-    conn.execute("UPDATE shop_settings SET value=? WHERE key='next_po_no'", (str(n + 1),))
-    return po_no
+    row = conn.execute(
+        "INSERT INTO shop_settings (key, value) VALUES ('next_po_no', '2') "
+        "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
+        "RETURNING CAST(value AS INTEGER) - 1 AS old_val"
+    ).fetchone()
+    n = row[0] if row else 1
+    return f"PO-{n:05d}"
 
+
+# Intentionally atomic SQL read-and-increment to prevent duplicate credit note numbers under concurrent requests
 def next_cn_no(conn):
-    n = int(get_setting('next_cn_no', conn) or 1)
-    cn_no = f"CN-{n:05d}"
-    conn.execute("INSERT INTO shop_settings (key, value) VALUES ('next_cn_no', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(n + 1),))
-    return cn_no
+    row = conn.execute(
+        "INSERT INTO shop_settings (key, value) VALUES ('next_cn_no', '2') "
+        "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
+        "RETURNING CAST(value AS INTEGER) - 1 AS old_val"
+    ).fetchone()
+    n = row[0] if row else 1
+    return f"CN-{n:05d}"
 
+
+# Intentionally atomic SQL read-and-increment to prevent duplicate conversion numbers under concurrent requests
 def next_conversion_no(conn):
-    n = int(get_setting('next_conversion_no', conn) or 1)
-    cnv_no = f"CNV-{n:05d}"
-    conn.execute("INSERT INTO shop_settings (key, value) VALUES ('next_conversion_no', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(n + 1),))
-    return cnv_no
+    row = conn.execute(
+        "INSERT INTO shop_settings (key, value) VALUES ('next_conversion_no', '2') "
+        "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
+        "RETURNING CAST(value AS INTEGER) - 1 AS old_val"
+    ).fetchone()
+    n = row[0] if row else 1
+    return f"CNV-{n:05d}"
 
 
 # ─── Subscription & 12-Digit Online Activation Endpoints ────────────────────
@@ -519,6 +549,11 @@ def deduct_fefo_stock(conn, product_id, qty_needed):
     return avg_unit_cost
 
 
+class InsufficientStockError(Exception):
+    """Lightweight exception raised when stock deduction would result in negative current_stock."""
+    pass
+
+
 # Base unit for inventory storage is purchase_unit. Stock-in quantities are recorded internally in purchase_unit terms.
 # Stock-out (billing) quantities are supplied in sale_unit terms and converted to purchase_unit via conversion_factor before updating stock.
 def update_stock(conn, product_id, delta, tx_type, unit_price=0, ref=None,
@@ -535,10 +570,20 @@ def update_stock(conn, product_id, delta, tx_type, unit_price=0, ref=None,
     deducted_cost = 0.0
 
     if status == 'approved':
-        conn.execute(
-            'UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-            (delta, product_id)
-        )
+        if delta < 0:
+            cur_upd = conn.execute(
+                'UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND current_stock + ? >= 0',
+                (delta, product_id, delta)
+            )
+            if cur_upd.rowcount == 0:
+                prod = conn.execute('SELECT name FROM products WHERE id=?', (product_id,)).fetchone()
+                pname = prod['name'] if prod else f"ID #{product_id}"
+                raise InsufficientStockError(f"Insufficient stock for product '{pname}'")
+        else:
+            conn.execute(
+                'UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                (delta, product_id)
+            )
         if delta > 0 and tx_type in ('in', 'adjustment', 'conversion_in'):
             b_no = batch_no or (f"RET-{ref}" if ref and "Reversal" in (notes or "") else f"BATCH-{tx_id:05d}")
             b_cost = unit_cost if unit_cost is not None else unit_price
@@ -1714,162 +1759,170 @@ def create_stock_conversion():
         return err("At least one output product is required in outputs")
 
     conn = get_db()
-    input_prod = conn.execute('SELECT * FROM products WHERE id=? AND active=1', (input_pid,)).fetchone()
-    if not input_prod:
-        conn.close()
-        return err("Input product not found or inactive", 404)
+    try:
+        input_prod = conn.execute('SELECT * FROM products WHERE id=? AND active=1', (input_pid,)).fetchone()
+        if not input_prod:
+            return err("Input product not found or inactive", 404)
 
-    if float(input_prod['current_stock'] or 0) < input_qty:
-        conn.close()
-        unit_label = input_prod['purchase_unit'] or 'units'
-        return err(f"Insufficient stock for {input_prod['name']}. Available: {round(float(input_prod['current_stock']), 3)} {unit_label}")
+        if float(input_prod['current_stock'] or 0) < input_qty:
+            unit_label = input_prod['purchase_unit'] or 'units'
+            return err(f"Insufficient stock for {input_prod['name']}. Available: {round(float(input_prod['current_stock']), 3)} {unit_label}")
 
-    cnv_no = next_conversion_no(conn)
-    cnv_date = d.get('conversion_date', str(date.today()))
+        cnv_no = next_conversion_no(conn)
+        cnv_date = d.get('conversion_date', str(date.today()))
 
-    total_output_qty = 0.0
-    validated_outputs = []
+        total_output_qty = 0.0
+        validated_outputs = []
 
-    for out in outputs:
-        out_pid = out.get('output_product_id')
-        try:
-            out_qty = float(out.get('output_quantity', 0))
-        except (ValueError, TypeError):
-            out_qty = 0.0
-
-        if not out_pid or out_qty <= 0:
-            conn.close()
-            return err("Each output item must have output_product_id and output_quantity > 0")
-
-        out_prod = conn.execute('SELECT * FROM products WHERE id=? AND active=1', (out_pid,)).fetchone()
-        if not out_prod:
-            conn.close()
-            return err(f"Output product ID {out_pid} not found or inactive", 404)
-
-        input_unit = (input_prod['purchase_unit'] or 'kg').strip().lower()
-        out_unit = (out_prod['purchase_unit'] or 'kg').strip().lower()
-
-        equiv_qty = out_qty
-        if input_unit != out_unit:
-            conv = float(out_prod['conversion_factor'] or 1.0)
-            if conv > 0 and input_unit in ('kg', 'liter', 'l') and out_unit in ('g', 'gram', 'ml'):
-                equiv_qty = out_qty / 1000.0
-            elif conv > 0 and input_unit in ('g', 'gram', 'ml') and out_unit in ('kg', 'liter', 'l'):
-                equiv_qty = out_qty * 1000.0
-
-        total_output_qty += equiv_qty
-        validated_outputs.append((out_prod, out_qty))
-
-    loss_qty = max(round(input_qty - total_output_qty, 3), 0.0)
-    yield_pct = round((total_output_qty / input_qty) * 100.0, 2) if input_qty > 0 else 0.0
-
-    total_input_cost = input_qty * float(input_prod['purchase_price'] or 0)
-
-    update_stock(
-        conn, input_pid, -input_qty, 'conversion_out',
-        unit_price=float(input_prod['purchase_price'] or 0),
-        ref=cnv_no, notes=f"Stock conversion input for {cnv_no}",
-        created_by=session.get('username')
-    )
-
-    if loss_qty > 0:
-        conn.execute('''
-            INSERT INTO stock_transactions
-            (product_id, type, quantity, unit_price, reference_id, notes, status, created_by)
-            VALUES (?, 'wastage', ?, ?, ?, ?, 'approved', ?)
-        ''', (input_pid, loss_qty, float(input_prod['purchase_price'] or 0), cnv_no, f"Processing loss for conversion {cnv_no}", session.get('username')))
-
-    c = conn.execute('''
-        INSERT INTO stock_conversions
-        (conversion_no, conversion_date, input_product_id, input_quantity, yield_percent, loss_quantity, notes, created_by)
-        VALUES (?,?,?,?,?,?,?,?)
-    ''', (cnv_no, cnv_date, input_pid, input_qty, yield_pct, loss_qty, notes, session.get('username')))
-    cnv_id = c.lastrowid
-
-    for out_prod, out_qty in validated_outputs:
-        out_pid = out_prod['id']
-        input_unit = (input_prod['purchase_unit'] or 'kg').strip().lower()
-        out_unit = (out_prod['purchase_unit'] or 'kg').strip().lower()
-
-        equiv_qty = out_qty
-        if input_unit != out_unit:
-            conv = float(out_prod['conversion_factor'] or 1.0)
-            if conv > 0 and input_unit in ('kg', 'liter', 'l') and out_unit in ('g', 'gram', 'ml'):
-                equiv_qty = out_qty / 1000.0
-            elif conv > 0 and input_unit in ('g', 'gram', 'ml') and out_unit in ('kg', 'liter', 'l'):
-                equiv_qty = out_qty * 1000.0
-
-        cost_share = (equiv_qty / total_output_qty) * total_input_cost if total_output_qty > 0 else 0.0
-        alloc_unit_cost = round(cost_share / out_qty, 4) if out_qty > 0 else 0.0
-
-        conn.execute('''
-            INSERT INTO stock_conversion_outputs (conversion_id, output_product_id, output_quantity, allocated_unit_cost)
-            VALUES (?,?,?,?)
-        ''', (cnv_id, out_pid, out_qty, alloc_unit_cost))
-
-        out_expiry = None
-        shelf_life = out_prod.get('shelf_life_days') if hasattr(out_prod, 'keys') and 'shelf_life_days' in out_prod.keys() else None
-        if shelf_life and int(shelf_life) > 0:
+        for out in outputs:
+            out_pid = out.get('output_product_id')
             try:
-                base_dt = datetime.strptime(cnv_date[:10], '%Y-%m-%d')
-                out_expiry = (base_dt + timedelta(days=int(shelf_life))).strftime('%Y-%m-%d')
-            except Exception:
-                out_expiry = None
+                out_qty = float(out.get('output_quantity', 0))
+            except (ValueError, TypeError):
+                out_qty = 0.0
+
+            if not out_pid or out_qty <= 0:
+                return err("Each output item must have output_product_id and output_quantity > 0")
+
+            out_prod = conn.execute('SELECT * FROM products WHERE id=? AND active=1', (out_pid,)).fetchone()
+            if not out_prod:
+                return err(f"Output product ID {out_pid} not found or inactive", 404)
+
+            input_unit = (input_prod['purchase_unit'] or 'kg').strip().lower()
+            out_unit = (out_prod['purchase_unit'] or 'kg').strip().lower()
+
+            equiv_qty = out_qty
+            if input_unit != out_unit:
+                conv = float(out_prod['conversion_factor'] or 1.0)
+                if conv > 0 and input_unit in ('kg', 'liter', 'l') and out_unit in ('g', 'gram', 'ml'):
+                    equiv_qty = out_qty / 1000.0
+                elif conv > 0 and input_unit in ('g', 'gram', 'ml') and out_unit in ('kg', 'liter', 'l'):
+                    equiv_qty = out_qty * 1000.0
+
+            total_output_qty += equiv_qty
+            validated_outputs.append((out_prod, out_qty))
+
+        loss_qty = max(round(input_qty - total_output_qty, 3), 0.0)
+        yield_pct = round((total_output_qty / input_qty) * 100.0, 2) if input_qty > 0 else 0.0
+
+        total_input_cost = input_qty * float(input_prod['purchase_price'] or 0)
 
         update_stock(
-            conn, out_pid, out_qty, 'conversion_in',
-            unit_price=alloc_unit_cost, unit_cost=alloc_unit_cost,
-            ref=cnv_no, expiry_date=out_expiry,
-            notes=f"Stock conversion output for {cnv_no}",
+            conn, input_pid, -input_qty, 'conversion_out',
+            unit_price=float(input_prod['purchase_price'] or 0),
+            ref=cnv_no, notes=f"Stock conversion input for {cnv_no}",
             created_by=session.get('username')
         )
 
-    loss_val = round(loss_qty * float(input_prod['purchase_price'] or 0), 2)
-    if loss_val > 0:
-        loss_acc = conn.execute("SELECT id FROM ledger_accounts WHERE name='Inventory Loss/Processing'").fetchone()
-        if not loss_acc:
+        if loss_qty > 0:
             conn.execute('''
-                INSERT INTO ledger_accounts (name, account_group, account_type, is_system)
-                VALUES ('Inventory Loss/Processing', 'Expense', 'Direct Expense', 1)
-            ''')
-        entries = [
-            {'account_name': 'Inventory Loss/Processing', 'debit': loss_val, 'credit': 0, 'narration': f"Processing loss for conversion {cnv_no}"},
-            {'account_name': 'Purchase Account', 'debit': 0, 'credit': loss_val, 'narration': f"Inventory reduction for conversion loss {cnv_no}"}
-        ]
-        try:
-            post_ledger_entry(
-                conn,
-                voucher_type='journal',
-                voucher_no=cnv_no,
-                voucher_date=cnv_date[:10],
-                entries=entries,
-                reference_table='stock_conversions',
-                reference_id=cnv_id,
+                INSERT INTO stock_transactions
+                (product_id, type, quantity, unit_price, reference_id, notes, status, created_by)
+                VALUES (?, 'wastage', ?, ?, ?, ?, 'approved', ?)
+            ''', (input_pid, loss_qty, float(input_prod['purchase_price'] or 0), cnv_no, f"Processing loss for conversion {cnv_no}", session.get('username')))
+
+        c = conn.execute('''
+            INSERT INTO stock_conversions
+            (conversion_no, conversion_date, input_product_id, input_quantity, yield_percent, loss_quantity, notes, created_by)
+            VALUES (?,?,?,?,?,?,?,?)
+        ''', (cnv_no, cnv_date, input_pid, input_qty, yield_pct, loss_qty, notes, session.get('username')))
+        cnv_id = c.lastrowid
+
+        for out_prod, out_qty in validated_outputs:
+            out_pid = out_prod['id']
+            input_unit = (input_prod['purchase_unit'] or 'kg').strip().lower()
+            out_unit = (out_prod['purchase_unit'] or 'kg').strip().lower()
+
+            equiv_qty = out_qty
+            if input_unit != out_unit:
+                conv = float(out_prod['conversion_factor'] or 1.0)
+                if conv > 0 and input_unit in ('kg', 'liter', 'l') and out_unit in ('g', 'gram', 'ml'):
+                    equiv_qty = out_qty / 1000.0
+                elif conv > 0 and input_unit in ('g', 'gram', 'ml') and out_unit in ('kg', 'liter', 'l'):
+                    equiv_qty = out_qty * 1000.0
+
+            cost_share = (equiv_qty / total_output_qty) * total_input_cost if total_output_qty > 0 else 0.0
+            alloc_unit_cost = round(cost_share / out_qty, 4) if out_qty > 0 else 0.0
+
+            conn.execute('''
+                INSERT INTO stock_conversion_outputs (conversion_id, output_product_id, output_quantity, allocated_unit_cost)
+                VALUES (?,?,?,?)
+            ''', (cnv_id, out_pid, out_qty, alloc_unit_cost))
+
+            out_expiry = None
+            shelf_life = out_prod.get('shelf_life_days') if hasattr(out_prod, 'keys') and 'shelf_life_days' in out_prod.keys() else None
+            if shelf_life and int(shelf_life) > 0:
+                try:
+                    base_dt = datetime.strptime(cnv_date[:10], '%Y-%m-%d')
+                    out_expiry = (base_dt + timedelta(days=int(shelf_life))).strftime('%Y-%m-%d')
+                except Exception:
+                    out_expiry = None
+
+            update_stock(
+                conn, out_pid, out_qty, 'conversion_in',
+                unit_price=alloc_unit_cost, unit_cost=alloc_unit_cost,
+                ref=cnv_no, expiry_date=out_expiry,
+                notes=f"Stock conversion output for {cnv_no}",
                 created_by=session.get('username')
             )
+
+        loss_val = round(loss_qty * float(input_prod['purchase_price'] or 0), 2)
+        if loss_val > 0:
+            loss_acc = conn.execute("SELECT id FROM ledger_accounts WHERE name='Inventory Loss/Processing'").fetchone()
+            if not loss_acc:
+                conn.execute('''
+                    INSERT INTO ledger_accounts (name, account_group, account_type, is_system)
+                    VALUES ('Inventory Loss/Processing', 'Expense', 'Direct Expense', 1)
+                ''')
+            entries = [
+                {'account_name': 'Inventory Loss/Processing', 'debit': loss_val, 'credit': 0, 'narration': f"Processing loss for conversion {cnv_no}"},
+                {'account_name': 'Purchase Account', 'debit': 0, 'credit': loss_val, 'narration': f"Inventory reduction for conversion loss {cnv_no}"}
+            ]
+            try:
+                post_ledger_entry(
+                    conn,
+                    voucher_type='journal',
+                    voucher_no=cnv_no,
+                    voucher_date=cnv_date[:10],
+                    entries=entries,
+                    reference_table='stock_conversions',
+                    reference_id=cnv_id,
+                    created_by=session.get('username')
+                )
+            except Exception:
+                pass
+
+        conn.commit()
+
+        cnv_row = conn.execute('''
+            SELECT sc.*, p.name AS input_product_name, p.code AS input_product_code, p.purchase_unit AS input_unit
+            FROM stock_conversions sc
+            JOIN products p ON sc.input_product_id = p.id
+            WHERE sc.id = ?
+        ''', (cnv_id,)).fetchone()
+
+        out_rows = conn.execute('''
+            SELECT sco.*, p.name AS output_product_name, p.code AS output_product_code, p.purchase_unit AS output_unit
+            FROM stock_conversion_outputs sco
+            JOIN products p ON sco.output_product_id = p.id
+            WHERE sco.conversion_id = ?
+        ''', (cnv_id,)).fetchall()
+
+        res = dict_row(cnv_row)
+        res['outputs'] = dict_rows(out_rows)
+        return ok(res, f"Stock conversion {cnv_no} created successfully"), 201
+    except InsufficientStockError as e:
+        conn.rollback()
+        return err(str(e), 409)
+    except Exception as e:
+        conn.rollback()
+        print(f"[Stock Conversion Error] {str(e)}")
+        return err(f"Stock conversion failed: {str(e)}", 500)
+    finally:
+        try:
+            conn.close()
         except Exception:
             pass
-
-    conn.commit()
-
-    cnv_row = conn.execute('''
-        SELECT sc.*, p.name AS input_product_name, p.code AS input_product_code, p.purchase_unit AS input_unit
-        FROM stock_conversions sc
-        JOIN products p ON sc.input_product_id = p.id
-        WHERE sc.id = ?
-    ''', (cnv_id,)).fetchone()
-
-    out_rows = conn.execute('''
-        SELECT sco.*, p.name AS output_product_name, p.code AS output_product_code, p.purchase_unit AS output_unit
-        FROM stock_conversion_outputs sco
-        JOIN products p ON sco.output_product_id = p.id
-        WHERE sco.conversion_id = ?
-    ''', (cnv_id,)).fetchall()
-    conn.close()
-
-    res = dict_row(cnv_row)
-    res['outputs'] = dict_rows(out_rows)
-    return ok(res, f"Stock conversion {cnv_no} created successfully"), 201
 
 
 @app.route('/api/stock/conversions', methods=['GET'])
@@ -3203,223 +3256,222 @@ def create_bill():
     items = d.get('items', [])
     if not isinstance(items, list) or not items: return err("Bill must have at least one item")
     conn = get_db()
-    bill_no = next_bill_no(conn)
-    
-    # Determine place of supply and inter-state status
-    shop_state_code = (get_setting('shop_state_code', conn) or '').strip()
-    cust_state_code = (d.get('place_of_supply') or d.get('state_code') or '').strip()
-    if not cust_state_code and d.get('customer_id'):
-        cust = conn.execute('SELECT state_code FROM customers WHERE id=?', (d['customer_id'],)).fetchone()
-        if cust and cust['state_code']:
-            cust_state_code = cust['state_code'].strip()
-            
-    place_of_supply = cust_state_code
-    is_interstate = 1 if (shop_state_code and place_of_supply and shop_state_code != place_of_supply) else 0
-
-    subtotal = 0; cgst_total = 0; sgst_total = 0; igst_total = 0
-    # Validate stock
-    for it in items:
-        if it.get('product_id'):
-            prod = conn.execute(
-                'SELECT current_stock, conversion_factor, sale_unit, name FROM products WHERE id=?', (it['product_id'],)
-            ).fetchone()
-            if prod:
-                conv = float(prod['conversion_factor'] or 1.0)
-                qty_sale = float(it['quantity'])
-                qty_purchase = round(qty_sale / conv, 4)
-                if prod['current_stock'] < qty_purchase:
-                    conn.close()
-                    avail_sale_units = round(prod['current_stock'] * conv, 3)
-                    unit_label = prod['sale_unit'] or 'units'
-                    return err(f"Insufficient stock for {prod['name']}. Available: {avail_sale_units} {unit_label}")
-    discount_pct = float(d.get('discount_percent', 0))
-    raw_subtotal = sum(float(it['quantity']) * float(it['unit_price']) for it in items)
-    discount_amt = round(raw_subtotal * discount_pct / 100, 2)
-    for it in items:
-        qty = float(it['quantity']); price = float(it['unit_price']); gst_rate = float(it.get('gst_rate', 0))
-        prod_row = None
-        if it.get('product_id'):
-            prod_row = conn.execute('SELECT product_type, is_price_inclusive_of_tax FROM products WHERE id=?', (it['product_id'],)).fetchone()
-        is_inc_tax = (prod_row and prod_row['product_type'] == 'general' and int(prod_row['is_price_inclusive_of_tax'] or 0) == 1)
-
-        if is_inc_tax:
-            item_gross = round(qty * price * (1 - discount_pct / 100), 2)
-            if gst_rate > 0:
-                item_taxable = round(item_gross / (1.0 + gst_rate / 100.0), 2)
-                total_tax = round(item_gross - item_taxable, 2)
-            else:
-                item_taxable = item_gross
-                total_tax = 0.0
-
-            if is_interstate:
-                cgst_amt = 0.0
-                sgst_amt = 0.0
-                igst_amt = total_tax
-            else:
-                cgst_amt = round(total_tax / 2.0, 2)
-                sgst_amt = round(total_tax - cgst_amt, 2)
-                igst_amt = 0.0
-        else:
-            item_taxable = round(qty * price * (1 - discount_pct / 100), 2)
-            if is_interstate:
-                cgst_amt = 0.0
-                sgst_amt = 0.0
-                igst_amt = round(item_taxable * gst_rate / 100, 2)
-            else:
-                cgst_amt = round(item_taxable * gst_rate / 2 / 100, 2)
-                sgst_amt = round(item_taxable * gst_rate / 2 / 100, 2)
-                igst_amt = 0.0
-
-        cgst_total += cgst_amt
-        sgst_total += sgst_amt
-        igst_total += igst_amt
-        subtotal   += item_taxable
-    subtotal = round(subtotal, 2)
-    cgst_total = round(cgst_total, 2)
-    sgst_total = round(sgst_total, 2)
-    igst_total = round(igst_total, 2)
-    grand_total  = round(subtotal + cgst_total + sgst_total + igst_total, 2)
-
-    if 'amount_paid' in d and d['amount_paid'] is not None:
-        raw_paid = float(d['amount_paid'])
-    else:
-        raw_paid = grand_total
-
-    if raw_paid >= grand_total:
-        amount_paid = grand_total
-        amount_due = 0.0
-        change_amount = round(raw_paid - grand_total, 2)
-        status = 'paid'
-    elif raw_paid <= 0:
-        amount_paid = 0.0
-        amount_due = grand_total
-        change_amount = 0.0
-        status = 'due'
-    else:
-        amount_paid = round(raw_paid, 2)
-        amount_due = round(grand_total - amount_paid, 2)
-        change_amount = 0.0
-        status = 'partial'
-
-    is_test = 1 if session.get('user_role') == 'tester' else 0
-    c = conn.execute(
-        '''INSERT INTO bills
-           (bill_no, customer_id, customer_name, customer_phone, customer_gstin,
-            place_of_supply, is_interstate,
-            subtotal, discount_percent, discount_amount, cgst, sgst, igst, grand_total,
-            amount_paid, amount_due, change_amount, payment_mode, notes, is_test, status)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-        (bill_no, d.get('customer_id'), d.get('customer_name', 'Walk-in Customer'),
-         d.get('customer_phone', ''), d.get('customer_gstin', ''),
-         place_of_supply, is_interstate,
-         round(subtotal, 2), discount_pct, discount_amt,
-         round(cgst_total, 2), round(sgst_total, 2), round(igst_total, 2), grand_total,
-         amount_paid, amount_due, max(change_amount, 0), d.get('payment_mode', 'cash'),
-         d.get('notes', ''), is_test, status)
-    )
-    bill_id = c.lastrowid
-
-    if amount_paid > 0:
-        conn.execute(
-            '''INSERT INTO bill_payments (bill_id, amount, payment_mode, received_by, notes)
-               VALUES (?,?,?,?,?)''',
-            (bill_id, amount_paid, d.get('payment_mode', 'cash'), session.get('username'), 'Initial payment at billing')
-        )
-
-    for it in items:
-        qty = float(it['quantity']); price = float(it['unit_price']); gst_rate = float(it.get('gst_rate', 0))
-        prod_row = None
-        if it.get('product_id'):
-            prod_row = conn.execute('SELECT product_type, is_price_inclusive_of_tax FROM products WHERE id=?', (it['product_id'],)).fetchone()
-        is_inc_tax = (prod_row and prod_row['product_type'] == 'general' and int(prod_row['is_price_inclusive_of_tax'] or 0) == 1)
-
-        if is_inc_tax:
-            item_gross = round(qty * price * (1 - discount_pct / 100), 2)
-            if gst_rate > 0:
-                item_taxable = round(item_gross / (1.0 + gst_rate / 100.0), 2)
-                total_tax = round(item_gross - item_taxable, 2)
-            else:
-                item_taxable = item_gross
-                total_tax = 0.0
-
-            if is_interstate:
-                cgst_amt = 0.0
-                sgst_amt = 0.0
-                igst_amt = total_tax
-            else:
-                cgst_amt = round(total_tax / 2.0, 2)
-                sgst_amt = round(total_tax - cgst_amt, 2)
-                igst_amt = 0.0
-
-            amount = item_gross
-        else:
-            item_taxable = round(qty * price * (1 - discount_pct / 100), 2)
-            if is_interstate:
-                cgst_amt = 0.0
-                sgst_amt = 0.0
-                igst_amt = round(item_taxable * gst_rate / 100, 2)
-            else:
-                cgst_amt = round(item_taxable * gst_rate / 2 / 100, 2)
-                sgst_amt = round(item_taxable * gst_rate / 2 / 100, 2)
-                igst_amt = 0.0
-
-            amount = round(item_taxable + cgst_amt + sgst_amt + igst_amt, 2)
-
-        item_cost_price = None
-        prod = None
-        if it.get('product_id'):
-            prod = conn.execute('SELECT name, conversion_factor, purchase_price FROM products WHERE id=?', (it['product_id'],)).fetchone()
-            conv = float(prod['conversion_factor'] or 1.0) if prod else 1.0
-            qty_purchase = round(qty / conv, 4)
-            unit_cost_purchase = update_stock(conn, it['product_id'], -qty_purchase, 'out', price, bill_no)
-            if unit_cost_purchase and float(unit_cost_purchase) > 0:
-                item_cost_price = round(float(unit_cost_purchase) * conv, 4)
-            else:
-                item_cost_price = round(float(prod['purchase_price'] or 0) * conv, 4) if prod else None
-
-        prod_name = (it.get('product_name') or (prod['name'] if prod else 'Item')).strip()
-
-        conn.execute(
-            '''INSERT INTO bill_items
-               (bill_id, product_id, product_name, hsn_code, unit, quantity,
-                unit_price, gst_rate, discount, taxable_amt, cgst_amt, sgst_amt, igst_amt, amount, cost_price)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (bill_id, it.get('product_id'), prod_name, it.get('hsn_code', ''),
-             it.get('unit', 'kg'), qty, price, gst_rate, discount_pct,
-             item_taxable, cgst_amt, sgst_amt, igst_amt, amount, item_cost_price)
-        )
-
-    # ── Double-Entry Ledger Posting for Sales Bill ───────────────────────────
-    pmode = (d.get('payment_mode') or 'cash').strip().lower()
-    pay_account = 'Cash' if pmode == 'cash' else 'Bank'
-    bill_date = str(date.today())
-
-    ledger_entries = []
-    if amount_paid > 0:
-        ledger_entries.append({'account_name': pay_account, 'debit': round(amount_paid, 2), 'credit': 0, 'narration': f"Payment received via {pmode}"})
-    if amount_due > 0:
-        ledger_entries.append({'account_name': 'Sundry Debtors', 'debit': round(amount_due, 2), 'credit': 0, 'narration': f"Amount due from {d.get('customer_name', 'Customer')}"})
-    ledger_entries.append({'account_name': 'Sales Account', 'debit': 0, 'credit': round(subtotal, 2), 'narration': f"Sales revenue Bill {bill_no}"})
-
-    if is_interstate:
-        if igst_total > 0:
-            ledger_entries.append({'account_name': 'IGST Payable', 'debit': 0, 'credit': round(igst_total, 2), 'narration': f"IGST on Bill {bill_no}"})
-    else:
-        if cgst_total > 0:
-            ledger_entries.append({'account_name': 'CGST Payable', 'debit': 0, 'credit': round(cgst_total, 2), 'narration': f"CGST on Bill {bill_no}"})
-        if sgst_total > 0:
-            ledger_entries.append({'account_name': 'SGST Payable', 'debit': 0, 'credit': round(sgst_total, 2), 'narration': f"SGST on Bill {bill_no}"})
-
-    tot_dr = sum(e['debit'] for e in ledger_entries)
-    tot_cr = sum(e['credit'] for e in ledger_entries)
-    diff = round(tot_dr - tot_cr, 2)
-    if diff != 0:
-        if diff > 0:
-            ledger_entries.append({'account_name': 'Round Off', 'debit': 0, 'credit': diff, 'narration': 'Rounding difference'})
-        else:
-            ledger_entries.append({'account_name': 'Round Off', 'debit': abs(diff), 'credit': 0, 'narration': 'Rounding difference'})
-
     try:
+        bill_no = next_bill_no(conn)
+        
+        # Determine place of supply and inter-state status
+        shop_state_code = (get_setting('shop_state_code', conn) or '').strip()
+        cust_state_code = (d.get('place_of_supply') or d.get('state_code') or '').strip()
+        if not cust_state_code and d.get('customer_id'):
+            cust = conn.execute('SELECT state_code FROM customers WHERE id=?', (d['customer_id'],)).fetchone()
+            if cust and cust['state_code']:
+                cust_state_code = cust['state_code'].strip()
+                
+        place_of_supply = cust_state_code
+        is_interstate = 1 if (shop_state_code and place_of_supply and shop_state_code != place_of_supply) else 0
+
+        subtotal = 0; cgst_total = 0; sgst_total = 0; igst_total = 0
+        # Validate stock
+        for it in items:
+            if it.get('product_id'):
+                prod = conn.execute(
+                    'SELECT current_stock, conversion_factor, sale_unit, name FROM products WHERE id=?', (it['product_id'],)
+                ).fetchone()
+                if prod:
+                    conv = float(prod['conversion_factor'] or 1.0)
+                    qty_sale = float(it['quantity'])
+                    qty_purchase = round(qty_sale / conv, 4)
+                    if prod['current_stock'] < qty_purchase:
+                        avail_sale_units = round(prod['current_stock'] * conv, 3)
+                        unit_label = prod['sale_unit'] or 'units'
+                        return err(f"Insufficient stock for {prod['name']}. Available: {avail_sale_units} {unit_label}")
+        discount_pct = float(d.get('discount_percent', 0))
+        raw_subtotal = sum(float(it['quantity']) * float(it['unit_price']) for it in items)
+        discount_amt = round(raw_subtotal * discount_pct / 100, 2)
+        for it in items:
+            qty = float(it['quantity']); price = float(it['unit_price']); gst_rate = float(it.get('gst_rate', 0))
+            prod_row = None
+            if it.get('product_id'):
+                prod_row = conn.execute('SELECT product_type, is_price_inclusive_of_tax FROM products WHERE id=?', (it['product_id'],)).fetchone()
+            is_inc_tax = (prod_row and prod_row['product_type'] == 'general' and int(prod_row['is_price_inclusive_of_tax'] or 0) == 1)
+
+            if is_inc_tax:
+                item_gross = round(qty * price * (1 - discount_pct / 100), 2)
+                if gst_rate > 0:
+                    item_taxable = round(item_gross / (1.0 + gst_rate / 100.0), 2)
+                    total_tax = round(item_gross - item_taxable, 2)
+                else:
+                    item_taxable = item_gross
+                    total_tax = 0.0
+
+                if is_interstate:
+                    cgst_amt = 0.0
+                    sgst_amt = 0.0
+                    igst_amt = total_tax
+                else:
+                    cgst_amt = round(total_tax / 2.0, 2)
+                    sgst_amt = round(total_tax - cgst_amt, 2)
+                    igst_amt = 0.0
+            else:
+                item_taxable = round(qty * price * (1 - discount_pct / 100), 2)
+                if is_interstate:
+                    cgst_amt = 0.0
+                    sgst_amt = 0.0
+                    igst_amt = round(item_taxable * gst_rate / 100, 2)
+                else:
+                    cgst_amt = round(item_taxable * gst_rate / 2 / 100, 2)
+                    sgst_amt = round(item_taxable * gst_rate / 2 / 100, 2)
+                    igst_amt = 0.0
+
+            cgst_total += cgst_amt
+            sgst_total += sgst_amt
+            igst_total += igst_amt
+            subtotal   += item_taxable
+        subtotal = round(subtotal, 2)
+        cgst_total = round(cgst_total, 2)
+        sgst_total = round(sgst_total, 2)
+        igst_total = round(igst_total, 2)
+        grand_total  = round(subtotal + cgst_total + sgst_total + igst_total, 2)
+
+        if 'amount_paid' in d and d['amount_paid'] is not None:
+            raw_paid = float(d['amount_paid'])
+        else:
+            raw_paid = grand_total
+
+        if raw_paid >= grand_total:
+            amount_paid = grand_total
+            amount_due = 0.0
+            change_amount = round(raw_paid - grand_total, 2)
+            status = 'paid'
+        elif raw_paid <= 0:
+            amount_paid = 0.0
+            amount_due = grand_total
+            change_amount = 0.0
+            status = 'due'
+        else:
+            amount_paid = round(raw_paid, 2)
+            amount_due = round(grand_total - amount_paid, 2)
+            change_amount = 0.0
+            status = 'partial'
+
+        is_test = 1 if session.get('user_role') == 'tester' else 0
+        c = conn.execute(
+            '''INSERT INTO bills
+               (bill_no, customer_id, customer_name, customer_phone, customer_gstin,
+                place_of_supply, is_interstate,
+                subtotal, discount_percent, discount_amount, cgst, sgst, igst, grand_total,
+                amount_paid, amount_due, change_amount, payment_mode, notes, is_test, status)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (bill_no, d.get('customer_id'), d.get('customer_name', 'Walk-in Customer'),
+             d.get('customer_phone', ''), d.get('customer_gstin', ''),
+             place_of_supply, is_interstate,
+             round(subtotal, 2), discount_pct, discount_amt,
+             round(cgst_total, 2), round(sgst_total, 2), round(igst_total, 2), grand_total,
+             amount_paid, amount_due, max(change_amount, 0), d.get('payment_mode', 'cash'),
+             d.get('notes', ''), is_test, status)
+        )
+        bill_id = c.lastrowid
+
+        if amount_paid > 0:
+            conn.execute(
+                '''INSERT INTO bill_payments (bill_id, amount, payment_mode, received_by, notes)
+                   VALUES (?,?,?,?,?)''',
+                (bill_id, amount_paid, d.get('payment_mode', 'cash'), session.get('username'), 'Initial payment at billing')
+            )
+
+        for it in items:
+            qty = float(it['quantity']); price = float(it['unit_price']); gst_rate = float(it.get('gst_rate', 0))
+            prod_row = None
+            if it.get('product_id'):
+                prod_row = conn.execute('SELECT product_type, is_price_inclusive_of_tax FROM products WHERE id=?', (it['product_id'],)).fetchone()
+            is_inc_tax = (prod_row and prod_row['product_type'] == 'general' and int(prod_row['is_price_inclusive_of_tax'] or 0) == 1)
+
+            if is_inc_tax:
+                item_gross = round(qty * price * (1 - discount_pct / 100), 2)
+                if gst_rate > 0:
+                    item_taxable = round(item_gross / (1.0 + gst_rate / 100.0), 2)
+                    total_tax = round(item_gross - item_taxable, 2)
+                else:
+                    item_taxable = item_gross
+                    total_tax = 0.0
+
+                if is_interstate:
+                    cgst_amt = 0.0
+                    sgst_amt = 0.0
+                    igst_amt = total_tax
+                else:
+                    cgst_amt = round(total_tax / 2.0, 2)
+                    sgst_amt = round(total_tax - cgst_amt, 2)
+                    igst_amt = 0.0
+
+                amount = item_gross
+            else:
+                item_taxable = round(qty * price * (1 - discount_pct / 100), 2)
+                if is_interstate:
+                    cgst_amt = 0.0
+                    sgst_amt = 0.0
+                    igst_amt = round(item_taxable * gst_rate / 100, 2)
+                else:
+                    cgst_amt = round(item_taxable * gst_rate / 2 / 100, 2)
+                    sgst_amt = round(item_taxable * gst_rate / 2 / 100, 2)
+                    igst_amt = 0.0
+
+                amount = round(item_taxable + cgst_amt + sgst_amt + igst_amt, 2)
+
+            item_cost_price = None
+            prod = None
+            if it.get('product_id'):
+                prod = conn.execute('SELECT name, conversion_factor, purchase_price FROM products WHERE id=?', (it['product_id'],)).fetchone()
+                conv = float(prod['conversion_factor'] or 1.0) if prod else 1.0
+                qty_purchase = round(qty / conv, 4)
+                unit_cost_purchase = update_stock(conn, it['product_id'], -qty_purchase, 'out', price, bill_no)
+                if unit_cost_purchase and float(unit_cost_purchase) > 0:
+                    item_cost_price = round(float(unit_cost_purchase) * conv, 4)
+                else:
+                    item_cost_price = round(float(prod['purchase_price'] or 0) * conv, 4) if prod else None
+
+            prod_name = (it.get('product_name') or (prod['name'] if prod else 'Item')).strip()
+
+            conn.execute(
+                '''INSERT INTO bill_items
+                   (bill_id, product_id, product_name, hsn_code, unit, quantity,
+                    unit_price, gst_rate, discount, taxable_amt, cgst_amt, sgst_amt, igst_amt, amount, cost_price)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                (bill_id, it.get('product_id'), prod_name, it.get('hsn_code', ''),
+                 it.get('unit', 'kg'), qty, price, gst_rate, discount_pct,
+                 item_taxable, cgst_amt, sgst_amt, igst_amt, amount, item_cost_price)
+            )
+
+        # ── Double-Entry Ledger Posting for Sales Bill ───────────────────────────
+        pmode = (d.get('payment_mode') or 'cash').strip().lower()
+        pay_account = 'Cash' if pmode == 'cash' else 'Bank'
+        bill_date = str(date.today())
+
+        ledger_entries = []
+        if amount_paid > 0:
+            ledger_entries.append({'account_name': pay_account, 'debit': round(amount_paid, 2), 'credit': 0, 'narration': f"Payment received via {pmode}"})
+        if amount_due > 0:
+            ledger_entries.append({'account_name': 'Sundry Debtors', 'debit': round(amount_due, 2), 'credit': 0, 'narration': f"Amount due from {d.get('customer_name', 'Customer')}"})
+        ledger_entries.append({'account_name': 'Sales Account', 'debit': 0, 'credit': round(subtotal, 2), 'narration': f"Sales revenue Bill {bill_no}"})
+
+        if is_interstate:
+            if igst_total > 0:
+                ledger_entries.append({'account_name': 'IGST Payable', 'debit': 0, 'credit': round(igst_total, 2), 'narration': f"IGST on Bill {bill_no}"})
+        else:
+            if cgst_total > 0:
+                ledger_entries.append({'account_name': 'CGST Payable', 'debit': 0, 'credit': round(cgst_total, 2), 'narration': f"CGST on Bill {bill_no}"})
+            if sgst_total > 0:
+                ledger_entries.append({'account_name': 'SGST Payable', 'debit': 0, 'credit': round(sgst_total, 2), 'narration': f"SGST on Bill {bill_no}"})
+
+        tot_dr = sum(e['debit'] for e in ledger_entries)
+        tot_cr = sum(e['credit'] for e in ledger_entries)
+        diff = round(tot_dr - tot_cr, 2)
+        if diff != 0:
+            if diff > 0:
+                ledger_entries.append({'account_name': 'Round Off', 'debit': 0, 'credit': diff, 'narration': 'Rounding difference'})
+            else:
+                ledger_entries.append({'account_name': 'Round Off', 'debit': abs(diff), 'credit': 0, 'narration': 'Rounding difference'})
+
         post_ledger_entry(
             conn,
             voucher_type='sales',
@@ -3430,19 +3482,26 @@ def create_bill():
             reference_id=bill_id,
             created_by=session.get('username')
         )
+
+        conn.commit()
+        bill       = conn.execute('SELECT * FROM bills WHERE id=?', (bill_id,)).fetchone()
+        bill_items = conn.execute('SELECT * FROM bill_items WHERE bill_id=?', (bill_id,)).fetchall()
+        payments   = conn.execute('SELECT * FROM bill_payments WHERE bill_id=? ORDER BY paid_at ASC', (bill_id,)).fetchall()
+        result = dict_row(bill); result['items'] = dict_rows(bill_items); result['payments'] = dict_rows(payments)
+        log_activity('CREATE_BILL', f"Bill {bill_no} created — ₹{grand_total} for {d.get('customer_name','Walk-in')}", 'bills', bill_id)
+        return ok(result, f"Bill {bill_no} created"), 201
+    except InsufficientStockError:
+        conn.rollback()
+        return err("Stock changed before this bill could be completed — please re-check stock and retry", 409)
     except Exception as e:
         conn.rollback()
-        conn.close()
-        return err(f"Ledger posting failed for Bill {bill_no}: {str(e)}", 500)
-
-    conn.commit()
-    bill       = conn.execute('SELECT * FROM bills WHERE id=?', (bill_id,)).fetchone()
-    bill_items = conn.execute('SELECT * FROM bill_items WHERE bill_id=?', (bill_id,)).fetchall()
-    payments   = conn.execute('SELECT * FROM bill_payments WHERE bill_id=? ORDER BY paid_at ASC', (bill_id,)).fetchall()
-    conn.close()
-    result = dict_row(bill); result['items'] = dict_rows(bill_items); result['payments'] = dict_rows(payments)
-    log_activity('CREATE_BILL', f"Bill {bill_no} created — ₹{grand_total} for {d.get('customer_name','Walk-in')}", 'bills', bill_id)
-    return ok(result, f"Bill {bill_no} created"), 201
+        print(f"[Create Bill Error] {str(e)}")
+        return err(f"Bill creation failed: {str(e)}", 500)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @app.route('/api/bills/next-number', methods=['GET'])
 @require_permission('billing.view')
@@ -3595,178 +3654,173 @@ def create_credit_note(bid):
         return err("Credit note must contain at least one item")
 
     conn = get_db()
-    bill = conn.execute('SELECT * FROM bills WHERE id=?', (bid,)).fetchone()
-    if not bill:
-        conn.close()
-        return err("Bill not found", 404)
-
-    if bill['status'] == 'cancelled':
-        conn.close()
-        return err("Cannot issue a credit note for a cancelled bill")
-
-    # Fetch original bill items
-    orig_items_rows = conn.execute('SELECT * FROM bill_items WHERE bill_id=?', (bid,)).fetchall()
-    orig_items = {it['id']: dict_row(it) for it in orig_items_rows}
-
-    # Query already credited quantity per bill_item_id
-    credited_rows = conn.execute('''
-        SELECT cni.bill_item_id, COALESCE(SUM(cni.quantity), 0) AS credited_qty
-        FROM credit_note_items cni
-        JOIN credit_notes cn ON cni.credit_note_id = cn.id
-        WHERE cn.bill_id = ?
-        GROUP BY cni.bill_item_id
-    ''', (bid,)).fetchall()
-    credited_map = {r['bill_item_id']: float(r['credited_qty']) for r in credited_rows}
-
-    is_interstate = bool(bill['is_interstate'])
-    cn_no = next_cn_no(conn)
-
-    computed_items = []
-    subtotal = 0.0
-    cgst_total = 0.0
-    sgst_total = 0.0
-    igst_total = 0.0
-    total = 0.0
-
-    for item in items:
-        b_item_id = item.get('bill_item_id')
-        if not b_item_id or b_item_id not in orig_items:
-            conn.close()
-            return err(f"Invalid or non-existent bill item ID: {b_item_id}")
-
-        try:
-            ret_qty = float(item.get('quantity', 0))
-        except (ValueError, TypeError):
-            ret_qty = 0.0
-
-        if ret_qty <= 0:
-            conn.close()
-            return err("Return quantity must be greater than 0")
-
-        orig_item = orig_items[b_item_id]
-        orig_qty = float(orig_item['quantity'])
-        already_credited = credited_map.get(b_item_id, 0.0)
-
-        if round(already_credited + ret_qty, 4) > round(orig_qty, 4):
-            conn.close()
-            return err(
-                f"Requested return quantity ({ret_qty}) plus previously credited ({already_credited}) "
-                f"exceeds original billed quantity ({orig_qty}) for item '{orig_item['product_name']}'"
-            )
-
-        unit_price = float(orig_item['unit_price'])
-        gst_rate = float(orig_item['gst_rate'] or 0)
-        item_discount_pct = float(orig_item['discount'] or 0)
-
-        taxable_amt = round(ret_qty * unit_price * (1 - item_discount_pct / 100), 2)
-        if is_interstate:
-            cgst_amt = 0.0
-            sgst_amt = 0.0
-            igst_amt = round(taxable_amt * gst_rate / 100, 2)
-        else:
-            cgst_amt = round(taxable_amt * gst_rate / 2 / 100, 2)
-            sgst_amt = round(taxable_amt * gst_rate / 2 / 100, 2)
-            igst_amt = 0.0
-
-        item_amount = round(taxable_amt + cgst_amt + sgst_amt + igst_amt, 2)
-
-        subtotal += taxable_amt
-        cgst_total += cgst_amt
-        sgst_total += sgst_amt
-        igst_total += igst_amt
-        total += item_amount
-
-        # Restore stock via update_stock
-        if orig_item['product_id']:
-            pid = orig_item['product_id']
-            prod = conn.execute('SELECT conversion_factor FROM products WHERE id=?', (pid,)).fetchone()
-            conv = float(prod['conversion_factor'] or 1.0) if prod else 1.0
-            qty_purchase = round(ret_qty / conv, 4)
-            update_stock(
-                conn, pid, qty_purchase, 'in',
-                unit_price=unit_price,
-                ref=bill['bill_no'],
-                notes=f"Credit note {cn_no} against {bill['bill_no']}"
-            )
-
-        computed_items.append({
-            'bill_item_id': b_item_id,
-            'product_id': orig_item['product_id'],
-            'product_name': orig_item['product_name'],
-            'hsn_code': orig_item.get('hsn_code', ''),
-            'unit': orig_item.get('unit', 'kg'),
-            'quantity': ret_qty,
-            'unit_price': unit_price,
-            'gst_rate': gst_rate,
-            'taxable_amt': taxable_amt,
-            'cgst_amt': cgst_amt,
-            'sgst_amt': sgst_amt,
-            'igst_amt': igst_amt,
-            'amount': item_amount
-        })
-
-    subtotal = round(subtotal, 2)
-    cgst_total = round(cgst_total, 2)
-    sgst_total = round(sgst_total, 2)
-    igst_total = round(igst_total, 2)
-    total = round(total, 2)
-
-    c = conn.execute('''
-        INSERT INTO credit_notes
-        (cn_no, bill_id, customer_id, customer_name, reason, subtotal, cgst, sgst, igst, total, status, created_by)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-    ''', (
-        cn_no, bid, bill['customer_id'], bill['customer_name'], reason,
-        subtotal, cgst_total, sgst_total, igst_total, total, 'issued', session.get('username')
-    ))
-    cn_id = c.lastrowid
-
-    for item_data in computed_items:
-        conn.execute('''
-            INSERT INTO credit_note_items
-            (credit_note_id, bill_item_id, product_id, product_name, hsn_code, unit, quantity,
-             unit_price, gst_rate, taxable_amt, cgst_amt, sgst_amt, igst_amt, amount)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        ''', (
-            cn_id, item_data['bill_item_id'], item_data['product_id'], item_data['product_name'],
-            item_data['hsn_code'], item_data['unit'], item_data['quantity'],
-            item_data['unit_price'], item_data['gst_rate'], item_data['taxable_amt'],
-            item_data['cgst_amt'], item_data['sgst_amt'], item_data['igst_amt'], item_data['amount']
-        ))
-
-    # ── Double-Entry Ledger Posting for Credit Note ─────────────────────────
-    orig_pmode = (bill['payment_mode'] or 'cash').strip().lower()
-    if orig_pmode == 'cash':
-        credit_account = 'Cash'
-    elif orig_pmode in ('upi', 'card', 'bank_transfer'):
-        credit_account = 'Bank'
-    else:
-        credit_account = 'Sundry Debtors'
-
-    cn_entries = [
-        {'account_name': 'Sales Account', 'debit': round(subtotal, 2), 'credit': 0, 'narration': f"Sales return for CN {cn_no}"}
-    ]
-    if is_interstate:
-        if igst_total > 0:
-            cn_entries.append({'account_name': 'IGST Payable', 'debit': round(igst_total, 2), 'credit': 0, 'narration': f"IGST reversal for CN {cn_no}"})
-    else:
-        if cgst_total > 0:
-            cn_entries.append({'account_name': 'CGST Payable', 'debit': round(cgst_total, 2), 'credit': 0, 'narration': f"CGST reversal for CN {cn_no}"})
-        if sgst_total > 0:
-            cn_entries.append({'account_name': 'SGST Payable', 'debit': round(sgst_total, 2), 'credit': 0, 'narration': f"SGST reversal for CN {cn_no}"})
-
-    cn_entries.append({'account_name': credit_account, 'debit': 0, 'credit': round(total, 2), 'narration': f"Credit Note refund/reversal for CN {cn_no}"})
-
-    tot_dr = sum(e['debit'] for e in cn_entries)
-    tot_cr = sum(e['credit'] for e in cn_entries)
-    diff = round(tot_dr - tot_cr, 2)
-    if diff != 0:
-        if diff > 0:
-            cn_entries.append({'account_name': 'Round Off', 'debit': 0, 'credit': diff, 'narration': 'Rounding difference'})
-        else:
-            cn_entries.append({'account_name': 'Round Off', 'debit': abs(diff), 'credit': 0, 'narration': 'Rounding difference'})
-
     try:
+        bill = conn.execute('SELECT * FROM bills WHERE id=?', (bid,)).fetchone()
+        if not bill:
+            return err("Bill not found", 404)
+
+        if bill['status'] == 'cancelled':
+            return err("Cannot issue a credit note for a cancelled bill")
+
+        # Fetch original bill items
+        orig_items_rows = conn.execute('SELECT * FROM bill_items WHERE bill_id=?', (bid,)).fetchall()
+        orig_items = {it['id']: dict_row(it) for it in orig_items_rows}
+
+        # Query already credited quantity per bill_item_id
+        credited_rows = conn.execute('''
+            SELECT cni.bill_item_id, COALESCE(SUM(cni.quantity), 0) AS credited_qty
+            FROM credit_note_items cni
+            JOIN credit_notes cn ON cni.credit_note_id = cn.id
+            WHERE cn.bill_id = ?
+            GROUP BY cni.bill_item_id
+        ''', (bid,)).fetchall()
+        credited_map = {r['bill_item_id']: float(r['credited_qty']) for r in credited_rows}
+
+        is_interstate = bool(bill['is_interstate'])
+        cn_no = next_cn_no(conn)
+
+        computed_items = []
+        subtotal = 0.0
+        cgst_total = 0.0
+        sgst_total = 0.0
+        igst_total = 0.0
+        total = 0.0
+
+        for item in items:
+            b_item_id = item.get('bill_item_id')
+            if not b_item_id or b_item_id not in orig_items:
+                return err(f"Invalid or non-existent bill item ID: {b_item_id}")
+
+            try:
+                ret_qty = float(item.get('quantity', 0))
+            except (ValueError, TypeError):
+                ret_qty = 0.0
+
+            if ret_qty <= 0:
+                return err("Return quantity must be greater than 0")
+
+            orig_item = orig_items[b_item_id]
+            orig_qty = float(orig_item['quantity'])
+            already_credited = credited_map.get(b_item_id, 0.0)
+
+            if round(already_credited + ret_qty, 4) > round(orig_qty, 4):
+                return err(
+                    f"Requested return quantity ({ret_qty}) plus previously credited ({already_credited}) "
+                    f"exceeds original billed quantity ({orig_qty}) for item '{orig_item['product_name']}'"
+                )
+
+            unit_price = float(orig_item['unit_price'])
+            gst_rate = float(orig_item['gst_rate'] or 0)
+            item_discount_pct = float(orig_item['discount'] or 0)
+
+            taxable_amt = round(ret_qty * unit_price * (1 - item_discount_pct / 100), 2)
+            if is_interstate:
+                cgst_amt = 0.0
+                sgst_amt = 0.0
+                igst_amt = round(taxable_amt * gst_rate / 100, 2)
+            else:
+                cgst_amt = round(taxable_amt * gst_rate / 2 / 100, 2)
+                sgst_amt = round(taxable_amt * gst_rate / 2 / 100, 2)
+                igst_amt = 0.0
+
+            item_amount = round(taxable_amt + cgst_amt + sgst_amt + igst_amt, 2)
+
+            subtotal += taxable_amt
+            cgst_total += cgst_amt
+            sgst_total += sgst_amt
+            igst_total += igst_amt
+            total += item_amount
+
+            # Restore stock via update_stock
+            if orig_item['product_id']:
+                pid = orig_item['product_id']
+                prod = conn.execute('SELECT conversion_factor FROM products WHERE id=?', (pid,)).fetchone()
+                conv = float(prod['conversion_factor'] or 1.0) if prod else 1.0
+                qty_purchase = round(ret_qty / conv, 4)
+                update_stock(
+                    conn, pid, qty_purchase, 'in',
+                    unit_price=unit_price,
+                    ref=bill['bill_no'],
+                    notes=f"Credit note {cn_no} against {bill['bill_no']}"
+                )
+
+            computed_items.append({
+                'bill_item_id': b_item_id,
+                'product_id': orig_item['product_id'],
+                'product_name': orig_item['product_name'],
+                'hsn_code': orig_item.get('hsn_code', ''),
+                'unit': orig_item.get('unit', 'kg'),
+                'quantity': ret_qty,
+                'unit_price': unit_price,
+                'gst_rate': gst_rate,
+                'taxable_amt': taxable_amt,
+                'cgst_amt': cgst_amt,
+                'sgst_amt': sgst_amt,
+                'igst_amt': igst_amt,
+                'amount': item_amount
+            })
+
+        subtotal = round(subtotal, 2)
+        cgst_total = round(cgst_total, 2)
+        sgst_total = round(sgst_total, 2)
+        igst_total = round(igst_total, 2)
+        total = round(total, 2)
+
+        c = conn.execute('''
+            INSERT INTO credit_notes
+            (cn_no, bill_id, customer_id, customer_name, reason, subtotal, cgst, sgst, igst, total, status, created_by)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        ''', (
+            cn_no, bid, bill['customer_id'], bill['customer_name'], reason,
+            subtotal, cgst_total, sgst_total, igst_total, total, 'issued', session.get('username')
+        ))
+        cn_id = c.lastrowid
+
+        for item_data in computed_items:
+            conn.execute('''
+                INSERT INTO credit_note_items
+                (credit_note_id, bill_item_id, product_id, product_name, hsn_code, unit, quantity,
+                 unit_price, gst_rate, taxable_amt, cgst_amt, sgst_amt, igst_amt, amount)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ''', (
+                cn_id, item_data['bill_item_id'], item_data['product_id'], item_data['product_name'],
+                item_data['hsn_code'], item_data['unit'], item_data['quantity'],
+                item_data['unit_price'], item_data['gst_rate'], item_data['taxable_amt'],
+                item_data['cgst_amt'], item_data['sgst_amt'], item_data['igst_amt'], item_data['amount']
+            ))
+
+        # ── Double-Entry Ledger Posting for Credit Note ─────────────────────────
+        orig_pmode = (bill['payment_mode'] or 'cash').strip().lower()
+        if orig_pmode == 'cash':
+            credit_account = 'Cash'
+        elif orig_pmode in ('upi', 'card', 'bank_transfer'):
+            credit_account = 'Bank'
+        else:
+            credit_account = 'Sundry Debtors'
+
+        cn_entries = [
+            {'account_name': 'Sales Account', 'debit': round(subtotal, 2), 'credit': 0, 'narration': f"Sales return for CN {cn_no}"}
+        ]
+        if is_interstate:
+            if igst_total > 0:
+                cn_entries.append({'account_name': 'IGST Payable', 'debit': round(igst_total, 2), 'credit': 0, 'narration': f"IGST reversal for CN {cn_no}"})
+        else:
+            if cgst_total > 0:
+                cn_entries.append({'account_name': 'CGST Payable', 'debit': round(cgst_total, 2), 'credit': 0, 'narration': f"CGST reversal for CN {cn_no}"})
+            if sgst_total > 0:
+                cn_entries.append({'account_name': 'SGST Payable', 'debit': round(sgst_total, 2), 'credit': 0, 'narration': f"SGST reversal for CN {cn_no}"})
+
+        cn_entries.append({'account_name': credit_account, 'debit': 0, 'credit': round(total, 2), 'narration': f"Credit Note refund/reversal for CN {cn_no}"})
+
+        tot_dr = sum(e['debit'] for e in cn_entries)
+        tot_cr = sum(e['credit'] for e in cn_entries)
+        diff = round(tot_dr - tot_cr, 2)
+        if diff != 0:
+            if diff > 0:
+                cn_entries.append({'account_name': 'Round Off', 'debit': 0, 'credit': diff, 'narration': 'Rounding difference'})
+            else:
+                cn_entries.append({'account_name': 'Round Off', 'debit': abs(diff), 'credit': 0, 'narration': 'Rounding difference'})
+
         post_ledger_entry(
             conn,
             voucher_type='credit_note',
@@ -3777,25 +3831,32 @@ def create_credit_note(bid):
             reference_id=cn_id,
             created_by=session.get('username')
         )
+
+        conn.commit()
+
+        cn_row = conn.execute('''
+            SELECT cn.*, b.bill_no
+            FROM credit_notes cn
+            LEFT JOIN bills b ON cn.bill_id = b.id
+            WHERE cn.id=?
+        ''', (cn_id,)).fetchone()
+        cn_items = conn.execute('SELECT * FROM credit_note_items WHERE credit_note_id=?', (cn_id,)).fetchall()
+
+        res = dict_row(cn_row)
+        res['items'] = dict_rows(cn_items)
+        return ok(res, f"Credit note {cn_no} created"), 201
+    except InsufficientStockError as e:
+        conn.rollback()
+        return err(str(e), 409)
     except Exception as e:
         conn.rollback()
-        conn.close()
-        return err(f"Ledger posting failed for Credit Note {cn_no}: {str(e)}", 500)
-
-    conn.commit()
-
-    cn_row = conn.execute('''
-        SELECT cn.*, b.bill_no
-        FROM credit_notes cn
-        LEFT JOIN bills b ON cn.bill_id = b.id
-        WHERE cn.id=?
-    ''', (cn_id,)).fetchone()
-    cn_items = conn.execute('SELECT * FROM credit_note_items WHERE credit_note_id=?', (cn_id,)).fetchall()
-    conn.close()
-
-    res = dict_row(cn_row)
-    res['items'] = dict_rows(cn_items)
-    return ok(res, f"Credit note {cn_no} created"), 201
+        print(f"[Credit Note Error] {str(e)}")
+        return err(f"Credit note creation failed: {str(e)}", 500)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 @app.route('/api/credit-notes', methods=['GET'])
@@ -3990,64 +4051,64 @@ def create_purchase_order():
     items = d.get('items', [])
     if not isinstance(items, list) or not items: return err("PO must have at least one item")
     conn = get_db()
-    po_no    = next_po_no(conn)
-    supplier = conn.execute('SELECT name FROM suppliers WHERE id=?', (d.get('supplier_id'),)).fetchone()
-    subtotal = sum(float(it['quantity']) * float(it['unit_price']) for it in items)
-    total    = round(subtotal, 2)
-    amount_paid = float(d.get('amount_paid', total))
-    amount_due  = max(round(total - amount_paid, 2), 0.0)
-
-    c = conn.execute(
-        '''INSERT INTO purchase_orders
-           (po_no, supplier_id, supplier_name, subtotal, total, amount_paid, amount_due, status, notes)
-           VALUES (?,?,?,?,?,?,?,?,?)''',
-        (po_no, d.get('supplier_id'), supplier['name'] if supplier else '',
-         round(subtotal, 2), total, amount_paid, amount_due,
-         d.get('status', 'received'), d.get('notes', ''))
-    )
-    oid = c.lastrowid
-
-    if amount_paid > 0:
-        conn.execute(
-            '''INSERT INTO po_payments (order_id, amount, payment_mode, recorded_by, notes)
-               VALUES (?,?,?,?,?)''',
-            (oid, amount_paid, d.get('payment_mode', 'bank_transfer'), session.get('username'), 'Initial payment at PO creation')
-        )
-
-    for it in items:
-        qty = float(it['quantity']); price = float(it['unit_price']); amount = round(qty * price, 2)
-        conn.execute(
-            '''INSERT INTO purchase_order_items
-               (order_id, product_id, product_name, quantity, unit_price, amount, expiry_date)
-               VALUES (?,?,?,?,?,?,?)''',
-            (oid, it.get('product_id'), it['product_name'], qty, price, amount, it.get('expiry_date'))
-        )
-        if it.get('product_id') and d.get('status', 'received') == 'received':
-            update_stock(conn, it['product_id'], qty, 'in', price,
-                         po_no, d.get('supplier_id'), it.get('expiry_date'), f"PO {po_no}")
-
-    # ── Double-Entry Ledger Posting for Purchase Order ───────────────────────
-    po_pmode = (d.get('payment_mode') or 'bank_transfer').strip().lower()
-    pay_account = 'Cash' if po_pmode == 'cash' else 'Bank'
-
-    po_entries = [
-        {'account_name': 'Purchase Account', 'debit': round(total, 2), 'credit': 0, 'narration': f"Purchase Order {po_no}"}
-    ]
-    if amount_paid > 0:
-        po_entries.append({'account_name': pay_account, 'debit': 0, 'credit': round(amount_paid, 2), 'narration': f"PO payment paid ({po_pmode})"})
-    if amount_due > 0:
-        po_entries.append({'account_name': 'Sundry Creditors', 'debit': 0, 'credit': round(amount_due, 2), 'narration': f"PO amount payable to {supplier['name'] if supplier else 'Supplier'}"})
-
-    tot_dr = sum(e['debit'] for e in po_entries)
-    tot_cr = sum(e['credit'] for e in po_entries)
-    diff = round(tot_dr - tot_cr, 2)
-    if diff != 0:
-        if diff > 0:
-            po_entries.append({'account_name': 'Round Off', 'debit': 0, 'credit': diff, 'narration': 'Rounding difference'})
-        else:
-            po_entries.append({'account_name': 'Round Off', 'debit': abs(diff), 'credit': 0, 'narration': 'Rounding difference'})
-
     try:
+        po_no    = next_po_no(conn)
+        supplier = conn.execute('SELECT name FROM suppliers WHERE id=?', (d.get('supplier_id'),)).fetchone()
+        subtotal = sum(float(it['quantity']) * float(it['unit_price']) for it in items)
+        total    = round(subtotal, 2)
+        amount_paid = float(d.get('amount_paid', total))
+        amount_due  = max(round(total - amount_paid, 2), 0.0)
+
+        c = conn.execute(
+            '''INSERT INTO purchase_orders
+               (po_no, supplier_id, supplier_name, subtotal, total, amount_paid, amount_due, status, notes)
+               VALUES (?,?,?,?,?,?,?,?,?)''',
+            (po_no, d.get('supplier_id'), supplier['name'] if supplier else '',
+             round(subtotal, 2), total, amount_paid, amount_due,
+             d.get('status', 'received'), d.get('notes', ''))
+        )
+        oid = c.lastrowid
+
+        if amount_paid > 0:
+            conn.execute(
+                '''INSERT INTO po_payments (order_id, amount, payment_mode, recorded_by, notes)
+                   VALUES (?,?,?,?,?)''',
+                (oid, amount_paid, d.get('payment_mode', 'bank_transfer'), session.get('username'), 'Initial payment at PO creation')
+            )
+
+        for it in items:
+            qty = float(it['quantity']); price = float(it['unit_price']); amount = round(qty * price, 2)
+            conn.execute(
+                '''INSERT INTO purchase_order_items
+                   (order_id, product_id, product_name, quantity, unit_price, amount, expiry_date)
+                   VALUES (?,?,?,?,?,?,?)''',
+                (oid, it.get('product_id'), it['product_name'], qty, price, amount, it.get('expiry_date'))
+            )
+            if it.get('product_id') and d.get('status', 'received') == 'received':
+                update_stock(conn, it['product_id'], qty, 'in', price,
+                             po_no, d.get('supplier_id'), it.get('expiry_date'), f"PO {po_no}")
+
+        # ── Double-Entry Ledger Posting for Purchase Order ───────────────────────
+        po_pmode = (d.get('payment_mode') or 'bank_transfer').strip().lower()
+        pay_account = 'Cash' if po_pmode == 'cash' else 'Bank'
+
+        po_entries = [
+            {'account_name': 'Purchase Account', 'debit': round(total, 2), 'credit': 0, 'narration': f"Purchase Order {po_no}"}
+        ]
+        if amount_paid > 0:
+            po_entries.append({'account_name': pay_account, 'debit': 0, 'credit': round(amount_paid, 2), 'narration': f"PO payment paid ({po_pmode})"})
+        if amount_due > 0:
+            po_entries.append({'account_name': 'Sundry Creditors', 'debit': 0, 'credit': round(amount_due, 2), 'narration': f"PO amount payable to {supplier['name'] if supplier else 'Supplier'}"})
+
+        tot_dr = sum(e['debit'] for e in po_entries)
+        tot_cr = sum(e['credit'] for e in po_entries)
+        diff = round(tot_dr - tot_cr, 2)
+        if diff != 0:
+            if diff > 0:
+                po_entries.append({'account_name': 'Round Off', 'debit': 0, 'credit': diff, 'narration': 'Rounding difference'})
+            else:
+                po_entries.append({'account_name': 'Round Off', 'debit': abs(diff), 'credit': 0, 'narration': 'Rounding difference'})
+
         post_ledger_entry(
             conn,
             voucher_type='purchase',
@@ -4058,18 +4119,26 @@ def create_purchase_order():
             reference_id=oid,
             created_by=session.get('username')
         )
+
+        conn.commit()
+        po       = conn.execute('SELECT * FROM purchase_orders WHERE id=?', (oid,)).fetchone()
+        po_items = conn.execute('SELECT * FROM purchase_order_items WHERE order_id=?', (oid,)).fetchall()
+        payments = conn.execute('SELECT * FROM po_payments WHERE order_id=? ORDER BY paid_at ASC', (oid,)).fetchall()
+        result = dict_row(po); result['items'] = dict_rows(po_items); result['payments'] = dict_rows(payments)
+        log_activity('CREATE_PO', f"PO {po_no} created — ₹{total} for {supplier['name'] if supplier else 'Supplier'}", 'purchase_orders', oid)
+        return ok(result, f"Purchase order {po_no} created"), 201
+    except InsufficientStockError as e:
+        conn.rollback()
+        return err(str(e), 409)
     except Exception as e:
         conn.rollback()
-        conn.close()
-        return err(f"Ledger posting failed for PO {po_no}: {str(e)}", 500)
-
-    conn.commit()
-    po       = conn.execute('SELECT * FROM purchase_orders WHERE id=?', (oid,)).fetchone()
-    po_items = conn.execute('SELECT * FROM purchase_order_items WHERE order_id=?', (oid,)).fetchall()
-    payments = conn.execute('SELECT * FROM po_payments WHERE order_id=? ORDER BY paid_at ASC', (oid,)).fetchall()
-    conn.close()
-    result = dict_row(po); result['items'] = dict_rows(po_items); result['payments'] = dict_rows(payments)
-    return ok(result, f"Purchase order {po_no} created"), 201
+        print(f"[Create PO Error] {str(e)}")
+        return err(f"Purchase order creation failed: {str(e)}", 500)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 @app.route('/api/purchase-orders/<int:oid>/payments', methods=['POST'])
 @require_permission('purchase.manage')
