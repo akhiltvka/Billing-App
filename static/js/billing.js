@@ -79,10 +79,10 @@ const Billing = {
 
           <!-- Right: Bill Summary -->
           <div class="pos-right">
-            <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+            <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
               <div>
-                <div style="font-family:'Inter',sans-serif;font-size:15px;font-weight:700">📄 Bill Summary</div>
-                <div style="font-size:12px;color:var(--text-muted)">Upcoming: <span id="pos-bill-no" class="font-bold text-gold">Loading…</span></div>
+                <div style="font-family:'Inter',sans-serif;font-size:14px;font-weight:700">📋 Bill Summary <kbd style="font-family:sans-serif;background:rgba(0,0,0,0.12);padding:1px 4px;border-radius:3px;font-size:10px;margin-left:4px">Ctrl+1</kbd></div>
+                <div style="font-size:11px;color:var(--text-muted)">Upcoming: <span id="pos-bill-no" class="font-bold text-gold">Loading…</span></div>
               </div>
               ${Auth.can('billing.hold') ? `
               <button class="btn btn-secondary btn-sm" onclick="Billing.showHeldBillsModal()" title="Held Bills (F6)">
@@ -90,8 +90,8 @@ const Billing = {
               </button>` : ''}
             </div>
 
-            <div class="customer-panel" style="padding:12px 16px">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <div class="customer-panel" style="padding:6px 16px">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
                 <span class="form-label">Discount % ${!Auth.can('billing.give_discount') ? '<span class="text-muted" style="font-size:10px">(Staff Cap: 10%)</span>' : ''}</span>
                 <span id="discount-display" class="text-gold font-bold">0%</span>
               </div>
@@ -106,7 +106,7 @@ const Billing = {
             </div>
 
             <!-- Totals -->
-            <div class="bill-summary-panel" style="flex:1;overflow-y:auto">
+            <div class="bill-summary-panel" style="flex:1;overflow-y:auto;padding-bottom:4px">
               <div class="bill-row">
                 <span>Subtotal</span>
                 <span class="amount" id="sum-subtotal">₹0.00</span>
@@ -124,14 +124,14 @@ const Billing = {
                 <span>SGST</span>
                 <span id="sum-sgst">₹0.00</span>
               </div>` : ''}
-              <!-- Grand Total Display with Extra Large Font -->
-              <div class="bill-row total" style="padding:14px 16px;background:rgba(217,119,6,0.15);border:1px solid rgba(217,119,6,0.3);border-radius:var(--r-md);margin-top:12px;display:flex;justify-content:space-between;align-items:center">
-                <span style="font-size:16px;font-weight:700;color:var(--text-primary)">Grand Total</span>
-                <span class="amount" id="sum-total" style="font-size:32px;font-weight:900;color:var(--gold);letter-spacing:0.5px">₹0.00</span>
+              <!-- Grand Total Display -->
+              <div class="bill-row total" style="padding:10px 12px;background:rgba(217,119,6,0.15);border:1px solid rgba(217,119,6,0.3);border-radius:var(--r-md);margin-top:8px;display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:14px;font-weight:700;color:var(--text-primary)">Grand Total</span>
+                <span class="amount" id="sum-total" style="font-size:24px;font-weight:900;color:var(--gold);letter-spacing:0.5px">₹0.00</span>
               </div>
 
               <!-- Payment Mode -->
-              <div style="margin-top:16px">
+              <div style="margin-top:8px">
                 <div class="form-label mb-8">Payment Mode</div>
                 <div class="payment-modes">
                   <div class="payment-mode-btn active" data-mode="cash" onclick="Billing.setPayment('cash')">
@@ -147,7 +147,7 @@ const Billing = {
               </div>
 
               <!-- Amount Received & Change / Balance Calculation -->
-              <div class="form-group" style="margin-top:12px">
+              <div class="form-group" style="margin-top:6px">
                 <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
                   <span>Amount Received (₹)</span>
                   <span style="font-size:11px;color:var(--text-muted)">Cash paid by customer</span>
@@ -167,10 +167,10 @@ const Billing = {
                 </div>
               </div>
 
-              <!-- Balance / Return Change Output -->
-              <div class="bill-row" style="font-size:15px;font-weight:700;padding:10px 12px;background:var(--bg-input);border-radius:var(--r-sm);margin-top:8px;display:flex;justify-content:space-between;align-items:center">
-                <span id="change-label">Return Change</span>
-                <span class="amount" id="sum-change" style="font-size:22px;font-weight:800;color:var(--text-muted)">₹0.00</span>
+              <!-- Balance / Balance Given Output -->
+              <div class="bill-row" style="font-size:14px;font-weight:700;padding:8px 12px;background:var(--bg-input);border-radius:var(--r-sm);margin-top:4px;display:flex;justify-content:space-between;align-items:center">
+                <span id="change-label">Balance Given</span>
+                <span class="amount" id="sum-change" style="font-size:20px;font-weight:800;color:var(--text-muted)">₹0.00</span>
               </div>
 
               <!-- Notes -->
@@ -181,7 +181,7 @@ const Billing = {
             </div>
 
             <!-- Action Buttons -->
-            <div style="padding:16px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:10px">
+            <div style="padding:10px 16px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:6px">
               <button class="btn btn-gold btn-xl w-full" id="btn-save-bill" onclick="Billing.saveBill()">
                 💾 Save & Print Bill
               </button>
@@ -233,9 +233,113 @@ const Billing = {
         onRecallBill:     () => Billing.loadHeldBills(),
         onSaveAndPrint:   () => Billing.saveBill(true),
         onSaveOnly:       () => Billing.saveBill(false),
+        onBillSummary:    () => Billing.showBillSummaryPopup(),
         onEscape:         () => App.closeModal(),
       });
     }
+  },
+
+  // ─── Bill Summary Floating Popup (Ctrl+1) ──────────────────────────────────
+  showBillSummaryPopup() {
+    // Gather current bill data
+    const billNo    = document.getElementById('pos-bill-no')?.textContent || '—';
+    const subtotal  = document.getElementById('sum-subtotal')?.textContent || '₹0.00';
+    const discount  = document.getElementById('sum-discount')?.textContent || '— ₹0.00';
+    const total     = document.getElementById('sum-total')?.textContent || '₹0.00';
+    const change    = document.getElementById('sum-change')?.textContent || '₹0.00';
+    const changeLabel = document.getElementById('change-label')?.textContent || 'Balance Given';
+    const paid      = document.getElementById('amount-paid')?.value || '0.00';
+    const payMode   = this.paymentMode || 'cash';
+    const custBadge = document.getElementById('customer-badge')?.textContent || 'Walk-in Customer';
+    const notes     = document.getElementById('bill-notes')?.value || '';
+    const cgstEl    = document.getElementById('sum-cgst');
+    const sgstEl    = document.getElementById('sum-sgst');
+
+    const cartRows = (this.cart || []).map(i => `
+      <tr>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${App.escapeHtml(i.product_name)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:center">${i.quantity} ${i.unit || ''}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">${App.fmt(i.unit_price)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;font-weight:700">${App.fmt(i.quantity * i.unit_price)}</td>
+      </tr>`).join('');
+
+    const gstRows = (cgstEl && sgstEl) ? `
+      <tr><td style="padding:4px 8px;color:var(--text-muted);font-size:12px">CGST</td><td colspan="3" style="padding:4px 8px;text-align:right;color:var(--text-muted);font-size:12px">${cgstEl.textContent}</td></tr>
+      <tr><td style="padding:4px 8px;color:var(--text-muted);font-size:12px">SGST</td><td colspan="3" style="padding:4px 8px;text-align:right;color:var(--text-muted);font-size:12px">${sgstEl.textContent}</td></tr>` : '';
+
+    App.showModal(`
+      <div class="modal" style="max-width:520px;width:95vw">
+        <div class="modal-header" style="background:linear-gradient(135deg,var(--crimson),#c2410c);color:#fff;border-radius:var(--r-lg) var(--r-lg) 0 0">
+          <div class="modal-title" style="color:#fff">📋 Bill Summary — <span style="color:#fde68a">#${App.escapeHtml(billNo)}</span></div>
+          <button class="modal-close" onclick="App.closeModal()" style="color:#fff">✕</button>
+        </div>
+        <div style="padding:16px 20px;display:flex;flex-direction:column;gap:12px">
+
+          <!-- Customer & Payment row -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div style="background:var(--bg-input);border-radius:var(--r-sm);padding:10px 12px">
+              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Customer</div>
+              <div style="font-weight:700;font-size:13px">${App.escapeHtml(custBadge.replace(/^👤\s*/,''))}</div>
+            </div>
+            <div style="background:var(--bg-input);border-radius:var(--r-sm);padding:10px 12px">
+              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Payment Mode</div>
+              <div style="font-weight:700;font-size:13px;text-transform:capitalize">${payMode === 'cash' ? '💵' : payMode === 'upi' ? '📱' : '💳'} ${payMode.toUpperCase()}</div>
+            </div>
+          </div>
+
+          <!-- Items table -->
+          <div style="border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;max-height:250px;overflow-y:auto">
+            <table style="width:100%;border-collapse:collapse">
+              <thead>
+                <tr style="background:var(--bg-input)">
+                  <th style="padding:8px;text-align:left;font-size:12px;font-weight:600">Product</th>
+                  <th style="padding:8px;text-align:center;font-size:12px;font-weight:600">Qty</th>
+                  <th style="padding:8px;text-align:right;font-size:12px;font-weight:600">Rate</th>
+                  <th style="padding:8px;text-align:right;font-size:12px;font-weight:600">Amount</th>
+                </tr>
+              </thead>
+              <tbody>${cartRows || '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text-muted)">No items in cart</td></tr>'}</tbody>
+            </table>
+          </div>
+
+          <!-- Totals -->
+          <div style="border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden">
+            <table style="width:100%;border-collapse:collapse">
+              <tbody>
+                <tr>
+                  <td style="padding:6px 8px;color:var(--text-muted)">Subtotal</td>
+                  <td style="padding:6px 8px;text-align:right;font-weight:600">${subtotal}</td>
+                </tr>
+                <tr>
+                  <td style="padding:6px 8px;color:var(--text-muted)">Discount</td>
+                  <td style="padding:6px 8px;text-align:right;color:#EF4444;font-weight:600">${discount}</td>
+                </tr>
+                ${gstRows}
+                <tr style="background:rgba(217,119,6,0.1)">
+                  <td style="padding:10px 8px;font-size:16px;font-weight:800">Grand Total</td>
+                  <td style="padding:10px 8px;text-align:right;font-size:24px;font-weight:900;color:var(--gold)">${total}</td>
+                </tr>
+                <tr style="border-top:1px dashed var(--border)">
+                  <td style="padding:6px 8px;color:var(--text-muted)">Amount Paid</td>
+                  <td style="padding:6px 8px;text-align:right;font-weight:700">₹${parseFloat(paid||0).toFixed(2)}</td>
+                </tr>
+                <tr>
+                  <td style="padding:6px 8px;font-weight:700">${App.escapeHtml(changeLabel)}</td>
+                  <td style="padding:6px 8px;text-align:right;font-size:18px;font-weight:900;color:#10B981">${change}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          ${notes ? `<div style="background:var(--bg-input);border-radius:var(--r-sm);padding:8px 12px;font-size:13px"><strong>Note:</strong> ${App.escapeHtml(notes)}</div>` : ''}
+
+          <!-- Action buttons -->
+          <div style="display:flex;gap:10px;justify-content:flex-end">
+            <button class="btn btn-secondary" onclick="App.closeModal()">Close</button>
+            <button class="btn btn-gold" onclick="App.closeModal();Billing.saveBill(true)">💾 Save &amp; Print</button>
+          </div>
+        </div>
+      </div>`);
   },
 
   // ─── Quick Add First-Time Customer ─────────────────────────────────────────
@@ -1019,7 +1123,7 @@ const Billing = {
     if (!elChange) return;
 
     if (paidVal === '' || paid === 0) {
-      if (labelEl) labelEl.textContent = 'Return Change';
+      if (labelEl) labelEl.textContent = 'Balance Given';
       elChange.textContent = '₹0.00';
       elChange.style.color = 'var(--text-muted)';
       return;
@@ -1027,7 +1131,7 @@ const Billing = {
 
     const diff = paid - total;
     if (diff >= 0) {
-      if (labelEl) labelEl.textContent = 'Return Change';
+      if (labelEl) labelEl.textContent = 'Balance Given';
       elChange.textContent = App.fmt(diff);
       elChange.style.color = '#10B981'; // Emerald Green
     } else {
