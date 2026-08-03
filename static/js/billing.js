@@ -122,9 +122,10 @@ const Billing = {
                 <span>SGST</span>
                 <span id="sum-sgst">₹0.00</span>
               </div>` : ''}
-              <div class="bill-row total">
-                <span>Grand Total</span>
-                <span class="amount" id="sum-total">₹0.00</span>
+              <!-- Grand Total Display with Extra Large Font -->
+              <div class="bill-row total" style="padding:14px 16px;background:rgba(217,119,6,0.15);border:1px solid rgba(217,119,6,0.3);border-radius:var(--r-md);margin-top:12px;display:flex;justify-content:space-between;align-items:center">
+                <span style="font-size:16px;font-weight:700;color:var(--text-primary)">Grand Total</span>
+                <span class="amount" id="sum-total" style="font-size:32px;font-weight:900;color:var(--gold);letter-spacing:0.5px">₹0.00</span>
               </div>
 
               <!-- Payment Mode -->
@@ -143,18 +144,31 @@ const Billing = {
                 </div>
               </div>
 
-              <!-- Amount Received -->
-              <div class="form-group" style="margin-top:8px">
-                <label class="form-label">Amount Received (₹)</label>
+              <!-- Amount Received & Change / Balance Calculation -->
+              <div class="form-group" style="margin-top:12px">
+                <label class="form-label" style="display:flex;justify-content:space-between;align-items:center">
+                  <span>Amount Received (₹)</span>
+                  <span style="font-size:11px;color:var(--text-muted)">Cash paid by customer</span>
+                </label>
                 <div class="input-group">
-                  <div class="input-group-prefix">₹</div>
-                  <input class="form-control" id="amount-paid" type="number" step="0.50" placeholder="0.00"
-                    oninput="Billing.calcChange()">
+                  <div class="input-group-prefix" style="font-weight:700">₹</div>
+                  <input class="form-control" id="amount-paid" type="number" step="1" placeholder="0.00" style="font-size:18px;font-weight:700"
+                    oninput="Billing.calcChange()" onfocus="this.select()">
+                </div>
+                <!-- Quick Cash Note Presets -->
+                <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap">
+                  <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash('exact')">Exact</button>
+                  <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash(100)">₹100</button>
+                  <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash(200)">₹200</button>
+                  <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash(500)">₹500</button>
+                  <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;flex:1" onclick="Billing.setQuickCash(2000)">₹2000</button>
                 </div>
               </div>
-              <div class="bill-row" style="font-size:15px;font-weight:700">
-                <span>Change</span>
-                <span class="amount text-success" id="sum-change">₹0.00</span>
+
+              <!-- Balance / Return Change Output -->
+              <div class="bill-row" style="font-size:15px;font-weight:700;padding:10px 12px;background:var(--bg-input);border-radius:var(--r-sm);margin-top:8px;display:flex;justify-content:space-between;align-items:center">
+                <span id="change-label">Return Change</span>
+                <span class="amount" id="sum-change" style="font-size:22px;font-weight:800;color:var(--text-muted)">₹0.00</span>
               </div>
 
               <!-- Notes -->
@@ -709,13 +723,48 @@ const Billing = {
     this.calcChange();
   },
 
+  setQuickCash(val) {
+    const totalEl = document.getElementById('sum-total');
+    const total = parseFloat(totalEl?.textContent?.replace(/[^\d.]/g, '') || 0);
+    const paidInput = document.getElementById('amount-paid');
+    if (!paidInput) return;
+
+    if (val === 'exact') {
+      paidInput.value = total > 0 ? total.toFixed(2) : '';
+    } else {
+      paidInput.value = parseFloat(val).toFixed(2);
+    }
+    this.calcChange();
+  },
+
   calcChange() {
     const totalEl = document.getElementById('sum-total');
-    const total = parseFloat(totalEl?.textContent?.replace(/[₹,]/g, '') || 0);
-    const paid = parseFloat(document.getElementById('amount-paid')?.value || 0);
-    const change = Math.max(paid - total, 0);
+    const total = parseFloat(totalEl?.textContent?.replace(/[^\d.]/g, '') || 0);
+    const paidInput = document.getElementById('amount-paid');
+    const paidVal = paidInput ? paidInput.value.trim() : '';
+    const paid = parseFloat(paidVal) || 0;
+
+    const labelEl = document.getElementById('change-label');
     const elChange = document.getElementById('sum-change');
-    if (elChange) elChange.textContent = App.fmt(change);
+    if (!elChange) return;
+
+    if (paidVal === '' || paid === 0) {
+      if (labelEl) labelEl.textContent = 'Return Change';
+      elChange.textContent = '₹0.00';
+      elChange.style.color = 'var(--text-muted)';
+      return;
+    }
+
+    const diff = paid - total;
+    if (diff >= 0) {
+      if (labelEl) labelEl.textContent = 'Return Change';
+      elChange.textContent = App.fmt(diff);
+      elChange.style.color = '#10B981'; // Emerald Green
+    } else {
+      if (labelEl) labelEl.textContent = 'Balance Due';
+      elChange.textContent = App.fmt(Math.abs(diff));
+      elChange.style.color = '#EF4444'; // Warning Red
+    }
   },
 
   // ─── Save & Print Bill ───────────────────────────────────────────────────
