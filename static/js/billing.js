@@ -72,7 +72,7 @@ const Billing = {
               <div class="empty-state" id="cart-empty">
                 <div class="empty-state-icon">🛒</div>
                 <h3>Cart is empty</h3>
-                <p>Search and add products above</p>
+                <p>Search and add products above or <a href="#" onclick="event.preventDefault(); Billing.showHeldBillsModal()" style="color:var(--gold);text-decoration:underline;font-weight:600">Recall Held Bill (F6)</a></p>
               </div>
             </div>
           </div>
@@ -155,6 +155,7 @@ const Billing = {
                 <div class="input-group">
                   <div class="input-group-prefix" style="font-weight:700">₹</div>
                   <input class="form-control" id="amount-paid" type="number" step="1" placeholder="0.00" style="font-size:18px;font-weight:700"
+                    value="${this.amountPaid || ''}"
                     oninput="Billing.calcChange()" onfocus="this.select()">
                 </div>
                 <!-- Quick Cash Note Presets -->
@@ -176,7 +177,7 @@ const Billing = {
               <!-- Notes -->
               <div class="form-group mt-8">
                 <label class="form-label">Notes</label>
-                <input class="form-control" id="bill-notes" placeholder="Optional bill note">
+                <input class="form-control" id="bill-notes" placeholder="Optional bill note" value="${App.escapeHtml(this.notes || '')}" oninput="Billing.notes = this.value">
               </div>
             </div>
 
@@ -221,6 +222,19 @@ const Billing = {
       const badgeEl = document.getElementById('held-bills-badge');
       if (badgeEl) badgeEl.textContent = `(${heldList.length})`;
     } catch(e) { App.toast('Could not load POS data', 'error'); }
+
+    // Restore active cart and selections
+    this.renderCart();
+    if (this.customer) {
+      this.selectCustomer(this.customer);
+    }
+    if (this.paymentMode) {
+      this.setPayment(this.paymentMode);
+    }
+    if (this.discountPct) {
+      this.setDiscount(this.discountPct);
+    }
+    this.calcChange();
 
     // Initialize keyboard shortcuts for POS
     if (typeof BillingShortcuts !== 'undefined') {
@@ -814,6 +828,8 @@ const Billing = {
         this.cart = [];
         this.customer = null;
         this.discountPct = 0;
+        this.amountPaid = '';
+        this.notes = '';
         this._selectedCartIndex = undefined;
         this.render();
         App.toast('New bill started', 'info');
@@ -823,6 +839,8 @@ const Billing = {
     this.cart = [];
     this.customer = null;
     this.discountPct = 0;
+    this.amountPaid = '';
+    this.notes = '';
     this._selectedCartIndex = undefined;
     this.render();
     App.toast('New bill started', 'info');
@@ -1117,6 +1135,7 @@ const Billing = {
     const paidInput = document.getElementById('amount-paid');
     const paidVal = paidInput ? paidInput.value.trim() : '';
     const paid = parseFloat(paidVal) || 0;
+    this.amountPaid = paidVal; // Save paid amount to session state
 
     const labelEl = document.getElementById('change-label');
     const elChange = document.getElementById('sum-change');
@@ -1182,6 +1201,8 @@ const Billing = {
       this.cart = [];
       this.customer = null;
       this.discountPct = 0;
+      this.amountPaid = '';
+      this.notes = '';
 
       if (print) {
         window.open(`/invoice/${bill.id}`, '_blank');
