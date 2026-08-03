@@ -175,6 +175,16 @@ const App = {
     return this.settings.gst_enabled !== 'false' && this.settings.gst_enabled !== false;
   },
 
+  escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  },
+
   // ── Formatting ──────────────────────────────────────────────────────────
   fmt(amount, decimals = 2) {
     const sym = this.currency || '₹';
