@@ -394,18 +394,40 @@ const Auth = {
     }
   },
 
+  initLoginForm() {
+    try {
+      const savedUser = localStorage.getItem('mpi_last_username');
+      const userEl = document.getElementById('login-username');
+      const pwdEl  = document.getElementById('login-password');
+      if (userEl && savedUser) {
+        userEl.value = savedUser;
+      }
+      if (pwdEl) {
+        pwdEl.value = ''; // Password is NEVER prefilled or saved
+      }
+    } catch(_) {}
+  },
+
   // ── After successful login ─────────────────────────────────────────────────
   onLoginSuccess(user) {
     Auth.currentUser = user;
     Auth.applyRoleUI(user);
+
+    // Autosave Username (User ID) ONLY for next login convenience
+    if (user && user.username) {
+      try {
+        localStorage.setItem('mpi_last_username', user.username);
+      } catch(_) {}
+    }
 
     // Hide login overlay with animation
     const overlay = document.getElementById('login-overlay');
     overlay.classList.add('hidden');
     setTimeout(() => { overlay.style.display = 'none'; }, 400);
 
-    // Clear password field
-    document.getElementById('login-password').value = '';
+    // Clear password field — passwords are NEVER saved or retained!
+    const pwdInput = document.getElementById('login-password');
+    if (pwdInput) pwdInput.value = '';
 
     if (user.must_change_password) {
       Auth.showMandatoryChangePwdModal();

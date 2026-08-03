@@ -1046,6 +1046,7 @@ const App = {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  Auth.initLoginForm();
   App.init();
   LoginAnimations.start();
 
