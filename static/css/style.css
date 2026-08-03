@@ -974,7 +974,8 @@ textarea.form-control { resize: vertical; min-height: 80px; }
 }
 
 .search-result-item:last-child { border-bottom: none; }
-.search-result-item:hover { background: var(--bg-card-hover); }
+.search-result-item:hover,
+.search-result-item.active { background: var(--bg-card-hover); border-left: 3px solid var(--gold); }
 
 .search-result-item .item-name { font-weight: 600; font-size: 14px; }
 .search-result-item .item-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }

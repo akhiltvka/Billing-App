@@ -57,7 +57,10 @@ const Billing = {
                   <span class="search-icon">🔎</span>
                   <input id="product-search" type="text" placeholder="Type product name, 4-letter code, or scan barcode…"
                     oninput="Billing.searchProduct(this.value)"
+                    onfocus="Billing.searchProduct(this.value)"
+                    onclick="Billing.searchProduct(this.value)"
                     onkeydown="Billing.onSearchKey(event)"
+                    onblur="setTimeout(()=>Billing.hideProductDropdown(),250)"
                     autocomplete="off">
                 </div>
                 <div id="product-results" class="product-search-results"></div>
@@ -418,62 +421,164 @@ const Billing = {
   },
 
   // ─── Product Search ───────────────────────────────────────────────────────
-  async searchProduct(query) {
+  _selectedProductIndex: -1,
+  lastProductResults: [],
+
+  hideProductDropdown() {
     const resultsEl = document.getElementById('product-results');
-    if (!query || query.length < 1) { resultsEl.classList.remove('show'); return; }
-    try {
-      const products = await App.api(`/products?q=${encodeURIComponent(query)}&active=true`);
-      if (products.length === 0) {
-        resultsEl.innerHTML = '<div class="search-result-item"><span class="text-muted">No products found</span></div>';
-      } else {
-        resultsEl.innerHTML = products.slice(0, 10).map(p => `
-          <div class="search-result-item" onclick="Billing.addToCart(${JSON.stringify(JSON.stringify(p))})">
-            <div>
-              <div class="item-name">${p.name} <span class="badge badge-gold" style="font-family:monospace;font-size:11px;padding:1px 5px">[${p.code || ''}]</span></div>
-              <div class="item-meta">${p.category_name || ''} • ${p.unit} • HSN: ${p.hsn_code || 'N/A'}</div>
-            </div>
-            <div style="text-align:right">
-              <div class="item-price">${App.fmt(p.selling_price)}/${p.unit}</div>
-              <div class="item-stock">${App.stockBadge(p.current_stock, p.min_stock)}</div>
-            </div>
-          </div>`).join('');
-      }
-      resultsEl.classList.add('show');
-    } catch(e) { resultsEl.classList.remove('show'); }
+    if (resultsEl) resultsEl.classList.remove('show');
+    this._selectedProductIndex = -1;
   },
 
-  async onSearchKey(e) {
-    if (e.key === 'Escape') {
-      document.getElementById('product-results').classList.remove('show');
-      document.getElementById('product-search').value = '';
-      return;
+  selectProductById(id) {
+    const p = (this.lastProductResults || []).find(item => item.id == id) || (this.products || []).find(item => item.id == id);
+    if (p) {
+      this.addToCart(p);
     }
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const val = document.getElementById('product-search').value.trim();
-      if (!val) return;
+  },
+
+  _renderProductList(list, resultsEl) {
+    this.lastProductResults = list;
+    resultsEl.innerHTML = list.map((p, idx) => {
+      const isActive = idx === this._selectedProductIndex ? ' active' : '';
+      return `
+        <div class="search-result-item${isActive}" data-id="${p.id}" onmousedown="event.preventDefault(); Billing.selectProductById(${p.id})">
+          <div>
+            <div class="item-name">${App.escapeHtml(p.name)} <span class="badge badge-gold" style="font-family:monospace;font-size:11px;padding:1px 5px">[${App.escapeHtml(p.code || '')}]</span></div>
+            <div class="item-meta">${App.escapeHtml(p.category_name || '')} &bull; ${App.escapeHtml(p.unit || '')} &bull; HSN: ${App.escapeHtml(p.hsn_code || 'N/A')}</div>
+          </div>
+          <div style="text-align:right">
+            <div class="item-price">${App.fmt(p.selling_price)}/${App.escapeHtml(p.unit || '')}</div>
+            <div class="item-stock">${App.stockBadge(p.current_stock, p.min_stock)}</div>
+          </div>
+        </div>`;
+    }).join('');
+    resultsEl.classList.add('show');
+  },
+
+  async searchProduct(query = '') {
+    const resultsEl = document.getElementById('product-results');
+    if (!resultsEl) return;
+
+    const qStr = (query || '').trim().toLowerCase();
+    const rawQ = (query || '').trim();
+
+    // Fetch directly from API if cache not loaded
+    if (!this.products || this.products.length === 0) {
       try {
-        const bResult = await App.api(`/products/barcode/${encodeURIComponent(val)}`);
-        if (bResult) {
-          this.addToCart(bResult);
-          document.getElementById('product-search').value = '';
-          document.getElementById('product-results').classList.remove('show');
-          return;
+        const prods = await App.api('/products?active=true');
+        this.products = Array.isArray(prods) ? prods : [];
+      } catch(e) { this.products = []; }
+    }
+
+    let list = this.products || [];
+    if (qStr.length > 0) {
+      list = list.filter(p =>
+        (p.name && String(p.name).toLowerCase().includes(qStr)) ||
+        (p.code && String(p.code).toLowerCase().includes(qStr)) ||
+        (p.barcode && String(p.barcode).toLowerCase().includes(qStr)) ||
+        (p.category_name && String(p.category_name).toLowerCase().includes(qStr))
+      );
+    } else {
+      // Show top 20 saved products when focused / query is empty
+      list = list.slice(0, 20);
+    }
+
+    this._selectedProductIndex = -1;
+
+    if (list.length === 0) {
+      if (qStr.length > 0) {
+        resultsEl.innerHTML = '<div class="search-result-item"><span class="text-muted">No products found matching "' + App.escapeHtml(rawQ) + '"</span></div>';
+      } else {
+        resultsEl.innerHTML = '<div class="search-result-item"><span class="text-muted">No active products saved</span></div>';
+      }
+      resultsEl.classList.add('show');
+    } else {
+      this._renderProductList(list, resultsEl);
+    }
+
+    // Background server sync for accuracy
+    if (qStr.length > 0) {
+      try {
+        const fresh = await App.api(`/products?q=${encodeURIComponent(rawQ)}&active=true`);
+        if (fresh && Array.isArray(fresh) && resultsEl.classList.contains('show')) {
+          if (fresh.length > 0) {
+            this._renderProductList(fresh, resultsEl);
+          }
         }
-      } catch(err) {
-        const resultsEl = document.getElementById('product-results');
-        const firstItem = resultsEl.querySelector('.search-result-item');
-        if (firstItem) {
-          firstItem.click();
-        }
+      } catch(e) { /* ignore */ }
+    }
+  },
+
+  onSearchKey(e) {
+    const resultsEl = document.getElementById('product-results');
+    const items = resultsEl ? resultsEl.querySelectorAll('.search-result-item') : [];
+
+    if (e.key === 'ArrowDown') {
+      if (!resultsEl || !resultsEl.classList.contains('show')) {
+        this.searchProduct(document.getElementById('product-search')?.value || '');
+        return;
+      }
+      e.preventDefault();
+      if (items.length > 0) {
+        this._selectedProductIndex = Math.min(this._selectedProductIndex + 1, items.length - 1);
+        this._updateProductItemHighlight(items);
+      }
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (items.length > 0) {
+        this._selectedProductIndex = Math.max(this._selectedProductIndex - 1, 0);
+        this._updateProductItemHighlight(items);
+      }
+    } else if (e.key === 'Escape') {
+      this.hideProductDropdown();
+      const input = document.getElementById('product-search');
+      if (input) input.value = '';
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const val = document.getElementById('product-search')?.value.trim();
+
+      // Case A: Product highlighted with arrow keys
+      if (this._selectedProductIndex >= 0 && this.lastProductResults && this.lastProductResults[this._selectedProductIndex]) {
+        this.addToCart(this.lastProductResults[this._selectedProductIndex]);
+        return;
+      }
+
+      // Case B: Barcode lookup
+      if (val) {
+        App.api(`/products/barcode/${encodeURIComponent(val)}`).then(bResult => {
+          if (bResult) {
+            this.addToCart(bResult);
+          } else if (this.lastProductResults && this.lastProductResults.length > 0) {
+            this.addToCart(this.lastProductResults[0]);
+          }
+        }).catch(() => {
+          if (this.lastProductResults && this.lastProductResults.length > 0) {
+            this.addToCart(this.lastProductResults[0]);
+          }
+        });
+      } else if (this.lastProductResults && this.lastProductResults.length > 0) {
+        this.addToCart(this.lastProductResults[0]);
       }
     }
+  },
+
+  _updateProductItemHighlight(items) {
+    items.forEach((item, idx) => {
+      if (idx === this._selectedProductIndex) {
+        item.classList.add('active');
+        item.scrollIntoView({ block: 'nearest' });
+      } else {
+        item.classList.remove('active');
+      }
+    });
   },
 
   addToCart(productJson) {
     const p = typeof productJson === 'string' ? JSON.parse(productJson) : productJson;
-    document.getElementById('product-results').classList.remove('show');
-    document.getElementById('product-search').value = '';
+    this.hideProductDropdown();
+    const input = document.getElementById('product-search');
+    if (input) input.value = '';
 
     const price = (p.product_type === 'general' && p.mrp) ? p.mrp : p.selling_price;
 
