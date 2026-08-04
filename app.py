@@ -405,8 +405,22 @@ def get_setting(key, conn=None):
     if close: conn.close()
     return row['value'] if row else None
 
+
+def get_financial_year(for_date=None):
+    if for_date is None:
+        for_date = date.today()
+    month = for_date.month
+    year = for_date.year
+    if month >= 4:
+        fy_start_year = year
+    else:
+        fy_start_year = year - 1
+    fy_label = f"{str(fy_start_year)[-2:]}-{str(fy_start_year+1)[-2:]}"
+    return (fy_start_year, fy_label)
+
+
 # Intentionally atomic SQL read-and-increment to prevent duplicate bill numbers under concurrent requests
-def next_bill_no(conn):
+def next_bill_no(conn, for_date=None):
     is_tester = False
     try:
         from flask import has_request_context
@@ -424,36 +438,76 @@ def next_bill_no(conn):
         n = row[0] if row else 1
         return f"TEST-{n:05d}"
 
+    fy_reset = get_setting('fy_reset_numbering', conn) == '1'
     prefix = get_setting('bill_prefix', conn) or 'MPI'
-    row = conn.execute(
-        "INSERT INTO shop_settings (key, value) VALUES ('next_bill_no', '2') "
-        "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
-        "RETURNING CAST(value AS INTEGER) - 1 AS old_val"
-    ).fetchone()
-    n = row[0] if row else 1
-    return f"{prefix}-{n:05d}"
+
+    if fy_reset:
+        _, fy_label = get_financial_year(for_date)
+        key = f"next_bill_no_{fy_label}"
+        row = conn.execute(
+            "INSERT INTO shop_settings (key, value) VALUES (?, '2') "
+            "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
+            "RETURNING CAST(value AS INTEGER) - 1 AS old_val",
+            (key,)
+        ).fetchone()
+        n = row[0] if row else 1
+        return f"{prefix}/{fy_label}/{n:05d}"
+    else:
+        row = conn.execute(
+            "INSERT INTO shop_settings (key, value) VALUES ('next_bill_no', '2') "
+            "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
+            "RETURNING CAST(value AS INTEGER) - 1 AS old_val"
+        ).fetchone()
+        n = row[0] if row else 1
+        return f"{prefix}-{n:05d}"
 
 
 # Intentionally atomic SQL read-and-increment to prevent duplicate purchase order numbers under concurrent requests
-def next_po_no(conn):
-    row = conn.execute(
-        "INSERT INTO shop_settings (key, value) VALUES ('next_po_no', '2') "
-        "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
-        "RETURNING CAST(value AS INTEGER) - 1 AS old_val"
-    ).fetchone()
-    n = row[0] if row else 1
-    return f"PO-{n:05d}"
+def next_po_no(conn, for_date=None):
+    fy_reset = get_setting('fy_reset_numbering', conn) == '1'
+    if fy_reset:
+        _, fy_label = get_financial_year(for_date)
+        key = f"next_po_no_{fy_label}"
+        row = conn.execute(
+            "INSERT INTO shop_settings (key, value) VALUES (?, '2') "
+            "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
+            "RETURNING CAST(value AS INTEGER) - 1 AS old_val",
+            (key,)
+        ).fetchone()
+        n = row[0] if row else 1
+        return f"PO/{fy_label}/{n:05d}"
+    else:
+        row = conn.execute(
+            "INSERT INTO shop_settings (key, value) VALUES ('next_po_no', '2') "
+            "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
+            "RETURNING CAST(value AS INTEGER) - 1 AS old_val"
+        ).fetchone()
+        n = row[0] if row else 1
+        return f"PO-{n:05d}"
 
 
 # Intentionally atomic SQL read-and-increment to prevent duplicate credit note numbers under concurrent requests
-def next_cn_no(conn):
-    row = conn.execute(
-        "INSERT INTO shop_settings (key, value) VALUES ('next_cn_no', '2') "
-        "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
-        "RETURNING CAST(value AS INTEGER) - 1 AS old_val"
-    ).fetchone()
-    n = row[0] if row else 1
-    return f"CN-{n:05d}"
+def next_cn_no(conn, for_date=None):
+    fy_reset = get_setting('fy_reset_numbering', conn) == '1'
+    if fy_reset:
+        _, fy_label = get_financial_year(for_date)
+        key = f"next_cn_no_{fy_label}"
+        row = conn.execute(
+            "INSERT INTO shop_settings (key, value) VALUES (?, '2') "
+            "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
+            "RETURNING CAST(value AS INTEGER) - 1 AS old_val",
+            (key,)
+        ).fetchone()
+        n = row[0] if row else 1
+        return f"CN/{fy_label}/{n:05d}"
+    else:
+        row = conn.execute(
+            "INSERT INTO shop_settings (key, value) VALUES ('next_cn_no', '2') "
+            "ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 "
+            "RETURNING CAST(value AS INTEGER) - 1 AS old_val"
+        ).fetchone()
+        n = row[0] if row else 1
+        return f"CN-{n:05d}"
 
 
 # Intentionally atomic SQL read-and-increment to prevent duplicate conversion numbers under concurrent requests
@@ -1373,6 +1427,109 @@ def toggle_gst():
     conn.commit(); conn.close()
     log_activity('TOGGLE_GST', f"GST billing {'enabled' if enabled else 'disabled'}", 'shop_settings')
     return ok(message=f"GST {'enabled' if enabled else 'disabled'} successfully")
+
+
+@app.route('/api/settings/financial-year', methods=['GET'])
+@require_permission('settings.view')
+def get_financial_year_settings():
+    conn = get_db()
+    fy_reset = get_setting('fy_reset_numbering', conn) or '0'
+    prefix = get_setting('bill_prefix', conn) or 'MPI'
+    
+    # Get current financial year label
+    _, fy_label = get_financial_year()
+    
+    # Flat counters
+    flat_bill = int(get_setting('next_bill_no', conn) or 1)
+    flat_po = int(get_setting('next_po_no', conn) or 1)
+    flat_cn = int(get_setting('next_cn_no', conn) or 1)
+    
+    # FY counters
+    fy_bill_val = get_setting(f"next_bill_no_{fy_label}", conn)
+    fy_po_val = get_setting(f"next_po_no_{fy_label}", conn)
+    fy_cn_val = get_setting(f"next_cn_no_{fy_label}", conn)
+    
+    fy_bill = int(fy_bill_val) if fy_bill_val is not None else None
+    fy_po = int(fy_po_val) if fy_po_val is not None else None
+    fy_cn = int(fy_cn_val) if fy_cn_val is not None else None
+    
+    # Generate examples of next numbers based on current setting
+    if fy_reset == '1':
+        next_bill_no_preview = f"{prefix}/{fy_label}/{(fy_bill if fy_bill is not None else 1):05d}"
+        next_po_no_preview = f"PO/{fy_label}/{(fy_po if fy_po is not None else 1):05d}"
+        next_cn_no_preview = f"CN/{fy_label}/{(fy_cn if fy_cn is not None else 1):05d}"
+    else:
+        next_bill_no_preview = f"{prefix}-{flat_bill:05d}"
+        next_po_no_preview = f"PO-{flat_po:05d}"
+        next_cn_no_preview = f"CN-{flat_cn:05d}"
+
+    conn.close()
+    
+    return ok({
+        'fy_reset_numbering': fy_reset,
+        'current_fy_label': fy_label,
+        'counters': {
+            'flat': {
+                'next_bill_no': flat_bill,
+                'next_po_no': flat_po,
+                'next_cn_no': flat_cn
+            },
+            'financial_year': {
+                'next_bill_no': fy_bill,
+                'next_po_no': fy_po,
+                'next_cn_no': fy_cn
+            }
+        },
+        'previews': {
+            'next_bill_no': next_bill_no_preview,
+            'next_po_no': next_po_no_preview,
+            'next_cn_no': next_cn_no_preview
+        }
+    })
+
+
+@app.route('/api/settings/financial-year/toggle', methods=['PUT'])
+@require_permission('settings.manage')
+def toggle_financial_year_numbering():
+    conn = get_db()
+    try:
+        # Get current setting
+        current_reset = get_setting('fy_reset_numbering', conn) or '0'
+        new_reset = '1' if current_reset == '0' else '0'
+        
+        warning = None
+        _, fy_label = get_financial_year()
+        
+        if new_reset == '1':
+            # Seed starting from '1' if they don't already exist
+            seeded_any = False
+            for counter_key in [f"next_bill_no_{fy_label}", f"next_po_no_{fy_label}", f"next_cn_no_{fy_label}"]:
+                existing = conn.execute("SELECT value FROM shop_settings WHERE key=?", (counter_key,)).fetchone()
+                if not existing:
+                    conn.execute("INSERT INTO shop_settings (key, value) VALUES (?, '1')", (counter_key,))
+                    seeded_any = True
+            
+            warning = "Warning: Turning on financial year numbering mid-year will cause the sequential numbering system to split/change format, potentially creating a gap/discontinuity in your flat numbering sequence. Ensure this alignment is expected by your business owner / accountant."
+
+        # Save the new setting
+        conn.execute(
+            "INSERT INTO shop_settings (key, value) VALUES ('fy_reset_numbering', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (new_reset,)
+        )
+        conn.commit()
+        
+        log_activity('TOGGLE_FY_RESET', f"FY-based numbering reset toggled to {'ON' if new_reset == '1' else 'OFF'}", 'shop_settings')
+        
+        return ok(
+            data={"warning": warning, "active": new_reset == '1'},
+            message=f"Financial year numbering toggled to {'ON' if new_reset == '1' else 'OFF'}"
+        )
+    except Exception as e:
+        conn.rollback()
+        return err(f"Toggle failed: {str(e)}", 500)
+    finally:
+        conn.close()
 
 # ─── Activity Audit Log ──────────────────────────────────────────────────────
 
@@ -3318,7 +3475,14 @@ def create_bill():
     if not isinstance(items, list) or not items: return err("Bill must have at least one item")
     conn = get_db()
     try:
-        bill_no = next_bill_no(conn)
+        bill_date = None
+        if d.get('date'):
+            try:
+                val = d.get('date').split()[0]
+                bill_date = datetime.strptime(val, '%Y-%m-%d').date()
+            except Exception:
+                pass
+        bill_no = next_bill_no(conn, for_date=bill_date)
         
         # Determine place of supply and inter-state status
         shop_state_code = (get_setting('shop_state_code', conn) or '').strip()
@@ -3421,15 +3585,15 @@ def create_bill():
                (bill_no, customer_id, customer_name, customer_phone, customer_gstin,
                 place_of_supply, is_interstate,
                 subtotal, discount_percent, discount_amount, cgst, sgst, igst, grand_total,
-                amount_paid, amount_due, change_amount, payment_mode, notes, is_test, status)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                amount_paid, amount_due, change_amount, payment_mode, notes, is_test, status, date)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,COALESCE(?, CURRENT_TIMESTAMP))''',
             (bill_no, d.get('customer_id'), d.get('customer_name', 'Walk-in Customer'),
              d.get('customer_phone', ''), d.get('customer_gstin', ''),
              place_of_supply, is_interstate,
              round(subtotal, 2), discount_pct, discount_amt,
              round(cgst_total, 2), round(sgst_total, 2), round(igst_total, 2), grand_total,
              amount_paid, amount_due, max(change_amount, 0), d.get('payment_mode', 'cash'),
-             d.get('notes', ''), is_test, status)
+             d.get('notes', ''), is_test, status, d.get('date'))
         )
         bill_id = c.lastrowid
 
@@ -3576,10 +3740,17 @@ def get_next_bill_number():
         conn.close()
         return ok({'next_bill_no': f"TEST-{n:05d}", 'is_test': True})
 
-    n = int(get_setting('next_bill_no', conn) or 1)
+    fy_reset = get_setting('fy_reset_numbering', conn) == '1'
     prefix = get_setting('bill_prefix', conn) or 'MPI'
-    conn.close()
-    return ok({'next_bill_no': f"{prefix}-{n:05d}", 'is_test': False})
+    if fy_reset:
+        _, fy_label = get_financial_year()
+        n = int(get_setting(f"next_bill_no_{fy_label}", conn) or 1)
+        conn.close()
+        return ok({'next_bill_no': f"{prefix}/{fy_label}/{n:05d}", 'is_test': False})
+    else:
+        n = int(get_setting('next_bill_no', conn) or 1)
+        conn.close()
+        return ok({'next_bill_no': f"{prefix}-{n:05d}", 'is_test': False})
 
 @app.route('/api/bills/<int:bid>', methods=['DELETE'])
 @require_permission('billing.void_bill')
@@ -3741,7 +3912,20 @@ def create_credit_note(bid):
         credited_map = {r['bill_item_id']: float(r['credited_qty']) for r in credited_rows}
 
         is_interstate = bool(bill['is_interstate'])
-        cn_no = next_cn_no(conn)
+        cn_date = None
+        if d.get('date'):
+            try:
+                val = d.get('date').split()[0]
+                cn_date = datetime.strptime(val, '%Y-%m-%d').date()
+            except Exception:
+                pass
+        elif d.get('created_at'):
+            try:
+                val = d.get('created_at').split()[0]
+                cn_date = datetime.strptime(val, '%Y-%m-%d').date()
+            except Exception:
+                pass
+        cn_no = next_cn_no(conn, for_date=cn_date)
 
         computed_items = []
         subtotal = 0.0
@@ -3830,13 +4014,14 @@ def create_credit_note(bid):
         igst_total = round(igst_total, 2)
         total = round(total, 2)
 
+        cn_insert_date = d.get('date') or d.get('created_at')
         c = conn.execute('''
             INSERT INTO credit_notes
-            (cn_no, bill_id, customer_id, customer_name, reason, subtotal, cgst, sgst, igst, total, status, created_by)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            (cn_no, bill_id, customer_id, customer_name, reason, subtotal, cgst, sgst, igst, total, status, created_by, created_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,COALESCE(?, CURRENT_TIMESTAMP))
         ''', (
             cn_no, bid, bill['customer_id'], bill['customer_name'], reason,
-            subtotal, cgst_total, sgst_total, igst_total, total, 'issued', session.get('username')
+            subtotal, cgst_total, sgst_total, igst_total, total, 'issued', session.get('username'), cn_insert_date
         ))
         cn_id = c.lastrowid
 
@@ -4116,7 +4301,14 @@ def create_purchase_order():
     if not isinstance(items, list) or not items: return err("PO must have at least one item")
     conn = get_db()
     try:
-        po_no    = next_po_no(conn)
+        po_date = None
+        if d.get('date'):
+            try:
+                val = d.get('date').split()[0]
+                po_date = datetime.strptime(val, '%Y-%m-%d').date()
+            except Exception:
+                pass
+        po_no    = next_po_no(conn, for_date=po_date)
         supplier = conn.execute('SELECT name FROM suppliers WHERE id=?', (d.get('supplier_id'),)).fetchone()
         subtotal = sum(float(it['quantity']) * float(it['unit_price']) for it in items)
         total    = round(subtotal, 2)
@@ -4125,11 +4317,11 @@ def create_purchase_order():
 
         c = conn.execute(
             '''INSERT INTO purchase_orders
-               (po_no, supplier_id, supplier_name, subtotal, total, amount_paid, amount_due, status, notes)
-               VALUES (?,?,?,?,?,?,?,?,?)''',
+               (po_no, supplier_id, supplier_name, subtotal, total, amount_paid, amount_due, status, notes, date)
+               VALUES (?,?,?,?,?,?,?,?,?,COALESCE(?, CURRENT_TIMESTAMP))''',
             (po_no, d.get('supplier_id'), supplier['name'] if supplier else '',
              round(subtotal, 2), total, amount_paid, amount_due,
-             d.get('status', 'received'), d.get('notes', ''))
+             d.get('status', 'received'), d.get('notes', ''), d.get('date'))
         )
         oid = c.lastrowid
 

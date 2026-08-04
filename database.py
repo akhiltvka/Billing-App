@@ -887,6 +887,7 @@ def init_db():
         'low_stock_alert':  'true',
         'decimal_places':   '2',
         'shop_logo':        '',
+        'fy_reset_numbering': '0',
     }
     for k, v in defaults.items():
         c.execute('INSERT OR IGNORE INTO shop_settings (key, value) VALUES (?, ?)', (k, v))
