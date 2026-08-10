@@ -42,6 +42,7 @@ const Reports = {
               <option value="general">Packaged Goods</option>
             </select>
             <button class="btn btn-primary" onclick="Reports.loadSales()">📊 Generate</button>
+            <button class="btn btn-success" onclick="Reports.exportSalesExcel()" style="background:#16a34a;border-color:#16a34a">📥 Export Excel</button>
             <button class="btn btn-secondary" onclick="Reports.setRange('today')">Today</button>
             <button class="btn btn-secondary" onclick="Reports.setRange('week')">This Week</button>
             <button class="btn btn-secondary" onclick="Reports.setRange('month')">This Month</button>
@@ -96,6 +97,8 @@ const Reports = {
             <span class="text-muted">to</span>
             <input type="date" id="m-to" class="form-control" style="width:160px" value="${today}">
             <button class="btn btn-primary" onclick="Reports.loadMarginsAndWastage()">📐 Generate Analysis</button>
+            <button class="btn btn-success" onclick="Reports.exportWastageExcel()" style="background:#16a34a;border-color:#16a34a">📥 Export Wastage Excel</button>
+            <button class="btn btn-success" onclick="Reports.exportMarginExcel()" style="background:#16a34a;border-color:#16a34a">📥 Export Margin Excel</button>
           </div>
           <div id="margins-content"><div class="empty-state"><div class="empty-state-icon">📐</div><p>Click Generate Analysis to view gross margins and wastage reports</p></div></div>
         </div>
@@ -111,6 +114,7 @@ const Reports = {
               <input type="number" id="y-thresh" class="form-control" style="width:80px" value="5" step="1">
             </label>
             <button class="btn btn-primary" onclick="Reports.loadConversionYield()">🥩 Generate Yield Report</button>
+            <button class="btn btn-success" onclick="Reports.exportYieldExcel()" style="background:#16a34a;border-color:#16a34a">📥 Export Yield Excel</button>
           </div>
           <div id="yield-content"><div class="empty-state"><div class="empty-state-icon">🥩</div><p>Click Generate to view stock processing yields &amp; variance flags</p></div></div>
         </div>
@@ -122,6 +126,7 @@ const Reports = {
             <span class="text-muted">to</span>
             <input type="date" id="gr-to" class="form-control" style="width:160px" value="${today}">
             <button class="btn btn-primary" onclick="Reports.loadGST()">🏛️ Generate</button>
+            <button class="btn btn-success" onclick="Reports.exportGSTExcel()" style="background:#16a34a;border-color:#16a34a">📥 Export GST Excel</button>
             <button class="btn btn-secondary" onclick="Reports.setGSTRange('month')">This Month</button>
           </div>
           <div id="gr-content"><div class="empty-state"><div class="empty-state-icon">🏛️</div><p>Select period and click Generate</p></div></div>
@@ -129,7 +134,10 @@ const Reports = {
 
         <!-- Stock Report Tab -->
         <div id="content-stock" class="tab-content">
-          <button class="btn btn-primary mb-16" onclick="Reports.loadStock()">📦 Load Stock Valuation Report</button>
+          <div style="display:flex;gap:10px;margin-bottom:16px">
+            <button class="btn btn-primary" onclick="Reports.loadStock()">📦 Load Stock Valuation Report</button>
+            <button class="btn btn-success" onclick="Reports.exportStockExcel()" style="background:#16a34a;border-color:#16a34a">📥 Export Stock Valuation Excel</button>
+          </div>
           <div id="stock-content"></div>
         </div>
 
@@ -140,6 +148,7 @@ const Reports = {
             <span class="text-muted">to</span>
             <input type="date" id="tp-to" class="form-control" style="width:160px" value="${today}">
             <button class="btn btn-primary" onclick="Reports.loadTopProducts()">🏆 Generate</button>
+            <button class="btn btn-success" onclick="Reports.exportTopProductsExcel()" style="background:#16a34a;border-color:#16a34a">📥 Export Top Products Excel</button>
           </div>
           <div id="top-content"><div class="empty-state"><div class="empty-state-icon">🏆</div><p>Click Generate to see top products</p></div></div>
         </div>
@@ -404,20 +413,20 @@ const Reports = {
     if (!acc) return;
 
     const html = `
-      <div class="modal-card" style="max-width:520px">
+      <div class="modal" style="max-width:560px">
         <div class="modal-header">
-          <h3>✏️ Edit Ledger Account / Balance</h3>
+          <div class="modal-title"><span class="modal-title-icon">✏️</span> Edit Ledger Account / Balance</div>
           <button class="modal-close" onclick="App.closeModal()">✕</button>
         </div>
-        <div class="modal-body">
-          <div class="form-group mb-16">
-            <label class="form-label required">Account Name:</label>
-            <input type="text" id="edit-acc-name" class="form-control" value="${acc.name}" ${acc.is_system ? 'disabled title="System account names cannot be changed"' : ''}>
-            ${acc.is_system ? '<small class="text-muted">System account name is protected for automated postings</small>' : ''}
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div class="form-group">
+            <label class="form-label required">ACCOUNT NAME</label>
+            <input type="text" id="edit-acc-name" class="form-control" value="${App.escapeHtml(acc.name)}" ${acc.is_system ? 'disabled title="System account names cannot be changed"' : ''}>
+            ${acc.is_system ? '<small class="text-muted" style="margin-top:4px;display:block">🔒 System account name is protected for automated postings</small>' : ''}
           </div>
-          <div class="grid-2 mb-16">
-            <div class="form-group">
-              <label class="form-label required">Account Group:</label>
+          <div class="form-row">
+            <div class="form-group" style="flex:1">
+              <label class="form-label required">ACCOUNT GROUP</label>
               <select id="edit-acc-group" class="form-control" ${acc.is_system ? 'disabled' : ''}>
                 <option value="Asset" ${acc.account_group === 'Asset' ? 'selected' : ''}>Asset</option>
                 <option value="Liability" ${acc.account_group === 'Liability' ? 'selected' : ''}>Liability</option>
@@ -426,18 +435,18 @@ const Reports = {
                 <option value="Expense" ${acc.account_group === 'Expense' ? 'selected' : ''}>Expense</option>
               </select>
             </div>
-            <div class="form-group">
-              <label class="form-label">Account Sub-Type:</label>
-              <input type="text" id="edit-acc-type" class="form-control" value="${acc.account_type || acc.account_group}">
+            <div class="form-group" style="flex:1">
+              <label class="form-label">ACCOUNT SUB-TYPE</label>
+              <input type="text" id="edit-acc-type" class="form-control" value="${App.escapeHtml(acc.account_type || acc.account_group)}">
             </div>
           </div>
-          <div class="grid-2 mb-16">
-            <div class="form-group">
-              <label class="form-label">Opening Balance (₹):</label>
+          <div class="form-row">
+            <div class="form-group" style="flex:1">
+              <label class="form-label">OPENING BALANCE (₹)</label>
               <input type="number" id="edit-acc-bal" class="form-control" step="0.01" value="${acc.opening_balance || 0}">
             </div>
-            <div class="form-group">
-              <label class="form-label">Balance Side:</label>
+            <div class="form-group" style="flex:1">
+              <label class="form-label">BALANCE SIDE</label>
               <select id="edit-acc-bal-type" class="form-control">
                 <option value="dr" ${(acc.opening_balance_type || 'dr').toLowerCase() === 'dr' ? 'selected' : ''}>Debit (Dr)</option>
                 <option value="cr" ${(acc.opening_balance_type || 'dr').toLowerCase() === 'cr' ? 'selected' : ''}>Credit (Cr)</option>
@@ -445,7 +454,7 @@ const Reports = {
             </div>
           </div>
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" style="margin-top:20px;display:flex;justify-content:flex-end;gap:10px">
           <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
           <button class="btn btn-primary" onclick="Reports.saveEditAccount(${acc.id})">Update Account</button>
         </div>
@@ -478,12 +487,12 @@ const Reports = {
 
   async showAccountStatementModal(accId) {
     App.showModal(`
-      <div class="modal-card" style="max-width:800px">
+      <div class="modal modal-lg" style="max-height:90vh;display:flex;flex-direction:column">
         <div class="modal-header">
-          <h3>📜 Ledger Account Statement</h3>
+          <div class="modal-title"><span class="modal-title-icon">📜</span> Ledger Account Statement</div>
           <button class="modal-close" onclick="App.closeModal()">✕</button>
         </div>
-        <div class="modal-body" id="statement-modal-body">
+        <div id="statement-modal-body" style="flex:1;overflow-y:auto">
           <div class="loading-overlay"><div class="spinner"></div></div>
         </div>
       </div>
@@ -496,23 +505,23 @@ const Reports = {
       const bodyEl = document.getElementById('statement-modal-body');
 
       bodyEl.innerHTML = `
-        <div class="stat-grid mb-16">
-          <div class="stat-card">
+        <div style="display:flex;gap:14px;margin-bottom:16px;flex-wrap:wrap">
+          <div class="stat-card" style="flex:1;min-width:180px">
             <div class="stat-label">Account Name</div>
-            <div class="stat-value text-gold" style="font-size:16px">${acc.name}</div>
-            <div class="stat-sub">${acc.account_group} (${acc.account_type || ''})</div>
+            <div class="stat-value text-gold" style="font-size:18px">${App.escapeHtml(acc.name)}</div>
+            <div class="stat-sub" style="font-size:12px;color:var(--text-muted);margin-top:2px">${acc.account_group} (${acc.account_type || ''})</div>
           </div>
-          <div class="stat-card">
+          <div class="stat-card" style="flex:1;min-width:140px">
             <div class="stat-label">Opening Balance</div>
-            <div class="stat-value text-info">${App.fmt(res.opening_balance)}</div>
+            <div class="stat-value text-info" style="font-size:18px">${App.fmt(res.opening_balance)}</div>
           </div>
-          <div class="stat-card">
+          <div class="stat-card" style="flex:1;min-width:140px">
             <div class="stat-label">Closing Balance</div>
-            <div class="stat-value text-success">${App.fmt(res.closing_balance)}</div>
+            <div class="stat-value text-success" style="font-size:18px">${App.fmt(res.closing_balance)}</div>
           </div>
         </div>
 
-        <div class="table-wrap" style="max-height:360px;overflow-y:auto">
+        <div class="table-wrap" style="max-height:380px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--r-md)">
           <table>
             <thead>
               <tr>
@@ -520,25 +529,28 @@ const Reports = {
                 <th>Type</th>
                 <th>Voucher No</th>
                 <th>Narration</th>
-                <th>Debit (₹)</th>
-                <th>Credit (₹)</th>
-                <th>Running Bal (₹)</th>
+                <th class="text-right">Debit (₹)</th>
+                <th class="text-right">Credit (₹)</th>
+                <th class="text-right">Running Bal (₹)</th>
               </tr>
             </thead>
             <tbody>
-              ${entries.length === 0 ? '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">No voucher entries found for this account</td></tr>' :
+              ${entries.length === 0 ? '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:24px">No voucher entries found for this account</td></tr>' :
                 entries.map(e => `
                 <tr>
                   <td class="td-muted">${e.voucher_date || ''}</td>
                   <td><span class="badge badge-info">${e.voucher_type}</span></td>
                   <td class="font-bold text-gold">${e.voucher_no}</td>
-                  <td class="td-muted">${e.narration || ''}</td>
-                  <td class="${e.debit > 0 ? 'font-bold text-success' : ''}">${e.debit > 0 ? App.fmt(e.debit) : '—'}</td>
-                  <td class="${e.credit > 0 ? 'font-bold text-danger' : ''}">${e.credit > 0 ? App.fmt(e.credit) : '—'}</td>
-                  <td class="font-bold">${App.fmt(e.running_balance)}</td>
+                  <td class="td-muted">${App.escapeHtml(e.narration || '')}</td>
+                  <td class="td-number ${e.debit > 0 ? 'font-bold text-success' : ''}">${e.debit > 0 ? App.fmt(e.debit) : '—'}</td>
+                  <td class="td-number ${e.credit > 0 ? 'font-bold text-danger' : ''}">${e.credit > 0 ? App.fmt(e.credit) : '—'}</td>
+                  <td class="td-number font-bold">${App.fmt(e.running_balance)}</td>
                 </tr>`).join('')}
             </tbody>
           </table>
+        </div>
+        <div class="modal-footer" style="margin-top:16px;display:flex;justify-content:flex-end">
+          <button class="btn btn-secondary" onclick="App.closeModal()">Close</button>
         </div>
       `;
     } catch(e) {
@@ -1023,6 +1035,64 @@ const Reports = {
     } catch(e) {
       el.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><h3>${e.message}</h3></div>`;
     }
+  },
+
+  // ── Excel Export Helpers ──────────────────────────────────────────────────
+  exportExcel(path, queryParams = {}) {
+    const params = new URLSearchParams({ export: 'excel', ...queryParams });
+    const url = `/api${path}?${params.toString()}`;
+
+    if (typeof App !== 'undefined' && App.toast) {
+      App.toast('📥 Downloading Excel file...', 'info');
+    }
+
+    try {
+      window.location.assign(url);
+    } catch (e) {
+      window.open(url, '_blank');
+    }
+  },
+
+  exportSalesExcel() {
+    const from = document.getElementById('sr-from')?.value || '';
+    const to = document.getElementById('sr-to')?.value || '';
+    const ptype = document.getElementById('sr-ptype')?.value || '';
+    this.exportExcel('/reports/sales', { from, to, product_type: ptype });
+  },
+
+  exportGSTExcel() {
+    const from = document.getElementById('gr-from')?.value || '';
+    const to = document.getElementById('gr-to')?.value || '';
+    this.exportExcel('/reports/gst', { from, to });
+  },
+
+  exportStockExcel() {
+    this.exportExcel('/reports/stock');
+  },
+
+  exportTopProductsExcel() {
+    const from = document.getElementById('tp-from')?.value || '';
+    const to = document.getElementById('tp-to')?.value || '';
+    this.exportExcel('/reports/top-products', { from, to });
+  },
+
+  exportWastageExcel() {
+    const from = document.getElementById('m-from')?.value || '';
+    const to = document.getElementById('m-to')?.value || '';
+    this.exportExcel('/reports/wastage', { from, to });
+  },
+
+  exportMarginExcel() {
+    const from = document.getElementById('m-from')?.value || '';
+    const to = document.getElementById('m-to')?.value || '';
+    this.exportExcel('/reports/margin-by-category', { from, to });
+  },
+
+  exportYieldExcel() {
+    const from = document.getElementById('y-from')?.value || '';
+    const to = document.getElementById('y-to')?.value || '';
+    const thresh = document.getElementById('y-thresh')?.value || '5';
+    this.exportExcel('/reports/conversion-yield', { from, to, variance_threshold: thresh });
   },
 };
 

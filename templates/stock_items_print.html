@@ -53,12 +53,19 @@
     .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--gold); border-radius: 50%; animation: spin .7s linear infinite; margin: 0 auto 16px; }
     @keyframes spin { to { transform: rotate(360deg); } }
     @media print {
-      body { background: white; }
+      * { color: #000 !important; background: transparent !important; box-shadow: none !important; text-shadow: none !important; }
+      body { background: white !important; }
       .toolbar, .search-bar { display: none !important; }
-      .page { max-width: 100%; margin: 0; border-radius: 0; box-shadow: none; min-height: auto !important; }
-      .item-card { break-inside: avoid; }
-      .category-section { break-inside: avoid; }
-      @page { size: A4 portrait; margin: 12mm; }
+      .page { max-width: 100%; margin: 0; border-radius: 0; box-shadow: none; min-height: auto !important; padding: 0; }
+      .page-header { background: transparent !important; color: #000 !important; border-bottom: 2px solid #000; padding: 12px 0; }
+      .header-info h1 { color: #000 !important; }
+      .header-info p, .header-meta .label, .header-meta .value { color: #000 !important; }
+      .category-header { border-bottom: 1px solid #000 !important; margin-bottom: 8px !important; padding: 10px 0 6px !important; }
+      .category-name, .category-count { color: #000 !important; }
+      .item-card { break-inside: avoid; border: 1px solid #000 !important; background: transparent !important; padding: 6px 8px !important; }
+      .item-code, .item-name { color: #000 !important; }
+      .category-section { break-inside: avoid; padding: 0 0 12px !important; }
+      @page { size: A4 portrait; margin: 8mm; }
     }
   </style>
 </head>

@@ -3,7 +3,7 @@ backup_scheduler.py — Daily Database Backup & Retention Script
 Meat Products of India — Billing & Inventory App
 """
 import os
-import shutil
+import sqlite3
 from datetime import datetime, timedelta
 
 from database import DB_PATH
@@ -22,8 +22,33 @@ def run_backup():
     dest_filename = f"meatshop_backup_{ts}.db"
     dest_path = os.path.join(BACKUP_DIR, dest_filename)
 
-    shutil.copy2(DB_PATH, dest_path)
-    print(f"[{datetime.now()}] SUCCESS: Backup created -> {dest_path}")
+    try:
+        source_conn = sqlite3.connect(DB_PATH, timeout=15)
+        source_conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+
+        dest_conn = sqlite3.connect(dest_path)
+        with dest_conn:
+            source_conn.backup(dest_conn)
+        dest_conn.close()
+        source_conn.close()
+
+        # Verify integrity of the backup file
+        chk_conn = sqlite3.connect(dest_path)
+        res = chk_conn.execute('PRAGMA integrity_check').fetchone()
+        chk_conn.close()
+
+        if not res or res[0] != 'ok':
+            raise RuntimeError(f"Integrity check failed: {res}")
+
+        print(f"[{datetime.now()}] SUCCESS: Backup created & verified (integrity: ok) -> {dest_path}")
+    except Exception as e:
+        print(f"[{datetime.now()}] ERROR: Backup creation failed: {e}")
+        if os.path.exists(dest_path):
+            try:
+                os.remove(dest_path)
+            except Exception:
+                pass
+        return
 
     # Retention cleanup: Delete backups older than 30 days
     cutoff = datetime.now() - timedelta(days=RETENTION_DAYS)

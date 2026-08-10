@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Barcode Label Print</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+  <style>
+    :root {
+      --gold: #c9a84c;
+      --bg: #f0f2f5;
+      --border: #d1d9e0;
+      --text: #1a202c;
+      --text-muted: #64748b;
+      --card: #ffffff;
+      --header-bg: #0f172a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: "Inter", sans-serif; background: var(--bg); color: var(--text); font-size: 13px; }
+
+    /* ── Toolbar ────────────────────────────────────────────── */
+    .toolbar {
+      position: fixed; top: 0; left: 0; right: 0;
+      background: var(--header-bg); color: #fff;
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 20px; z-index: 999;
+      box-shadow: 0 2px 12px rgba(0,0,0,.4);
+    }
+    .toolbar-left { flex: 1; }
+    .toolbar-title { font-weight: 600; font-size: 14px; }
+    .toolbar-sub   { font-size: 11px; color: rgba(255,255,255,.5); margin-top: 2px; }
+    .toolbar-count { background: rgba(201,168,76,.18); color: var(--gold); border: 1px solid rgba(201,168,76,.4); border-radius: 20px; padding: 3px 12px; font-size: 12px; font-weight: 600; }
+    .btn-toolbar   { border: none; border-radius: 7px; padding: 8px 16px; font-weight: 700; font-size: 13px; cursor: pointer; transition: all .15s; }
+    .btn-print     { background: var(--gold); color: #0f172a; }
+    .btn-print:hover { opacity: .85; }
+    .btn-close     { background: rgba(255,255,255,.1); color: #fff; border: 1px solid rgba(255,255,255,.2); }
+    .btn-close:hover { background: rgba(255,255,255,.2); }
+
+    /* ── Controls bar ────────────────────────────────────────── */
+    .controls-bar {
+      position: fixed; top: 50px; left: 0; right: 0;
+      background: #1e2d45; color: #fff;
+      display: flex; align-items: center; gap: 16px;
+      padding: 8px 20px; z-index: 998;
+      border-top: 1px solid rgba(255,255,255,.08);
+    }
+    .controls-bar label { font-size: 12px; color: rgba(255,255,255,.6); white-space: nowrap; }
+    .controls-bar input[type="number"],
+    .controls-bar select {
+      background: rgba(255,255,255,.07); color: #fff;
+      border: 1px solid rgba(255,255,255,.2); border-radius: 6px;
+      padding: 4px 8px; font-size: 12px; width: 70px;
+    }
+    .controls-bar input[type="range"] { width: 100px; accent-color: var(--gold); }
+    .controls-bar .ctrl-group { display: flex; align-items: center; gap: 6px; }
+    .ctrl-sep { height: 24px; width: 1px; background: rgba(255,255,255,.15); }
+
+    /* ── Main content ────────────────────────────────────────── */
+    .main-content { margin-top: 96px; padding: 20px; }
+
+    /* ── Page simulation card ────────────────────────────────── */
+    .a4-page {
+      width: 210mm;
+      min-height: 297mm;
+      background: #fff;
+      margin: 0 auto 24px;
+      box-shadow: 0 4px 32px rgba(0,0,0,.15);
+      border-radius: 4px;
+      padding: 6mm;
+      page-break-after: always;
+    }
+    .a4-header {
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1.5px solid #1a202c; padding-bottom: 4mm; margin-bottom: 4mm;
+    }
+    .a4-header-title { font-size: 14px; font-weight: 700; color: #1a202c; }
+    .a4-header-sub   { font-size: 10px; color: #64748b; margin-top: 2px; }
+    .a4-header-meta  { text-align: right; font-size: 10px; color: #64748b; }
+
+    /* ── Label Grid — 4 cols × 11 rows ──────────────────────── */
+    .label-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 2mm;
+    }
+
+    /* ── Individual label ────────────────────────────────────── */
+    .label-cell {
+      border: 0.5px solid #c0c8d2;
+      border-radius: 2px;
+      padding: 1.5mm 1.5mm 1mm;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      overflow: hidden;
+      background: #fff;
+      min-height: 24mm;
+    }
+    .label-name {
+      font-size: 6.5pt;
+      font-weight: 700;
+      text-align: center;
+      line-height: 1.2;
+      color: #1a202c;
+      width: 100%;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      word-break: break-word;
+      margin-bottom: 1mm;
+    }
+    .label-barcode {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .label-barcode svg {
+      width: 100% !important;
+      height: auto !important;
+      max-height: 14mm;
+    }
+    .label-code {
+      font-size: 5.5pt;
+      font-family: "JetBrains Mono", monospace;
+      color: #475569;
+      text-align: center;
+      margin-top: 0.5mm;
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Empty label placeholder ─────────────────────────────── */
+    .label-empty {
+      border: 0.5px dashed #d1d5db;
+      background: #fafafa;
+    }
+
+    /* ── Loading / empty state ───────────────────────────────── */
+    .loading-state {
+      text-align: center; padding: 60px 20px; color: var(--text-muted);
+    }
+    .loading-state .spinner {
+      width: 36px; height: 36px; border: 3px solid #e2e8f0;
+      border-top-color: var(--gold); border-radius: 50%;
+      animation: spin .7s linear infinite;
+      margin: 0 auto 16px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Print styles ────────────────────────────────────────── */
+    @media print {
+      body { background: white !important; }
+      .toolbar, .controls-bar { display: none !important; }
+      .main-content { margin-top: 0 !important; padding: 0 !important; }
+      .a4-page {
+        width: 100% !important;
+        min-height: auto !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        padding: 6mm !important;
+        margin: 0 !important;
+        page-break-after: always;
+      }
+      .a4-page:last-child { page-break-after: avoid; }
+      .label-cell { break-inside: avoid; }
+      @page { size: A4 portrait; margin: 0; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Toolbar ──────────────────────────────────────────────────────────── -->
+<div class="toolbar">
+  <div class="toolbar-left">
+    <div class="toolbar-title">🏷️ Barcode Label Print</div>
+    <div class="toolbar-sub" id="shop-name-sub">{{ shop_name }}</div>
+  </div>
+  <span class="toolbar-count" id="label-count-badge">Loading…</span>
+  <button class="btn-toolbar btn-print" onclick="window.print()">🖨️ Print / Save PDF</button>
+  <button class="btn-toolbar btn-close" onclick="window.close()">✕ Close</button>
+</div>
+
+<!-- ── Controls bar ─────────────────────────────────────────────────────── -->
+<div class="controls-bar">
+  <div class="ctrl-group">
+    <button type="button" class="btn-toolbar" style="background:rgba(201,168,76,.25);color:var(--gold);font-size:12px;padding:5px 12px;border:1px solid rgba(201,168,76,.5);border-radius:6px;cursor:pointer;font-weight:700" onclick="showQtyEditorModal()">
+      📋 Edit Copy Quantities
+    </button>
+  </div>
+  <div class="ctrl-sep"></div>
+  <div class="ctrl-group">
+    <label>Multiplier:</label>
+    <input type="number" id="ctrl-copies" value="1" min="1" max="100" style="width:50px" onchange="regenerate()" title="Multiply all product copies by this factor (default 1x)">
+  </div>
+  <div class="ctrl-sep"></div>
+  <div class="ctrl-group">
+    <label>Barcode height:</label>
+    <input type="range" id="ctrl-bc-height" min="20" max="60" value="36" oninput="regenerate()">
+  </div>
+  <div class="ctrl-sep"></div>
+  <div class="ctrl-group">
+    <label>Show price:</label>
+    <input type="checkbox" id="ctrl-show-price" onchange="regenerate()" style="accent-color:var(--gold)">
+  </div>
+  <div class="ctrl-sep"></div>
+  <div class="ctrl-group">
+    <label for="ctrl-filter">Filter:</label>
+    <input type="text" id="ctrl-filter" placeholder="Item name…" oninput="regenerate()"
+      style="background:rgba(255,255,255,.07);color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:4px 10px;font-size:12px;width:150px">
+  </div>
+</div>
+
+<!-- ── Main page content ─────────────────────────────────────────────────── -->
+<div class="main-content" id="print-area">
+  <div class="loading-state">
+    <div class="spinner"></div>
+    <p>Generating barcodes…</p>
+  </div>
+</div>
+
+<script>
+  // ── Data source ───────────────────────────────────────────────────────────
+  // Items can arrive three ways:
+  //   1. URL param  ?items=base64-encoded-json
+  //   2. Twig/Jinja server render (template var)
+  //   3. window.postMessage from parent SPA
+
+  let ALL_ITEMS = [];   // [{id, name, code, barcode, selling_price, unit, qty}]
+  const LABELS_PER_PAGE = 44;  // 11 rows × 4 cols
+
+  // Try server-injected data first (Jinja2 sets window._barcodeItems)
+  const _serverItems = {{ items_json | default('null') | safe }};
+  if (_serverItems && Array.isArray(_serverItems)) {
+    ALL_ITEMS = _serverItems;
+  }
+
+  // Try URL param
+  (function tryUrlParam() {
+    try {
+      const params = new URLSearchParams(location.search);
+      const enc = params.get('items');
+      if (enc) {
+        const decoded = JSON.parse(atob(enc));
+        if (Array.isArray(decoded) && decoded.length) {
+          ALL_ITEMS = decoded;
+        }
+      }
+    } catch(e) { console.warn('URL param parse error:', e); }
+  })();
+
+  // Listen for postMessage from parent SPA
+  window.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'BARCODE_ITEMS' && Array.isArray(e.data.items)) {
+      ALL_ITEMS = e.data.items;
+      regenerate();
+    }
+  });
+
+  // ── Barcode value resolution ──────────────────────────────────────────────
+  function getBarcodeValue(item) {
+    if (item.barcode && item.barcode.trim()) return item.barcode.trim();
+    if (item.code   && item.code.trim())   return item.code.trim();
+    return String(item.id || Math.random().toString(36).slice(2, 10));
+  }
+
+  // ── Truncate text to fit single line ─────────────────────────────────────
+  function smartName(item) {
+    const maxChars = 22;
+    const name = item.name || '';
+    if (name.length <= maxChars) return name;
+    const code = item.code ? ` [${item.code}]` : '';
+    const truncated = name.slice(0, maxChars - code.length - 1) + '…';
+    return truncated + code;
+  }
+
+  // ── Build labels array (expanded by copies) ───────────────────────────────
+  function buildLabels() {
+    const copies       = Math.max(1, parseInt(document.getElementById('ctrl-copies').value) || 1);
+    const filterText   = (document.getElementById('ctrl-filter').value || '').toLowerCase();
+    const showPrice    = document.getElementById('ctrl-show-price').checked;
+
+    let labels = [];
+    ALL_ITEMS.forEach(item => {
+      if (filterText && !item.name.toLowerCase().includes(filterText)) return;
+      const qty = item.qty != null ? Math.max(1, parseInt(item.qty)) : 1;
+      const totalCopies = qty * copies;
+      for (let c = 0; c < totalCopies; c++) {
+        labels.push({ ...item, showPrice });
+      }
+    });
+    return labels;
+  }
+
+  // ── Render pages ─────────────────────────────────────────────────────────
+  function regenerate() {
+    const area       = document.getElementById('print-area');
+    const bcHeight   = parseInt(document.getElementById('ctrl-bc-height').value) || 36;
+    const labels     = buildLabels();
+    const shopName   = '{{ shop_name }}';
+    const now        = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+
+    document.getElementById('label-count-badge').textContent =
+      labels.length + ' label' + (labels.length !== 1 ? 's' : '');
+
+    if (labels.length === 0) {
+      area.innerHTML = `
+        <div class="loading-state">
+          <div style="font-size:48px;margin-bottom:12px">🏷️</div>
+          <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">No labels to print</h3>
+          <p>No items found. Close this window and generate barcodes from Stock-In or Product list.</p>
+        </div>`;
+      return;
+    }
+
+    // Pad to full page
+    const pages = Math.ceil(labels.length / LABELS_PER_PAGE);
+    const padded = [...labels];
+    while (padded.length < pages * LABELS_PER_PAGE) padded.push(null);
+
+    let html = '';
+    for (let pg = 0; pg < pages; pg++) {
+      const slice = padded.slice(pg * LABELS_PER_PAGE, (pg + 1) * LABELS_PER_PAGE);
+      html += `
+        <div class="a4-page">
+          <div class="a4-header">
+            <div>
+              <div class="a4-header-title">🏷️ Barcode Labels — ${shopName}</div>
+              <div class="a4-header-sub">Page ${pg + 1} of ${pages} · Generated: ${now}</div>
+            </div>
+            <div class="a4-header-meta">
+              Labels ${pg * LABELS_PER_PAGE + 1}–${Math.min((pg + 1) * LABELS_PER_PAGE, labels.length)} of ${labels.length}
+            </div>
+          </div>
+          <div class="label-grid">
+            ${slice.map((item, idx) => {
+              if (!item) return `<div class="label-cell label-empty"></div>`;
+              const bv = getBarcodeValue(item);
+              const svgId = `bc-${pg}-${idx}`;
+              const priceHtml = item.showPrice && item.selling_price
+                ? `<div class="label-code">₹${parseFloat(item.selling_price).toFixed(2)}/${item.unit || ''}</div>`
+                : '';
+              return `
+                <div class="label-cell">
+                  <div class="label-name">${smartName(item)}</div>
+                  <div class="label-barcode">
+                    <svg id="${svgId}"></svg>
+                  </div>
+                  <div class="label-code">${bv}</div>
+                  ${priceHtml}
+                </div>`;
+            }).join('')}
+          </div>
+        </div>`;
+    }
+
+    area.innerHTML = html;
+
+    // Render barcodes
+    for (let pg = 0; pg < pages; pg++) {
+      const slice = padded.slice(pg * LABELS_PER_PAGE, (pg + 1) * LABELS_PER_PAGE);
+      slice.forEach((item, idx) => {
+        if (!item) return;
+        const svgId = `bc-${pg}-${idx}`;
+        const el = document.getElementById(svgId);
+        if (!el) return;
+        try {
+          JsBarcode(el, getBarcodeValue(item), {
+            format:      'CODE128',
+            width:       1.4,
+            height:      bcHeight,
+            displayValue: false,
+            margin:      0,
+            lineColor:   '#1a202c',
+            background:  '#ffffff',
+          });
+        } catch(e) {
+          // Fallback: try CODE39 for non-standard chars
+          try {
+            JsBarcode(el, getBarcodeValue(item).replace(/[^A-Z0-9\-\.\ \$\/\+\%]/gi, '?'), {
+              format: 'CODE39', width: 1.2, height: bcHeight,
+              displayValue: false, margin: 0,
+            });
+          } catch(e2) {
+            el.outerHTML = `<div style="font-size:8px;color:red;padding:4px">Error: ${e2.message}</div>`;
+          }
+        }
+      });
+    }
+  }
+
+  // ── Edit Quantity Modal on Print Page ──────────────────────────────────
+  function showQtyEditorModal() {
+    const existing = document.getElementById('qty-modal-backdrop');
+    if (existing) existing.remove();
+
+    let html = `
+      <div id="qty-modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(3px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px">
+        <div style="background:#fff;border-radius:12px;width:100%;max-width:620px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.4);overflow:hidden;font-family:'Inter',sans-serif">
+          <div style="background:#0f172a;color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center">
+            <div style="font-weight:700;font-size:14px">📋 Edit Barcode Copies per Product</div>
+            <button type="button" onclick="document.getElementById('qty-modal-backdrop').remove()" style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer">✕</button>
+          </div>
+          <div style="padding:16px 20px;overflow-y:auto;flex:1">
+            <table style="width:100%;border-collapse:collapse;font-size:13px">
+              <thead>
+                <tr style="border-bottom:2px solid #e2e8f0;text-align:left;color:#64748b">
+                  <th style="padding:8px">Product Name</th>
+                  <th style="padding:8px">Code / Barcode</th>
+                  <th style="padding:8px;text-align:center">Copies to Print</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${ALL_ITEMS.map((item, idx) => `
+                  <tr style="border-bottom:1px solid #f1f5f9">
+                    <td style="padding:8px;font-weight:600">${item.name}</td>
+                    <td style="padding:8px;font-family:'JetBrains Mono',monospace;color:#c9a84c">${getBarcodeValue(item)}</td>
+                    <td style="padding:8px;text-align:center">
+                      <input type="number" min="0" max="500" value="${item.qty || 1}"
+                        style="width:75px;text-align:center;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-weight:700"
+                        id="print-item-qty-${idx}">
+                    </td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div style="padding:12px 20px;background:#f8f9fb;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:10px">
+            <button type="button" onclick="document.getElementById('qty-modal-backdrop').remove()" style="padding:8px 16px;border:1px solid #cbd5e1;background:#fff;border-radius:6px;cursor:pointer;font-weight:600">Cancel</button>
+            <button type="button" onclick="applyQtyEdits()" style="padding:8px 20px;border:none;background:#c9a84c;color:#0f172a;font-weight:700;border-radius:6px;cursor:pointer">Update &amp; Regenerate Sheet</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.insertAdjacentHTML('beforeend', html);
+  }
+
+  function applyQtyEdits() {
+    ALL_ITEMS.forEach((item, idx) => {
+      const inp = document.getElementById(`print-item-qty-${idx}`);
+      if (inp) item.qty = Math.max(0, parseInt(inp.value) || 0);
+    });
+    const backdrop = document.getElementById('qty-modal-backdrop');
+    if (backdrop) backdrop.remove();
+    regenerate();
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────────
+  document.addEventListener('DOMContentLoaded', function() {
+    regenerate();
+    // Auto-print if ?autoprint=1
+    if (new URLSearchParams(location.search).get('autoprint') === '1') {
+      setTimeout(window.print, 1200);
+    }
+  });
+</script>
+</body>
+</html>

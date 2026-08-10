@@ -11,7 +11,16 @@ import threading
 import time
 import sys
 import os
-import webview
+import webbrowser
+
+# Safely attempt webview import so legacy OS without compatible CLR/webview doesn't crash on startup
+try:
+    import webview
+    HAS_WEBVIEW = True
+except Exception as e:
+    webview = None
+    HAS_WEBVIEW = False
+    print(f"[Desktop App Notice] Native pywebview import failed ({e}). Defaulting to browser mode.")
 
 # Set AppUserModelID so Windows Taskbar displays official logo.ico / logo.png icon
 try:
@@ -65,18 +74,54 @@ class DesktopApi:
         self._maximized = True  # start maximized
 
     def minimize_window(self):
-        self._window.minimize()
+        try:
+            self._window.minimize()
+        except Exception:
+            pass
 
     def toggle_maximize(self):
-        if self._maximized:
-            self._window.restore()
-            self._maximized = False
-        else:
-            self._window.maximize()
-            self._maximized = True
+        try:
+            if self._maximized:
+                self._window.restore()
+                self._maximized = False
+            else:
+                self._window.maximize()
+                self._maximized = True
+        except Exception:
+            pass
 
     def close_window(self):
-        self._window.destroy()
+        try:
+            self._window.destroy()
+        except Exception:
+            pass
+
+    def select_folder(self):
+        """Opens native OS folder picker dialog and returns selected directory path."""
+        try:
+            res = self._window.create_file_dialog(webview.FOLDER_DIALOG)
+            if res and len(res) > 0:
+                return res[0]
+        except Exception as e:
+            print(f"[Desktop Folder Picker Error] {e}")
+        return None
+
+    def save_file(self, base64_data, default_filename='export.xlsx'):
+        """Opens native OS save file dialog and saves base64 data to selected path."""
+        try:
+            import base64
+            file_types = ('Excel Files (*.xlsx)', 'All Files (*.*)')
+            res = self._window.create_file_dialog(webview.SAVE_FILENAME_DIALOG, save_filename=default_filename, file_types=file_types)
+            if res:
+                save_path = res if isinstance(res, str) else res[0]
+                if save_path:
+                    data = base64.b64decode(base64_data)
+                    with open(save_path, 'wb') as f:
+                        f.write(data)
+                    return save_path
+        except Exception as e:
+            print(f"[Desktop Save File Error] {e}")
+        return None
 
 
 # ─── Main Entry Point ────────────────────────────────────────────────────────
@@ -97,7 +142,7 @@ if __name__ == '__main__':
         print("[ERROR] Flask server did not start in time. Exiting.")
         sys.exit(1)
 
-    print("[3/3] Launching desktop window...")
+    print("[3/3] Launching application interface...")
 
     # Fetch shop name from settings to use as window title
     shop_title = "Meat Products of India"
@@ -109,29 +154,43 @@ if __name__ == '__main__':
     except Exception:
         pass
 
-    window = webview.create_window(
-        title            = f"{shop_title} — Billing & Inventory",
-        url              = URL,
-        width            = 1400,
-        height           = 860,
-        min_size         = (900, 600),
-        resizable        = True,
-        frameless        = True,    # ← Remove native OS title bar; use our custom one
-        easy_drag        = False,   # ← We handle drag via CSS -webkit-app-region:drag
-        background_color = '#0f0f0f',
-    )
-
-    api = DesktopApi(window)
-    window.expose(api.minimize_window, api.toggle_maximize, api.close_window)
-
-    def on_loaded():
-        """Maximize the window once the page finishes loading."""
+    use_native_window = HAS_WEBVIEW
+    if use_native_window:
         try:
-            window.maximize()
-        except Exception:
+            window = webview.create_window(
+                title            = f"{shop_title} — Billing & Inventory",
+                url              = URL,
+                width            = 1400,
+                height           = 860,
+                min_size         = (900, 600),
+                resizable        = True,
+                frameless        = True,    # Remove native OS title bar; use custom title bar
+                easy_drag        = False,   # Handle drag via CSS -webkit-app-region:drag
+                background_color = '#0f0f0f',
+            )
+
+            api = DesktopApi(window)
+            window.expose(api.minimize_window, api.toggle_maximize, api.close_window, api.select_folder, api.save_file)
+
+            def on_loaded():
+                try:
+                    window.maximize()
+                except Exception:
+                    pass
+
+            DEBUG_MODE = os.environ.get('MPI_DEBUG', '0') == '1'
+            webview.start(on_loaded, debug=DEBUG_MODE)
+        except Exception as e:
+            print(f"[Desktop App Notice] Native pywebview window failed ({e}). Falling back to system browser mode...")
+            use_native_window = False
+
+    if not use_native_window:
+        print(f"[Desktop App] Opening application in default system browser: {URL}")
+        webbrowser.open(URL)
+        try:
+            while True:
+                time.sleep(1)
+        except (KeyboardInterrupt, SystemExit):
             pass
 
-    # Set MPI_DEBUG=1 in the environment only for internal development/testing, never in the customer build.
-    DEBUG_MODE = os.environ.get('MPI_DEBUG', '0') == '1'
-    webview.start(on_loaded, debug=DEBUG_MODE)
-    print("[OK] Desktop window closed. Goodbye!")
+    print("[OK] Desktop session ended. Goodbye!")

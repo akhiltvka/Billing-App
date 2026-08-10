@@ -109,10 +109,83 @@ def get_backup_retention_settings():
     return retention_days, max_files
 
 
-def prune_old_backups(retention_days=None, max_files=None):
+SAFETY_FLOOR_MIN_KEEP = 5
+
+def get_uploaded_backup_filenames():
+    """Return a set of zip_filenames that have successfully uploaded according to cloud_backup_history.json."""
+    backup_dir = os.path.join(os.path.dirname(DB_PATH), "backups")
+    history_file = os.path.join(backup_dir, "cloud_backup_history.json")
+    uploaded = set()
+    if os.path.exists(history_file):
+        try:
+            with open(history_file, 'r', encoding='utf-8') as f:
+                history = json.load(f)
+                for entry in history:
+                    if entry.get('success') is True and entry.get('zip_filename'):
+                        uploaded.add(entry.get('zip_filename'))
+        except Exception as e:
+            print(f"[Cloud Backup] Could not read cloud_backup_history.json: {e}")
+    return uploaded
+
+
+def check_unuploaded_backup_warnings():
+    """Check if backups are piling up un-uploaded past a threshold (3+ consecutive failed uploads) and warn/notify."""
+    backup_dir = os.path.join(os.path.dirname(DB_PATH), "backups")
+    history_file = os.path.join(backup_dir, "cloud_backup_history.json")
+    if not os.path.exists(history_file):
+        return 0
+
+    try:
+        with open(history_file, 'r', encoding='utf-8') as f:
+            history = json.load(f)
+    except Exception:
+        return 0
+
+    consecutive_failures = 0
+    for entry in reversed(history):
+        if entry.get('success') is True:
+            break
+        consecutive_failures += 1
+
+    if consecutive_failures >= 3:
+        msg = f"Cloud Backup Alert: {consecutive_failures} consecutive backup uploads have failed or are pending. Please verify internet connection to ensure offsite backup coverage."
+        print(f"[Cloud Backup Warning] {msg}")
+        try:
+            from database import get_db
+            conn = get_db()
+            # Check for existing unread warning within the last 1 day to prevent notification flooding
+            existing = conn.execute('''
+                SELECT id FROM notifications
+                WHERE title = 'Cloud Backup Warning'
+                  AND read = 0
+                  AND created_at >= datetime('now', '-1 day')
+            ''').fetchone()
+
+            if existing:
+                conn.execute('''
+                    UPDATE notifications
+                    SET message = ?, created_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (msg, existing['id']))
+            else:
+                conn.execute('''
+                    INSERT INTO notifications (target_role, title, message)
+                    VALUES ('admin', 'Cloud Backup Warning', ?)
+                ''', (msg,))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[Cloud Backup Notification Error] {e}")
+
+    return consecutive_failures
+
+
+def prune_old_backups(retention_days=None, max_files=None, min_keep=SAFETY_FLOOR_MIN_KEEP):
     """
     Delete compressed backup files in data/backups/ matching 'meatshop_cloud_auto_*.zip'
     that are older than retention_days, or trim excess files down to max_files (oldest first).
+    NEVER deletes any backup that has not been successfully uploaded to the cloud server,
+    and always keeps at least `min_keep` (default 5) most recent backups on disk.
     Returns count of pruned files.
     """
     r_def, m_def = get_backup_retention_settings()
@@ -130,7 +203,7 @@ def prune_old_backups(retention_days=None, max_files=None):
     pruned_count = 0
 
     try:
-        file_list = [
+        file_paths = [
             os.path.join(backup_dir, f)
             for f in os.listdir(backup_dir)
             if f.startswith("meatshop_cloud_auto_") and f.endswith(".zip")
@@ -139,33 +212,71 @@ def prune_old_backups(retention_days=None, max_files=None):
         print(f"[Cloud Backup Prune Error] Could not access backup directory: {e}")
         return 0
 
-    remaining_files = []
-    for filepath in file_list:
-        try:
-            mtime = os.path.getmtime(filepath)
-            if mtime < cutoff_time:
-                try:
-                    os.remove(filepath)
-                    pruned_count += 1
-                except Exception as e:
-                    print(f"[Cloud Backup Prune Error] Could not delete old backup '{filepath}': {e}")
-            else:
-                remaining_files.append((filepath, mtime))
-        except Exception as e:
-            print(f"[Cloud Backup Prune Error] Could not inspect file '{filepath}': {e}")
+    if not file_paths:
+        return 0
 
-    # Trim excess files down to max_files (oldest first)
-    if len(remaining_files) > max_files:
-        remaining_files.sort(key=lambda x: x[1])
-        excess_count = len(remaining_files) - max_files
-        for filepath, _ in remaining_files[:excess_count]:
+    # Fetch set of zip filenames that were verified as successfully uploaded
+    uploaded_files = get_uploaded_backup_filenames()
+
+    # Collect with mtime and sort oldest -> newest
+    files_with_mtime = []
+    for fp in file_paths:
+        try:
+            files_with_mtime.append((fp, os.path.getmtime(fp)))
+        except Exception:
+            pass
+
+    files_with_mtime.sort(key=lambda x: x[1])
+
+    # Hard safety floor: always protect the newest min_keep files
+    if len(files_with_mtime) <= min_keep:
+        # Fewer or equal files than safety floor — do not prune anything
+        return 0
+
+    protected_newest = set(fp for fp, _ in files_with_mtime[-min_keep:])
+    candidates = [(fp, mtime) for fp, mtime in files_with_mtime if fp not in protected_newest]
+
+    remaining_after_age = []
+    for filepath, mtime in candidates:
+        fname = os.path.basename(filepath)
+        # Never prune un-uploaded backups
+        if fname not in uploaded_files:
+            remaining_after_age.append((filepath, mtime))
+            continue
+
+        if mtime < cutoff_time:
             try:
                 os.remove(filepath)
                 pruned_count += 1
             except Exception as e:
+                print(f"[Cloud Backup Prune Error] Could not delete old backup '{filepath}': {e}")
+                remaining_after_age.append((filepath, mtime))
+        else:
+            remaining_after_age.append((filepath, mtime))
+
+    # All surviving files = remaining_after_age + protected_newest
+    all_surviving = remaining_after_age + [(fp, mt) for fp, mt in files_with_mtime if fp in protected_newest]
+    all_surviving.sort(key=lambda x: x[1])
+
+    # Trim excess files down to max_files (oldest first), respecting upload status & safety floor
+    if len(all_surviving) > max_files:
+        current_count = len(all_surviving)
+        for filepath, _ in all_surviving:
+            if current_count <= max_files:
+                break
+            if filepath in protected_newest:
+                continue
+            fname = os.path.basename(filepath)
+            if fname not in uploaded_files:
+                continue
+            try:
+                os.remove(filepath)
+                pruned_count += 1
+                current_count -= 1
+            except Exception as e:
                 print(f"[Cloud Backup Prune Error] Could not remove excess backup '{filepath}': {e}")
 
-    print(f"[Cloud Backup Pruning] Pruned {pruned_count} old backup zip(s) (Retention: {retention_days} days, Max Files: {max_files}).")
+    print(f"[Cloud Backup Pruning] Pruned {pruned_count} old uploaded backup zip(s) (Retention: {retention_days} days, Max Files: {max_files}, Min Keep: {min_keep}).")
     return pruned_count
 
 
@@ -206,6 +317,12 @@ def run_cloud_backup_job():
             json.dump(history, f, indent=2)
     except Exception:
         pass
+
+    # Check for unuploaded backups piling up and warn if needed
+    try:
+        check_unuploaded_backup_warnings()
+    except Exception as e:
+        print(f"[Cloud Backup Warning Check Error] {e}")
 
     # Run backup pruning after history is written
     try:

@@ -48,7 +48,9 @@ sc.Description = "{description}"
 class InstallerWizard(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"{APP_NAME} — Setup Wizard (Windows 10/11)")
+        self.is_32bit = (sys.maxsize <= 2**31 - 1)
+        edition_str = "Windows 7 / 32-bit Edition" if self.is_32bit else "Windows 10/11 64-bit"
+        self.title(f"{APP_NAME} — Setup Wizard ({edition_str})")
         self.geometry("640x480")
         self.resizable(False, False)
         self.configure(bg="#0F172A")
@@ -149,9 +151,11 @@ class InstallerWizard(tk.Tk):
 
         tk.Label(self.container, text="Welcome to the Setup Wizard", font=("Segoe UI", 15, "bold"), fg="#38BDF8", bg="#0F172A").pack(anchor="w", pady=(0, 10))
         
+        arch_bullet = "• Windows 7, 8, 10 & 11 Compatible (32-bit x86 Edition)" if self.is_32bit else "• Windows 10 & 11 Compatible (64-bit x64 Edition)"
+
         info_txt = (
             f"This wizard will install {APP_NAME} v{APP_VERSION} on your computer.\n\n"
-            "• Windows 10 & 11 Compatible (32-bit and 64-bit)\n"
+            f"{arch_bullet}\n"
             "• Safe Database Preservation on Updates\n"
             "• Windows Settings & Control Panel Integration (Add/Remove Programs)\n\n"
             "It is recommended that you close all other applications before continuing.\n\n"

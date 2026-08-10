@@ -18,33 +18,76 @@
     }
 
     .receipt-container {
-      width: {{ '220px' if width == '58' else '300px' }};
+      width: {{ '210px' if width == '58' else '280px' }};
       margin: 0 auto;
       background: #fff;
-      padding: 14px 12px;
+      padding: 12px 10px;
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
       border-radius: 4px;
     }
 
     @media print {
-      body {
-        background: #fff;
-        margin: 0;
-        padding: 0;
+      * {
+        color: #000 !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        text-shadow: none !important;
+        filter: none !important;
+      }
+      html, body {
+        background: #fff !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 100% !important;
       }
       .receipt-container {
-        width: {{ width }}mm;
-        margin: 0 auto;
-        padding: 4px 6px;
-        box-shadow: none;
-        border-radius: 0;
+        width: 100% !important;
+        max-width: 100% !important;
+        margin: 0 !important;
+        padding: 0 3mm !important;
+        box-sizing: border-box !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        overflow: hidden !important;
       }
       .no-print {
         display: none !important;
       }
       @page {
         size: {{ width }}mm auto;
-        margin: 0;
+        margin: 0mm;
+      }
+      .shop-name {
+        font-size: 13px !important;
+        font-weight: 800 !important;
+        margin-bottom: 1px !important;
+        color: #000 !important;
+      }
+      .shop-details {
+        font-size: 9px !important;
+        line-height: 1.15 !important;
+        color: #000 !important;
+      }
+      .divider-dash {
+        border-bottom: 1px dashed #000 !important;
+        margin: 3px 0 !important;
+      }
+      .divider-double {
+        border-bottom: 2px solid #000 !important;
+        margin: 3px 0 !important;
+      }
+      .receipt-table {
+        font-size: 10px !important;
+        table-layout: fixed !important;
+        width: 100% !important;
+      }
+      .receipt-table th, .receipt-table td {
+        padding: 1px 0 !important;
+        color: #000 !important;
+        word-break: break-word !important;
+      }
+      .text-right {
+        white-space: nowrap !important;
       }
     }
 
@@ -57,7 +100,6 @@
       font-size: 15px;
       font-weight: 800;
       letter-spacing: 0.5px;
-      text-transform: uppercase;
       margin-bottom: 2px;
     }
 
@@ -124,6 +166,7 @@
 <body>
 
 <div class="no-print no-print-toolbar">
+  <button class="toolbar-btn" onclick="window.location.href='/invoice/{{ bill_id }}'">📄 Switch to A4 Invoice</button>
   <button class="toolbar-btn" onclick="toggleWidth()">🔄 Paper: {{ width }}mm</button>
   <button class="toolbar-btn" onclick="window.print()">🖨️ Print Receipt</button>
   <button class="toolbar-btn" onclick="window.close()">✕ Close</button>
@@ -161,7 +204,7 @@
       if (json.status === 'error') throw new Error(json.message);
       renderReceipt(json.data);
       setTimeout(() => {
-        if (json.data.settings && json.data.settings.print_after_bill === 'true') {
+        if (window.self === window.top && json.data.settings && json.data.settings.print_after_bill === 'true') {
           window.print();
         }
       }, 400);
@@ -178,6 +221,8 @@
     const shopAddr = s.shop_address || '';
     const shopPhone = s.shop_phone || '';
     const shopGstin = isGstGlobal ? (s.shop_gstin || '') : '';
+    const shopBrandFont = s.shop_brand_font || '';
+    const shopLogo = s.shop_logo || '';
     const footerText = s.receipt_footer_text || 'Thank you, visit again!';
 
     const items = data.items || [];
@@ -198,11 +243,11 @@
       const amtStr = `₹${fmt(it.amount)}`;
       itemsHtml += `
         <tr>
-          <td colspan="2" class="bold" style="padding-top: 6px;">${name}</td>
+          <td colspan="2" class="bold" style="padding-top: 3px; font-size: 11px;">${name}</td>
         </tr>
-        <tr style="border-bottom: 1px dashed #eee;">
-          <td style="padding-bottom: 6px; color: #555; font-size: 11px;">${qtyStr}</td>
-          <td class="text-right bold num-align" style="padding-bottom: 6px;">${amtStr}</td>
+        <tr style="border-bottom: 1px dashed #ddd;">
+          <td style="padding-bottom: 3px; color: #444; font-size: 10.5px;">${qtyStr}</td>
+          <td class="text-right bold num-align" style="padding-bottom: 3px; font-size: 11px;">${amtStr}</td>
         </tr>
       `;
     });
@@ -237,7 +282,8 @@
 
     const html = `
       <div class="text-center">
-        <div class="shop-name">${shopName}</div>
+        ${shopLogo ? `<img src="${shopLogo}" alt="Logo" style="max-height:48px;max-width:90%;object-fit:contain;margin:0 auto 4px auto;display:block;">` : ''}
+        <div class="shop-name" style="${shopBrandFont ? `font-family: '${shopBrandFont}', sans-serif;` : ''}">${shopName}</div>
         <div class="shop-details">
           ${shopAddr ? `<div>${shopAddr}</div>` : ''}
           ${shopPhone ? `<div>Ph: ${shopPhone}</div>` : ''}
@@ -292,15 +338,15 @@
         </tr>
         <tr class="num-align">
           <td style="color:#555">Paid (${paymentInfo}):</td>
-          <td class="text-right">₹${fmt(data.amount_paid)}</td>
+          <td class="text-right">₹${fmt(data.amount_paid + (data.change_amount || 0))}</td>
         </tr>
         ${data.amount_due > 0 ? `
-          <tr class="bold num-align" style="color: #EF4444;">
+          <tr class="bold num-align" style="color: #000;">
             <td>AMOUNT DUE:</td>
             <td class="text-right">₹${fmt(data.amount_due)}</td>
           </tr>` : ''}
         ${data.change_amount > 0 ? `
-          <tr class="num-align" style="color: #10B981; font-weight: bold;">
+          <tr class="num-align" style="color: #000; font-weight: bold;">
             <td>Balance Given:</td>
             <td class="text-right">₹${fmt(data.change_amount)}</td>
           </tr>` : ''}

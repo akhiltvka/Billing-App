@@ -64,12 +64,16 @@
     .tip-box strong { color: var(--gold); }
     .page-footer { padding: 16px 32px; border-top: 1px solid var(--border); background: var(--bg); display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: var(--text-muted); }
     @media print {
-      body { background: white; }
+      * { color: #000 !important; background: transparent !important; box-shadow: none !important; text-shadow: none !important; }
+      body { background: white !important; }
       .toolbar { display: none !important; }
-      .page { max-width: 100%; margin: 0; border-radius: 0; box-shadow: none; min-height: auto !important; }
-      kbd { background: #1e293b !important; color: #c9a84c !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-      .shortcut-row { break-inside: avoid; }
-      @page { size: A4 portrait; margin: 12mm; }
+      .page { max-width: 100%; margin: 0; border-radius: 0; box-shadow: none; min-height: auto !important; padding: 0; }
+      .page-header { background: transparent !important; color: #000 !important; border-bottom: 2px solid #000; padding: 12px 0; }
+      .header-info h1, .header-info p, .header-meta .label, .header-meta .value { color: #000 !important; }
+      kbd { background: transparent !important; color: #000 !important; border: 1px solid #000 !important; }
+      .shortcut-row { break-inside: avoid; border: 1px solid #000 !important; background: transparent !important; }
+      .shortcut-desc, .shortcut-category { color: #000 !important; }
+      @page { size: A4 portrait; margin: 8mm; }
     }
   </style>
 </head>

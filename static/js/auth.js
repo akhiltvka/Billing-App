@@ -16,25 +16,37 @@ const Auth = {
   _unreadCount: 0,
 
   can(code) {
+    if (!this.currentUser) {
+      if (this.permissions && (this.permissions.has('*') || this.permissions.has(code))) return true;
+      if (window.USER_PERMISSIONS && Array.isArray(window.USER_PERMISSIONS)) {
+        if (window.USER_PERMISSIONS.includes('*') || window.USER_PERMISSIONS.includes(code)) return true;
+      }
+      return false;
+    }
+    const role = this.currentUser.role;
+    if (role === 'admin' || role === 'md') return true;
+
     if (!this.permissions) {
-      if (this.currentUser && Array.isArray(this.currentUser.permissions) && this.currentUser.permissions.length > 0) {
+      if (Array.isArray(this.currentUser.permissions) && this.currentUser.permissions.length > 0) {
         this.permissions = new Set(this.currentUser.permissions);
-      } else if (this.currentUser && (this.currentUser.role === 'admin' || this.currentUser.role === 'md')) {
-        this.permissions = new Set(['*']);
       } else if (window.USER_PERMISSIONS && Array.isArray(window.USER_PERMISSIONS) && window.USER_PERMISSIONS.length > 0) {
         this.permissions = new Set(window.USER_PERMISSIONS);
       } else {
-        // Safe default: allow basic operation if permissions are initializing
-        return true;
+        this.permissions = new Set();
       }
     }
-    if (this.permissions.has('*')) return true;
+
+    if (this.permissions.has('*') || this.permissions.has(code)) return true;
+
+    const pages = this.currentUser.pages || this.ROLE_PAGES[role] || [];
+    if (pages.includes(code)) return true;
 
     const pageMap = {
       dashboard:         'reports.view',
       billing:           'billing.create',
       bills:             'billing.view',
       inventory:         'inventory.view',
+      'stock-overview':  'inventory.view',
       'stock-in':        'stock.in',
       'purchase-orders': 'purchase.view',
       categories:        'inventory.view',
@@ -53,13 +65,13 @@ const Auth = {
 
   // Pages each role is allowed to access
   ROLE_PAGES: {
-    admin:         ['dashboard','billing','bills','inventory','stock-in','purchase-orders',
+    admin:         ['dashboard','billing','bills','inventory','stock-overview','stock-in','purchase-orders',
                     'categories','customers','suppliers','expenses','accounts','reports','settings','users'],
-    md:            ['dashboard','billing','bills','inventory','stock-in','purchase-orders',
+    md:            ['dashboard','billing','bills','inventory','stock-overview','stock-in','purchase-orders',
                     'categories','customers','suppliers','expenses','accounts','reports','settings','users'],
-    manager:       ['dashboard','billing','bills','inventory','stock-in','purchase-orders',
+    manager:       ['dashboard','billing','bills','inventory','stock-overview','stock-in','purchase-orders',
                     'categories','customers','suppliers','expenses','accounts','reports','users'],
-    accountant:    ['dashboard','billing','bills','customers','expenses','accounts','reports','inventory'],
+    accountant:    ['dashboard','billing','bills','customers','expenses','accounts','reports','inventory','stock-overview'],
     counter_staff: ['billing','bills','customers'],
     tester:        ['billing','bills','customers'],
   },
@@ -755,13 +767,7 @@ const Auth = {
     } catch(e) { App.toast('Error: ' + e.message, 'error'); }
   },
 
-  // ── Permission Check ───────────────────────────────────────────────────────
-  can(page) {
-    if (!Auth.currentUser) return false;
-    if (Auth.currentUser.role === 'admin') return true;
-    const allowed = Auth.currentUser.pages || Auth.ROLE_PAGES[Auth.currentUser.role] || [];
-    return allowed.includes(page);
-  },
+
 
   isRole(...roles) {
     return roles.includes(Auth.currentUser?.role);

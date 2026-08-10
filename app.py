@@ -22,6 +22,12 @@ from database import get_db, init_db, dict_row, dict_rows, post_ledger_entry
 from license_manager import get_license_info, activate_subscription
 from license_sync import sync_with_cloud_server, notify_cloud_payment, re_register_with_cloud
 from cloud_backup import start_cloud_backup_scheduler, run_cloud_backup_job
+from external_backup import (
+    get_external_backup_status,
+    perform_external_backup,
+    is_drive_connected,
+    trigger_external_backup_async
+)
 
 import secrets
 import sys
@@ -39,6 +45,16 @@ def add_header(response):
     response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
+
+    # Auto-trigger real-time external database backup on successful data mutations
+    if request.method in ('POST', 'PUT', 'DELETE', 'PATCH'):
+        if 200 <= response.status_code < 300:
+            if not request.path.startswith('/api/backup/external'):
+                try:
+                    trigger_external_backup_async()
+                except Exception:
+                    pass
+
     return response
 
 def _get_flask_secret_key():
@@ -64,7 +80,21 @@ def _get_flask_secret_key():
 
 app.secret_key = _get_flask_secret_key()
 
-CORS(app, supports_credentials=True)
+# Configure explicit CORS origins allowlist
+allowed_origins = [
+    "http://127.0.0.1:5000",
+    "http://localhost:5000",
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+]
+env_allowed_origin = os.environ.get('APP_ALLOWED_ORIGIN', '').strip()
+if env_allowed_origin:
+    for orig in env_allowed_origin.split(','):
+        orig_clean = orig.strip()
+        if orig_clean and orig_clean not in allowed_origins:
+            allowed_origins.append(orig_clean)
+
+CORS(app, supports_credentials=True, origins=allowed_origins)
 
 # ─── Role Permissions ────────────────────────────────────────────────────────
 
@@ -637,13 +667,15 @@ class InsufficientStockError(Exception):
 # Stock-out (billing) quantities are supplied in sale_unit terms and converted to purchase_unit via conversion_factor before updating stock.
 def update_stock(conn, product_id, delta, tx_type, unit_price=0, ref=None,
                  supplier_id=None, expiry_date=None, notes=None, status='approved',
-                 created_by=None, approved_by=None, batch_no=None, unit_cost=None):
+                 created_by=None, approved_by=None, batch_no=None, unit_cost=None,
+                 purchase_date=None):
     delta = float(delta)
+    p_date = purchase_date or str(date.today())
     cur = conn.execute(
         '''INSERT INTO stock_transactions
-           (product_id, type, quantity, unit_price, reference_id, supplier_id, expiry_date, notes, status, created_by, approved_by)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)''',
-        (product_id, tx_type, abs(delta), unit_price, ref, supplier_id, expiry_date, notes, status, created_by, approved_by)
+           (product_id, type, quantity, unit_price, reference_id, supplier_id, expiry_date, notes, status, created_by, approved_by, purchase_date)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (product_id, tx_type, abs(delta), unit_price, ref, supplier_id, expiry_date, notes, status, created_by, approved_by, p_date)
     )
     tx_id = cur.lastrowid
     deducted_cost = 0.0
@@ -668,9 +700,9 @@ def update_stock(conn, product_id, delta, tx_type, unit_price=0, ref=None,
             b_cost = unit_cost if unit_cost is not None else unit_price
             conn.execute(
                 '''INSERT INTO stock_batches
-                   (product_id, batch_no, quantity_remaining, unit_price, unit_cost, expiry_date, supplier_id, stock_transaction_id)
-                   VALUES (?,?,?,?,?,?,?,?)''',
-                (product_id, b_no, abs(delta), unit_price, b_cost, expiry_date, supplier_id, tx_id)
+                   (product_id, batch_no, quantity_remaining, unit_price, unit_cost, expiry_date, supplier_id, stock_transaction_id, purchase_date)
+                   VALUES (?,?,?,?,?,?,?,?,?)''',
+                (product_id, b_no, abs(delta), unit_price, b_cost, expiry_date, supplier_id, tx_id, p_date)
             )
         elif delta < 0:
             deducted_cost = deduct_fefo_stock(conn, product_id, abs(delta))
@@ -728,10 +760,13 @@ def invoice_page(bill_id):
 
 @app.route('/invoice/<int:bill_id>/thermal')
 def invoice_thermal_page(bill_id):
-    width = request.args.get('width', '80')
+    conn = get_db()
+    setting_width = get_setting('thermal_paper_width', conn)
+    conn.close()
+    width = request.args.get('width', setting_width or '80')
     if width not in ('58', '80'):
         width = '80'
-    return render_template('invoice_print.html', bill_id=bill_id, is_thermal=True, width=width)
+    return render_template('invoice_thermal.html', bill_id=bill_id, width=width)
 
 @app.route('/printables/stock-items')
 def printable_stock_items():
@@ -755,6 +790,39 @@ def printable_shortcuts():
     shop_name = shop_name_row['value'] if shop_name_row else 'Meat Products of India'
     conn.close()
     return render_template('shortcuts_print.html', shop_name=shop_name)
+
+@app.route('/printables/barcodes')
+def printable_barcodes():
+    """Barcode label print page — A4 11×4 grid (44 labels per page).
+    Optional query param: product_ids=1,2,3  and  qty=5 (copies per item, default 1).
+    Without product_ids the template receives empty items and the SPA injects
+    items via URL ?items=<base64-json> or window.postMessage.
+    """
+    import json as _json
+    conn = get_db()
+    shop_name_row = conn.execute("SELECT value FROM shop_settings WHERE key='shop_name'").fetchone()
+    shop_name = shop_name_row['value'] if shop_name_row else 'Meat Products of India'
+
+    product_ids_param = request.args.get('product_ids', '')
+    qty_param = max(1, int(request.args.get('qty', 1)))
+    items = []
+
+    if product_ids_param:
+        try:
+            pids = [int(x.strip()) for x in product_ids_param.split(',') if x.strip()]
+            if pids:
+                placeholders = ','.join('?' * len(pids))
+                rows = conn.execute(
+                    f"SELECT id, name, code, barcode, selling_price, unit FROM products WHERE id IN ({placeholders}) AND active=1",
+                    pids
+                ).fetchall()
+                items = [dict(r, qty=qty_param) for r in rows]
+        except Exception:
+            pass
+
+    conn.close()
+    items_json = _json.dumps(items)
+    return render_template('barcode_print.html', shop_name=shop_name, items_json=items_json)
 
 
 
@@ -1708,6 +1776,17 @@ def list_products():
         return export_to_excel(sheets, "products_list")
 
     product_list = dict_rows(rows)
+
+    # Compute duplicate flags for products sharing exact name or code
+    from collections import Counter
+    name_counts = Counter((p.get('name') or '').strip().lower() for p in product_list if p.get('name'))
+    code_counts = Counter((p.get('code') or '').strip().upper() for p in product_list if p.get('code'))
+
+    for p in product_list:
+        p_name = (p.get('name') or '').strip().lower()
+        p_code = (p.get('code') or '').strip().upper()
+        p['is_duplicate'] = bool(name_counts[p_name] > 1 or code_counts[p_code] > 1)
+
     # Counter staff must not see confidential buying prices
     if is_counter_staff():
         for p in product_list:
@@ -1725,9 +1804,20 @@ def get_product(pid):
         '''SELECT p.*, c.name AS category_name FROM products p
            LEFT JOIN categories c ON p.category_id=c.id WHERE p.id=?''', (pid,)
     ).fetchone()
-    conn.close()
-    if not row: return err("Product not found", 404)
+    if not row:
+        conn.close()
+        return err("Product not found", 404)
     p = dict_row(row)
+
+    bill_row = conn.execute('''
+        SELECT COUNT(DISTINCT bi.bill_id) AS cnt
+        FROM bill_items bi
+        JOIN bills b ON bi.bill_id = b.id
+        WHERE bi.product_id = ? AND b.status != 'cancelled'
+    ''', (pid,)).fetchone()
+    p['bill_count'] = bill_row['cnt'] if bill_row else 0
+    conn.close()
+
     if is_counter_staff():
         p.pop('purchase_price', None)
         p.pop('mrp', None)
@@ -1747,8 +1837,8 @@ def get_product_by_barcode(barcode):
         SELECT p.*, c.name AS category_name
         FROM products p
         LEFT JOIN categories c ON p.category_id = c.id
-        WHERE p.barcode = ? AND p.active = 1
-    ''', (b,)).fetchone()
+        WHERE (p.barcode = ? OR p.code = ? OR p.id = ?) AND p.active = 1
+    ''', (b, b, b)).fetchone()
     conn.close()
 
     if not row:
@@ -1786,21 +1876,38 @@ def create_product():
     brand_val = (d.get('brand') or '').strip() or None
     pack_size_val = (d.get('pack_size') or '').strip() or None
     lead_time = int(d.get('reorder_lead_time_days', 7 if ptype == 'general' else 1))
+    shelf_life = int(d['shelf_life_days']) if d.get('shelf_life_days') is not None and str(d.get('shelf_life_days')).strip() != '' else None
 
     conn = get_db()
+    name_clean = (d.get('name') or '').strip()
+    code_clean = code
+
+    # Duplicate check for name or code
+    dup = conn.execute('''
+        SELECT id, name, code FROM products
+        WHERE (LOWER(TRIM(name)) = LOWER(?) OR UPPER(TRIM(code)) = ?) AND active = 1
+    ''', (name_clean, code_clean)).fetchone()
+
+    if dup:
+        conn.close()
+        if dup['code'].upper() == code_clean:
+            return err(f"Product code '{code_clean}' already exists. Please choose a unique 4-letter code.", 409)
+        else:
+            return err(f"Product duplication is not allowed. A product named '{dup['name']}' already exists in the catalog.", 409)
+
     try:
         c = conn.execute(
             '''INSERT INTO products
                (category_id, name, code, hsn_code, unit, purchase_unit, sale_unit, conversion_factor,
                 purchase_price, selling_price, gst_rate, min_stock, current_stock, barcode,
-                product_type, mrp, is_price_inclusive_of_tax, brand, pack_size, reorder_lead_time_days)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                product_type, mrp, is_price_inclusive_of_tax, brand, pack_size, reorder_lead_time_days, shelf_life_days)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (d.get('category_id'), d['name'], code, d.get('hsn_code', ''),
              s_unit, p_unit, s_unit, conv_factor,
              d.get('purchase_price', 0), d.get('selling_price', 0),
              d.get('gst_rate', 0), d.get('min_stock', 1), 0,
              d.get('barcode') or None,
-             ptype, mrp_val, inc_tax, brand_val, pack_size_val, lead_time)
+             ptype, mrp_val, inc_tax, brand_val, pack_size_val, lead_time, shelf_life)
         )
         pid = c.lastrowid
         role = session.get('user_role')
@@ -1810,7 +1917,8 @@ def create_product():
 
         if d.get('current_stock', 0) > 0:
             update_stock(conn, pid, d['current_stock'], 'in', d.get('purchase_price', 0),
-                         notes='Opening stock', status=st_status, created_by=username, approved_by=st_approver)
+                         notes='Opening stock', status=st_status, created_by=username, approved_by=st_approver,
+                         purchase_date=d.get('purchase_date'))
 
         conn.commit()
         row = conn.execute(
@@ -1855,8 +1963,25 @@ def update_product(pid):
     brand_val = (d.get('brand') or '').strip() or None
     pack_size_val = (d.get('pack_size') or '').strip() or None
     lead_time = int(d.get('reorder_lead_time_days', 7 if ptype == 'general' else 1))
+    shelf_life = int(d['shelf_life_days']) if d.get('shelf_life_days') is not None and str(d.get('shelf_life_days')).strip() != '' else None
 
     conn = get_db()
+    name_clean = (d.get('name') or '').strip()
+    code_clean = code
+
+    # Duplicate check for name or code on other active products
+    dup = conn.execute('''
+        SELECT id, name, code FROM products
+        WHERE (LOWER(TRIM(name)) = LOWER(?) OR UPPER(TRIM(code)) = ?) AND id != ? AND active = 1
+    ''', (name_clean, code_clean, pid)).fetchone()
+
+    if dup:
+        conn.close()
+        if dup['code'].upper() == code_clean:
+            return err(f"Product code '{code_clean}' already exists on another product. Please choose a unique 4-letter code.", 409)
+        else:
+            return err(f"Product duplication is not allowed. Another product named '{dup['name']}' already exists in the catalog.", 409)
+
     old_prod = conn.execute('SELECT selling_price, purchase_price FROM products WHERE id=?', (pid,)).fetchone()
     if old_prod:
         new_sp = float(d.get('selling_price', old_prod['selling_price']))
@@ -1870,13 +1995,13 @@ def update_product(pid):
                category_id=?, name=?, code=?, hsn_code=?, unit=?, purchase_unit=?, sale_unit=?,
                conversion_factor=?, purchase_price=?, selling_price=?, gst_rate=?, min_stock=?,
                barcode=?, product_type=?, mrp=?, is_price_inclusive_of_tax=?, brand=?, pack_size=?,
-               reorder_lead_time_days=?, active=?, updated_at=CURRENT_TIMESTAMP
+               reorder_lead_time_days=?, shelf_life_days=?, active=?, updated_at=CURRENT_TIMESTAMP
                WHERE id=?''',
             (d.get('category_id'), d['name'], code, d.get('hsn_code', ''),
              s_unit, p_unit, s_unit, conv_factor,
              d.get('purchase_price', 0), d.get('selling_price', 0), d.get('gst_rate', 0),
              d.get('min_stock', 1), d.get('barcode') or None,
-             ptype, mrp_val, inc_tax, brand_val, pack_size_val, lead_time,
+             ptype, mrp_val, inc_tax, brand_val, pack_size_val, lead_time, shelf_life,
              d.get('active', 1), pid)
         )
         conn.commit()
@@ -1896,9 +2021,27 @@ def update_product(pid):
 @require_permission('inventory.delete')
 def delete_product(pid):
     conn = get_db()
+    prod = conn.execute('SELECT * FROM products WHERE id=?', (pid,)).fetchone()
+    if not prod:
+        conn.close()
+        return err("Product not found", 404)
+
+    bill_row = conn.execute('''
+        SELECT COUNT(DISTINCT bi.bill_id) AS cnt
+        FROM bill_items bi
+        JOIN bills b ON bi.bill_id = b.id
+        WHERE bi.product_id = ? AND b.status != 'cancelled'
+    ''', (pid,)).fetchone()
+    bill_count = bill_row['cnt'] if bill_row else 0
+
+    if bill_count > 0:
+        conn.close()
+        return err(f"Cannot delete product '{prod['name']}' because it is billed in {bill_count} active invoice(s). You must delete or cancel the associated bill(s) first before removing this product.", 400)
+
     conn.execute('UPDATE products SET active=0 WHERE id=?', (pid,))
-    conn.commit(); conn.close()
-    return ok(message="Product deactivated")
+    conn.commit()
+    conn.close()
+    return ok(message=f"Product '{prod['name']}' deleted successfully")
 
 @app.route('/api/products/<int:pid>/batches', methods=['GET'])
 @require_auth
@@ -2056,7 +2199,12 @@ def create_stock_conversion():
             ''', (cnv_id, out_pid, out_qty, alloc_unit_cost))
 
             out_expiry = None
-            shelf_life = out_prod.get('shelf_life_days') if hasattr(out_prod, 'keys') and 'shelf_life_days' in out_prod.keys() else None
+            shelf_life = None
+            try:
+                shelf_life = out_prod['shelf_life_days']
+            except (IndexError, KeyError, TypeError):
+                shelf_life = None
+
             if shelf_life and int(shelf_life) > 0:
                 try:
                     base_dt = datetime.strptime(cnv_date[:10], '%Y-%m-%d')
@@ -2643,6 +2791,37 @@ def get_customer(cid):
     result['bills'] = add_print_tokens_to_bills(dict_rows(bills))
     return ok(result)
 
+@app.route('/api/customers/<int:cid>/loyalty', methods=['GET'])
+@require_permission('customers.view')
+def get_customer_loyalty(cid):
+    conn = get_db()
+    cust = conn.execute('SELECT id, name, phone, loyalty_points FROM customers WHERE id=?', (cid,)).fetchone()
+    if not cust:
+        conn.close()
+        return err("Customer not found", 404)
+
+    ledger = conn.execute(
+        'SELECT id, bill_id, points_change, reason, created_at FROM loyalty_ledger WHERE customer_id=? ORDER BY id DESC LIMIT 20',
+        (cid,)
+    ).fetchall()
+
+    loyalty_enabled = (get_setting('loyalty_enabled', conn) or 'true') != 'false'
+    pts_per_rupee = float(get_setting('loyalty_points_per_rupee', conn) or 0.01)
+    redemption_val = float(get_setting('loyalty_redemption_value', conn) or 0.50)
+    conn.close()
+
+    pts = float(cust['loyalty_points'] or 0)
+    return ok({
+        "customer_id": cust['id'],
+        "customer_name": cust['name'],
+        "loyalty_points": round(pts, 2),
+        "points_value_rupees": round(pts * redemption_val, 2),
+        "loyalty_enabled": loyalty_enabled,
+        "loyalty_points_per_rupee": pts_per_rupee,
+        "loyalty_redemption_value": redemption_val,
+        "ledger": dict_rows(ledger)
+    })
+
 @app.route('/api/customers/<int:cid>/dues', methods=['GET'])
 @require_permission('customers.view')
 def get_customer_dues(cid):
@@ -3006,6 +3185,88 @@ def stock_summary():
 
     return ok(result)
 
+@app.route('/api/stock/detailed-overview', methods=['GET'])
+@require_permission('inventory.view')
+def detailed_stock_overview():
+    conn = get_db()
+    # Query all active stock batches with details
+    batches_rows = conn.execute(
+        '''SELECT sb.id AS batch_id, sb.batch_no, sb.quantity_remaining, sb.unit_price, sb.unit_cost, sb.expiry_date, sb.purchase_date,
+                  p.id AS product_id, p.name AS product_name, p.code AS product_code, p.unit, p.min_stock, p.current_stock, p.selling_price, p.purchase_price,
+                  c.id AS category_id, c.name AS category_name,
+                  s.id AS supplier_id, s.name AS supplier_name
+           FROM stock_batches sb
+           JOIN products p ON sb.product_id = p.id
+           LEFT JOIN categories c ON p.category_id = c.id
+           LEFT JOIN suppliers s ON sb.supplier_id = s.id
+           WHERE sb.quantity_remaining > 0 AND p.active = 1
+           ORDER BY sb.purchase_date DESC, p.name'''
+    ).fetchall()
+    
+    # Also fetch products that are out of stock (current_stock = 0) to show out-of-stock alerts
+    out_of_stock_rows = conn.execute(
+        '''SELECT p.id AS product_id, p.name AS product_name, p.code AS product_code, p.unit, p.min_stock, p.current_stock, p.selling_price, p.purchase_price,
+                  c.id AS category_id, c.name AS category_name
+           FROM products p
+           LEFT JOIN categories c ON p.category_id = c.id
+           WHERE p.active = 1 AND p.current_stock <= 0
+           ORDER BY p.name'''
+    ).fetchall()
+    conn.close()
+    
+    return ok({
+        'batches': dict_rows(batches_rows),
+        'out_of_stock': dict_rows(out_of_stock_rows)
+    })
+
+@app.route('/api/stock/missing-purchase-dates', methods=['GET'])
+@require_permission('stock.in')
+def get_missing_purchase_dates():
+    conn = get_db()
+    rows = conn.execute(
+        '''SELECT sb.id AS batch_id, sb.batch_no, sb.quantity_remaining, sb.unit_price, sb.purchase_date,
+                  p.id AS product_id, p.name AS product_name, p.code AS product_code, p.unit
+           FROM stock_batches sb
+           JOIN products p ON sb.product_id = p.id
+           WHERE sb.quantity_remaining > 0 AND (sb.purchase_date IS NULL OR sb.purchase_date = '')'''
+    ).fetchall()
+    conn.close()
+    return ok(dict_rows(rows))
+
+@app.route('/api/stock/missing-purchase-dates', methods=['POST'])
+@require_permission('stock.in')
+def save_missing_purchase_dates():
+    data = request.get_json() or {}
+    updates = data.get('updates', [])
+    if not isinstance(updates, list):
+        return err("Invalid payload structure")
+    
+    conn = get_db()
+    try:
+        for u in updates:
+            bid = u.get('batch_id')
+            p_date = u.get('purchase_date')
+            if not bid or not p_date:
+                continue
+            # Update the batch purchase date
+            conn.execute(
+                'UPDATE stock_batches SET purchase_date = ? WHERE id = ?',
+                (p_date, bid)
+            )
+            # Update the corresponding stock transaction purchase date
+            conn.execute(
+                '''UPDATE stock_transactions 
+                   SET purchase_date = ? 
+                   WHERE id = (SELECT stock_transaction_id FROM stock_batches WHERE id = ?)''',
+                (p_date, bid)
+            )
+        conn.commit()
+        conn.close()
+        return ok(message="Purchase dates saved successfully")
+    except Exception as e:
+        conn.close()
+        return err(str(e))
+
 @app.route('/api/stock/in', methods=['POST'])
 @require_permission('stock.in')
 def stock_in():
@@ -3021,14 +3282,16 @@ def stock_in():
 
     role = session.get('user_role')
     username = session.get('username')
-    status = 'approved' if role in ('admin', 'manager') else 'pending_verification'
-    approved_by = username if role in ('admin', 'manager') else None
+    status = 'approved' if role in ('admin', 'md', 'manager') else 'pending_verification'
+    approved_by = username if role in ('admin', 'md', 'manager') else None
+    purchase_date = d.get('purchase_date') or d.get('date') or str(date.today())
 
     conn = get_db()
     update_stock(conn, d['product_id'], qty, 'in',
                  float(d.get('unit_price', 0)), d.get('reference'),
                  d.get('supplier_id'), d.get('expiry_date'), d.get('notes'),
-                 status=status, created_by=username, approved_by=approved_by)
+                 status=status, created_by=username, approved_by=approved_by,
+                 purchase_date=purchase_date)
 
     if status == 'pending_verification':
         prod = conn.execute('SELECT name FROM products WHERE id=?', (d['product_id'],)).fetchone()
@@ -3046,6 +3309,98 @@ def stock_in():
     row = conn.execute('SELECT * FROM products WHERE id=?', (d['product_id'],)).fetchone()
     conn.close()
     return ok(dict_row(row), "Stock updated and approved")
+
+@app.route('/api/stock/bulk-in', methods=['POST'])
+@require_permission('stock.in')
+def stock_bulk_in():
+    d = request.get_json()
+    if not d or not isinstance(d.get('items'), list) or len(d['items']) == 0:
+        return err("JSON payload with 'items' array required", 400)
+
+    purchase_date = d.get('purchase_date') or d.get('date') or str(date.today())
+    supplier_id = d.get('supplier_id')
+    reference = d.get('reference') or d.get('reference_no') or ''
+    bulk_notes = d.get('notes') or 'Bulk Stock Entry'
+
+    role = session.get('user_role')
+    username = session.get('username')
+    status = 'approved' if role in ('admin', 'md', 'manager') else 'pending_verification'
+    approved_by = username if role in ('admin', 'md', 'manager') else None
+
+    conn = get_db()
+    items_processed = 0
+    total_qty_added = 0.0
+    total_value_added = 0.0
+
+    try:
+        for item in d['items']:
+            pid = item.get('product_id')
+            if not pid:
+                continue
+            try:
+                qty = float(item.get('quantity') or item.get('qty') or 0)
+            except (ValueError, TypeError):
+                qty = 0.0
+            if qty <= 0:
+                continue
+            try:
+                price = float(item.get('unit_price') or item.get('price') or item.get('purchase_price') or 0)
+            except (ValueError, TypeError):
+                price = 0.0
+            expiry = item.get('expiry_date') or item.get('expiry') or None
+            batch_no = item.get('batch_no') or item.get('batch') or None
+            item_notes = item.get('notes') or bulk_notes
+
+            update_stock(
+                conn, pid, qty, 'in',
+                unit_price=price,
+                ref=reference,
+                supplier_id=supplier_id,
+                expiry_date=expiry,
+                notes=item_notes,
+                status=status,
+                created_by=username,
+                approved_by=approved_by,
+                purchase_date=purchase_date,
+                batch_no=batch_no
+            )
+
+            items_processed += 1
+            total_qty_added += qty
+            total_value_added += (qty * price)
+
+        if items_processed == 0:
+            conn.close()
+            return err("No valid items with quantity > 0 provided", 400)
+
+        if status == 'pending_verification':
+            msg = f"Accountant @{username} submitted Bulk Stock-In of {items_processed} items ({round(total_qty_added, 3)} total units). Pending Manager / MD verification."
+            conn.execute('INSERT INTO notifications (target_role, title, message) VALUES (?,?,?)',
+                         ('manager', '📦 Bulk Stock-In Pending Verification', msg))
+            conn.execute('INSERT INTO notifications (target_role, title, message) VALUES (?,?,?)',
+                         ('admin', '📦 Bulk Stock-In Pending Verification', msg))
+            conn.commit()
+            conn.close()
+            return ok({
+                'items_processed': items_processed,
+                'total_qty': round(total_qty_added, 3),
+                'total_value': round(total_value_added, 2),
+                'status': 'pending_verification'
+            }, message=f"Bulk stock entry submitted for {items_processed} items! Pending approval by Manager or Managing Director.")
+
+        conn.commit()
+        conn.close()
+        return ok({
+            'items_processed': items_processed,
+            'total_qty': round(total_qty_added, 3),
+            'total_value': round(total_value_added, 2),
+            'status': 'approved'
+        }, message=f"Bulk stock entry completed! {items_processed} products updated (+{round(total_qty_added, 3)} total stock).")
+
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return err(f"Bulk stock entry failed: {str(e)}", 500)
 
 @app.route('/api/stock/pending', methods=['GET'])
 @require_permission('stock.verify')
@@ -3086,11 +3441,12 @@ def verify_stock(tx_id):
                      (tx['quantity'], tx['product_id']))
         if tx['type'] in ('in', 'adjustment') and tx['quantity'] > 0:
             b_no = f"BATCH-{tx_id:05d}"
+            p_date = tx['purchase_date'] if ('purchase_date' in tx.keys() and tx['purchase_date']) else tx['date']
             conn.execute(
                 '''INSERT INTO stock_batches
-                   (product_id, batch_no, quantity_remaining, unit_price, expiry_date, supplier_id, stock_transaction_id)
-                   VALUES (?,?,?,?,?,?,?)''',
-                (tx['product_id'], b_no, tx['quantity'], tx['unit_price'], tx['expiry_date'], tx['supplier_id'], tx_id)
+                   (product_id, batch_no, quantity_remaining, unit_price, expiry_date, supplier_id, stock_transaction_id, purchase_date)
+                   VALUES (?,?,?,?,?,?,?,?)''',
+                (tx['product_id'], b_no, tx['quantity'], tx['unit_price'], tx['expiry_date'], tx['supplier_id'], tx_id, p_date)
             )
         msg = f"Stock-In for {pname} ({tx['quantity']} units) approved by @{approver}."
     else:
@@ -3161,12 +3517,23 @@ def stock_adjustment():
         return err("Valid new_quantity required")
 
     conn = get_db()
-    prod = conn.execute('SELECT current_stock FROM products WHERE id=?', (d['product_id'],)).fetchone()
-    if not prod: conn.close(); return err("Product not found", 404)
-    delta = new_qty - prod['current_stock']
-    update_stock(conn, d['product_id'], delta, 'adjustment', notes=d.get('notes', 'Manual adjustment'))
-    conn.commit()
-    row = conn.execute('SELECT * FROM products WHERE id=?', (d['product_id'],)).fetchone()
+    try:
+        prod = conn.execute('SELECT current_stock FROM products WHERE id=?', (d['product_id'],)).fetchone()
+        if not prod:
+            return err("Product not found", 404)
+        delta = new_qty - prod['current_stock']
+        update_stock(conn, d['product_id'], delta, 'adjustment', notes=d.get('notes', 'Manual adjustment'))
+        conn.commit()
+        row = conn.execute('SELECT * FROM products WHERE id=?', (d['product_id'],)).fetchone()
+        return ok(dict_row(row), "Stock adjusted successfully")
+    except Exception as e:
+        conn.rollback()
+        return err(f"Stock adjustment failed: {str(e)}", 500)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 # ─── Hold & Recall Bills ───────────────────────────────────────────────────
 
 @app.route('/billing/hold', methods=['POST'])
@@ -3379,7 +3746,8 @@ def list_bills():
         }]
         return export_to_excel(sheets, "bills_list")
 
-    total = conn.execute('SELECT COUNT(*) FROM bills WHERE status != "cancelled"').fetchone()[0]
+    count_sql = f"SELECT COUNT(*) FROM ({sql})"
+    total = conn.execute(count_sql, params).fetchone()[0]
     rows = conn.execute(sql + sql_order + ' LIMIT ? OFFSET ?', params + [limit, offset]).fetchall()
     conn.close()
     return ok({"bills": add_print_tokens_to_bills(dict_rows(rows)), "total": total})
@@ -3466,6 +3834,8 @@ def bill_share_link(bid):
 def create_bill():
     lic = get_license_info()
     if lic.get('is_locked'):
+        if lic.get('status') == 'revoked':
+            return err("Outlet access has been revoked by central administrator. Please contact support to restore access.", 403)
         return err("Subscription expired and grace period ended. Please activate software with a 12-digit key to create bills.", 403)
 
     d = request.get_json()
@@ -3477,11 +3847,21 @@ def create_bill():
     try:
         bill_date = None
         if d.get('date'):
+            user_role = session.get('user_role', '')
+            user_perms = get_user_permissions(session.get('user_id'))
+            if user_role not in ('admin', 'md') and '*' not in user_perms and 'billing.backdate' not in user_perms:
+                conn.close()
+                return err("Only Managing Director (MD) or Admin can create back-dated bills.", 403)
             try:
-                val = d.get('date').split()[0]
-                bill_date = datetime.strptime(val, '%Y-%m-%d').date()
-            except Exception:
-                pass
+                val = str(d.get('date')).split()[0]
+                parsed_d = datetime.strptime(val, '%Y-%m-%d').date()
+                if parsed_d > date.today():
+                    conn.close()
+                    return err("Custom bill date cannot be in the future. Back-dating only is permitted.", 400)
+                bill_date = parsed_d
+            except ValueError:
+                conn.close()
+                return err("Invalid bill date format. Use YYYY-MM-DD", 400)
         bill_no = next_bill_no(conn, for_date=bill_date)
         
         # Determine place of supply and inter-state status
@@ -3495,33 +3875,112 @@ def create_bill():
         place_of_supply = cust_state_code
         is_interstate = 1 if (shop_state_code and place_of_supply and shop_state_code != place_of_supply) else 0
 
-        subtotal = 0; cgst_total = 0; sgst_total = 0; igst_total = 0
-        # Validate stock
+        # Permission check for overriding product selling price
+        user_id = session.get('user_id')
+        user_perms = get_user_permissions(user_id) if user_id else set()
+        user_role = session.get('user_role', '')
+        can_edit_price = ('*' in user_perms) or ('inventory.edit_price' in user_perms) or (user_role in ('admin', 'md'))
+
+        # Pre-validate stock, product existence, and authoritative prices
         for it in items:
+            qty = float(it.get('quantity', 0))
+            if qty <= 0:
+                conn.close()
+                return err("Item quantity must be greater than zero", 400)
+
+            client_price = float(it.get('unit_price', 0))
             if it.get('product_id'):
                 prod = conn.execute(
-                    'SELECT current_stock, conversion_factor, sale_unit, name FROM products WHERE id=?', (it['product_id'],)
+                    '''SELECT id, name, current_stock, conversion_factor, sale_unit,
+                              selling_price, mrp, product_type, is_price_inclusive_of_tax, purchase_price
+                       FROM products WHERE id=?''',
+                    (it['product_id'],)
                 ).fetchone()
-                if prod:
-                    conv = float(prod['conversion_factor'] or 1.0)
-                    qty_sale = float(it['quantity'])
-                    qty_purchase = round(qty_sale / conv, 4)
-                    if prod['current_stock'] < qty_purchase:
-                        avail_sale_units = round(prod['current_stock'] * conv, 3)
-                        unit_label = prod['sale_unit'] or 'units'
-                        return err(f"Insufficient stock for {prod['name']}. Available: {avail_sale_units} {unit_label}")
+                if not prod:
+                    conn.close()
+                    return err(f"Product ID {it['product_id']} not found", 400)
+
+                # Validate stock
+                conv = float(prod['conversion_factor'] or 1.0)
+                qty_purchase = round(qty / conv, 4)
+                if prod['current_stock'] < qty_purchase:
+                    avail_sale_units = round(prod['current_stock'] * conv, 3)
+                    unit_label = prod['sale_unit'] or 'units'
+                    conn.close()
+                    return err(f"Insufficient stock for {prod['name']}. Available: {avail_sale_units} {unit_label}", 400)
+
+                # Authoritative price resolution & verification
+                std_price = float(prod['selling_price'] if prod['selling_price'] is not None else 0.0)
+                valid_prices = [std_price]
+                if prod['product_type'] == 'general' and prod['mrp'] is not None:
+                    valid_prices.append(float(prod['mrp']))
+
+                if can_edit_price:
+                    validated_price = client_price
+                else:
+                    matched_price = None
+                    for vp in valid_prices:
+                        if abs(client_price - vp) <= 0.01:
+                            matched_price = vp
+                            break
+                    if matched_price is None:
+                        conn.close()
+                        return err(f"Price mismatch for {prod['name']}: submitted ₹{client_price:.2f}, actual price is ₹{valid_prices[0]:.2f}. Permission 'inventory.edit_price' required to override price.", 400)
+                    validated_price = matched_price
+
+                is_inc_tax = (prod['product_type'] == 'general' and int(prod['is_price_inclusive_of_tax'] or 0) == 1)
+                it['_prod_row'] = prod
+            else:
+                validated_price = client_price
+                is_inc_tax = False
+                it['_prod_row'] = None
+
+            it['_validated_price'] = validated_price
+            it['_is_inc_tax'] = is_inc_tax
+
+        # Loyalty settings & point redemption check
+        loyalty_setting = get_setting('loyalty_enabled', conn)
+        is_loyalty_enabled = (loyalty_setting != 'false' and loyalty_setting != False)
+        loyalty_pts_per_rupee = float(get_setting('loyalty_points_per_rupee', conn) or 0.01)
+        loyalty_redemption_val = float(get_setting('loyalty_redemption_value', conn) or 0.50)
+
+        redeem_pts = float(d.get('redeem_points', 0) or 0)
+        pts_discount_rupees = 0.0
+        if redeem_pts > 0:
+            if not is_loyalty_enabled:
+                conn.close()
+                return err("Loyalty points program is currently disabled", 400)
+            cust_id = d.get('customer_id')
+            if not cust_id:
+                conn.close()
+                return err("Customer selection is required to redeem loyalty points", 400)
+            cust_row = conn.execute('SELECT loyalty_points FROM customers WHERE id=?', (cust_id,)).fetchone()
+            if not cust_row:
+                conn.close()
+                return err("Customer not found", 400)
+            avail_pts = float(cust_row['loyalty_points'] or 0)
+            if redeem_pts > avail_pts:
+                conn.close()
+                return err(f"Insufficient loyalty points. Customer has {avail_pts:.2f} points available.", 400)
+
+            pts_discount_rupees = round(redeem_pts * loyalty_redemption_val, 2)
+
         discount_pct = float(d.get('discount_percent', 0))
-        raw_subtotal = sum(float(it['quantity']) * float(it['unit_price']) for it in items)
-        discount_amt = round(raw_subtotal * discount_pct / 100, 2)
+        raw_subtotal = sum(float(it['quantity']) * float(it['_validated_price']) for it in items)
+        base_discount_amt = round(raw_subtotal * discount_pct / 100, 2)
+        total_discount_amt = round(base_discount_amt + pts_discount_rupees, 2)
+        effective_disc_pct = min(100.0, (total_discount_amt / raw_subtotal * 100)) if raw_subtotal > 0 else 0.0
+        gst_setting = get_setting('gst_enabled', conn)
+        is_gst_enabled = (gst_setting != 'false' and gst_setting != False)
+
+        subtotal = 0; cgst_total = 0; sgst_total = 0; igst_total = 0
         for it in items:
-            qty = float(it['quantity']); price = float(it['unit_price']); gst_rate = float(it.get('gst_rate', 0))
-            prod_row = None
-            if it.get('product_id'):
-                prod_row = conn.execute('SELECT product_type, is_price_inclusive_of_tax FROM products WHERE id=?', (it['product_id'],)).fetchone()
-            is_inc_tax = (prod_row and prod_row['product_type'] == 'general' and int(prod_row['is_price_inclusive_of_tax'] or 0) == 1)
+            qty = float(it['quantity']); price = it['_validated_price']
+            gst_rate = float(it.get('gst_rate', 0)) if is_gst_enabled else 0.0
+            is_inc_tax = it['_is_inc_tax']
 
             if is_inc_tax:
-                item_gross = round(qty * price * (1 - discount_pct / 100), 2)
+                item_gross = round(qty * price * (1 - effective_disc_pct / 100), 2)
                 if gst_rate > 0:
                     item_taxable = round(item_gross / (1.0 + gst_rate / 100.0), 2)
                     total_tax = round(item_gross - item_taxable, 2)
@@ -3538,7 +3997,7 @@ def create_bill():
                     sgst_amt = round(total_tax - cgst_amt, 2)
                     igst_amt = 0.0
             else:
-                item_taxable = round(qty * price * (1 - discount_pct / 100), 2)
+                item_taxable = round(qty * price * (1 - effective_disc_pct / 100), 2)
                 if is_interstate:
                     cgst_amt = 0.0
                     sgst_amt = 0.0
@@ -3590,7 +4049,7 @@ def create_bill():
             (bill_no, d.get('customer_id'), d.get('customer_name', 'Walk-in Customer'),
              d.get('customer_phone', ''), d.get('customer_gstin', ''),
              place_of_supply, is_interstate,
-             round(subtotal, 2), discount_pct, discount_amt,
+             round(subtotal, 2), discount_pct, total_discount_amt,
              round(cgst_total, 2), round(sgst_total, 2), round(igst_total, 2), grand_total,
              amount_paid, amount_due, max(change_amount, 0), d.get('payment_mode', 'cash'),
              d.get('notes', ''), is_test, status, d.get('date'))
@@ -3605,14 +4064,12 @@ def create_bill():
             )
 
         for it in items:
-            qty = float(it['quantity']); price = float(it['unit_price']); gst_rate = float(it.get('gst_rate', 0))
-            prod_row = None
-            if it.get('product_id'):
-                prod_row = conn.execute('SELECT product_type, is_price_inclusive_of_tax FROM products WHERE id=?', (it['product_id'],)).fetchone()
-            is_inc_tax = (prod_row and prod_row['product_type'] == 'general' and int(prod_row['is_price_inclusive_of_tax'] or 0) == 1)
+            qty = float(it['quantity']); price = it['_validated_price']
+            gst_rate = float(it.get('gst_rate', 0)) if is_gst_enabled else 0.0
+            is_inc_tax = it['_is_inc_tax']
 
             if is_inc_tax:
-                item_gross = round(qty * price * (1 - discount_pct / 100), 2)
+                item_gross = round(qty * price * (1 - effective_disc_pct / 100), 2)
                 if gst_rate > 0:
                     item_taxable = round(item_gross / (1.0 + gst_rate / 100.0), 2)
                     total_tax = round(item_gross - item_taxable, 2)
@@ -3631,7 +4088,7 @@ def create_bill():
 
                 amount = item_gross
             else:
-                item_taxable = round(qty * price * (1 - discount_pct / 100), 2)
+                item_taxable = round(qty * price * (1 - effective_disc_pct / 100), 2)
                 if is_interstate:
                     cgst_amt = 0.0
                     sgst_amt = 0.0
@@ -3644,9 +4101,10 @@ def create_bill():
                 amount = round(item_taxable + cgst_amt + sgst_amt + igst_amt, 2)
 
             item_cost_price = None
-            prod = None
+            prod = it.get('_prod_row')
             if it.get('product_id'):
-                prod = conn.execute('SELECT name, conversion_factor, purchase_price FROM products WHERE id=?', (it['product_id'],)).fetchone()
+                if not prod:
+                    prod = conn.execute('SELECT name, conversion_factor, purchase_price FROM products WHERE id=?', (it['product_id'],)).fetchone()
                 conv = float(prod['conversion_factor'] or 1.0) if prod else 1.0
                 qty_purchase = round(qty / conv, 4)
                 unit_cost_purchase = update_stock(conn, it['product_id'], -qty_purchase, 'out', price, bill_no)
@@ -3663,14 +4121,33 @@ def create_bill():
                     unit_price, gst_rate, discount, taxable_amt, cgst_amt, sgst_amt, igst_amt, amount, cost_price)
                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (bill_id, it.get('product_id'), prod_name, it.get('hsn_code', ''),
-                 it.get('unit', 'kg'), qty, price, gst_rate, discount_pct,
+                 it.get('unit', 'kg'), qty, price, gst_rate, effective_disc_pct,
                  item_taxable, cgst_amt, sgst_amt, igst_amt, amount, item_cost_price)
             )
+
+        # ── Loyalty Ledger & Points Balance Update ──────────────────────────
+        cust_id_val = d.get('customer_id')
+        if cust_id_val:
+            if redeem_pts > 0:
+                conn.execute('UPDATE customers SET loyalty_points = MAX(0.0, loyalty_points - ?) WHERE id=?', (redeem_pts, cust_id_val))
+                conn.execute(
+                    'INSERT INTO loyalty_ledger (customer_id, bill_id, points_change, reason) VALUES (?,?,?,?)',
+                    (cust_id_val, bill_id, -redeem_pts, f"Redeemed on Bill #{bill_no}")
+                )
+
+            if is_loyalty_enabled:
+                pts_earned = round(grand_total * loyalty_pts_per_rupee, 2)
+                if pts_earned > 0:
+                    conn.execute('UPDATE customers SET loyalty_points = loyalty_points + ? WHERE id=?', (pts_earned, cust_id_val))
+                    conn.execute(
+                        'INSERT INTO loyalty_ledger (customer_id, bill_id, points_change, reason) VALUES (?,?,?,?)',
+                        (cust_id_val, bill_id, pts_earned, f"Earned from Bill #{bill_no}")
+                    )
 
         # ── Double-Entry Ledger Posting for Sales Bill ───────────────────────────
         pmode = (d.get('payment_mode') or 'cash').strip().lower()
         pay_account = 'Cash' if pmode == 'cash' else 'Bank'
-        bill_date = str(date.today())
+        ledger_voucher_date = str(bill_date) if bill_date else str(date.today())
 
         ledger_entries = []
         if amount_paid > 0:
@@ -3701,7 +4178,7 @@ def create_bill():
             conn,
             voucher_type='sales',
             voucher_no=bill_no,
-            voucher_date=bill_date,
+            voucher_date=ledger_voucher_date,
             entries=ledger_entries,
             reference_table='bills',
             reference_id=bill_id,
@@ -3752,6 +4229,47 @@ def get_next_bill_number():
         conn.close()
         return ok({'next_bill_no': f"{prefix}-{n:05d}", 'is_test': False})
 
+def _restore_stock_from_bill_item(conn, orig_item, qty, ref, notes, unit_price=None):
+    """
+    Restores stock for a returned or cancelled bill item, preserving the original cost basis.
+    Ensures restored stock_batches records have unit_cost set to the original purchase/cost basis,
+    preventing COGS distortion in subsequent sales.
+    """
+    if not orig_item or float(qty or 0) <= 0:
+        return
+    try:
+        pid = orig_item['product_id']
+    except (IndexError, KeyError, TypeError):
+        pid = None
+    if not pid:
+        return
+
+    prod = conn.execute('SELECT conversion_factor, purchase_price FROM products WHERE id=?', (pid,)).fetchone()
+    conv = float(prod['conversion_factor'] or 1.0) if prod else 1.0
+    qty_purchase = round(float(qty) / conv, 4)
+
+    # Determine original cost in purchase units
+    cost_price = None
+    try:
+        cost_price = orig_item['cost_price']
+    except (IndexError, KeyError, TypeError):
+        cost_price = None
+
+    if cost_price is not None and float(cost_price) > 0:
+        cost_val = round(float(cost_price) / conv, 4) if conv > 0 else float(cost_price)
+    else:
+        cost_val = float(prod['purchase_price'] or 0) if prod else 0.0
+
+    up_val = float(unit_price) if unit_price is not None else cost_val
+
+    update_stock(
+        conn, pid, qty_purchase, 'in',
+        unit_price=up_val,
+        unit_cost=cost_val,
+        notes=notes,
+        ref=ref
+    )
+
 @app.route('/api/bills/<int:bid>', methods=['DELETE'])
 @require_permission('billing.void_bill')
 def cancel_bill(bid):
@@ -3766,13 +4284,11 @@ def cancel_bill(bid):
     if bill['status'] == 'cancelled': conn.close(); return err("Already cancelled")
     items = conn.execute('SELECT * FROM bill_items WHERE bill_id=?', (bid,)).fetchall()
     for it in items:
-        if it['product_id']:
-            prod = conn.execute('SELECT conversion_factor FROM products WHERE id=?', (it['product_id'],)).fetchone()
-            conv = float(prod['conversion_factor'] or 1.0) if prod else 1.0
-            qty_purchase = round(float(it['quantity']) / conv, 4)
-            update_stock(conn, it['product_id'], qty_purchase, 'in',
-                         notes=f"Reversal of {bill['bill_no']} (Reason: {reason})",
-                         ref=bill['bill_no'])
+        _restore_stock_from_bill_item(
+            conn, it, it['quantity'],
+            ref=bill['bill_no'],
+            notes=f"Reversal of {bill['bill_no']} (Reason: {reason})"
+        )
     conn.execute("UPDATE bills SET status='cancelled', cancel_reason=? WHERE id=?", (reason, bid))
 
     # Audit alert for Managing Director if Manager cancelled a bill
@@ -3783,6 +4299,141 @@ def cancel_bill(bid):
 
     conn.commit(); conn.close()
     return ok(message=f"Bill {bill['bill_no']} cancelled and stock restored")
+
+@app.route('/api/bills/<int:bid>/date', methods=['PUT'])
+def update_bill_date(bid):
+    user_role = session.get('user_role', '')
+    user_id = session.get('user_id')
+    user_perms = get_user_permissions(user_id) if user_id else []
+    if user_role not in ('admin', 'md') and '*' not in user_perms and 'billing.backdate' not in user_perms and 'billing.edit_date' not in user_perms:
+        return err("Only Managing Director (MD) or Admin can edit historical bill dates.", 403)
+
+    data = request.get_json() or {}
+    new_date_raw = (data.get('date') or data.get('new_date') or '').strip()
+    if not new_date_raw:
+        return err("New bill date is required", 400)
+
+    new_date_str = new_date_raw[:10]
+    try:
+        parsed_date = datetime.strptime(new_date_str, '%Y-%m-%d').date()
+    except ValueError:
+        return err("Invalid date format. Use YYYY-MM-DD", 400)
+
+    today = date.today()
+    if parsed_date > today:
+        return err(f"Bill date cannot be in the future. Selected date ({new_date_str}) is after today ({today}). Back-dates only are permitted.", 400)
+
+    conn = get_db()
+    bill = conn.execute('SELECT * FROM bills WHERE id=?', (bid,)).fetchone()
+    if not bill:
+        conn.close()
+        return err("Bill not found", 404)
+
+    old_date = bill['date']
+
+    if len(new_date_raw) > 10:
+        full_date_str = new_date_raw
+    elif old_date and len(old_date) > 10:
+        time_part = old_date[11:]
+        full_date_str = f"{new_date_str} {time_part}"
+    else:
+        full_date_str = f"{new_date_str} 00:00:00"
+
+    # Update bills table
+    conn.execute('UPDATE bills SET date=? WHERE id=?', (full_date_str, bid))
+
+    # Update ledger vouchers & entries
+    conn.execute('''
+        UPDATE ledger_vouchers
+        SET voucher_date = ?
+        WHERE reference_table = 'bills' AND reference_id = ?
+    ''', (new_date_str, bid))
+
+    conn.execute('''
+        UPDATE ledger_entries
+        SET voucher_date = ?
+        WHERE voucher_id IN (
+            SELECT id FROM ledger_vouchers WHERE reference_table = 'bills' AND reference_id = ?
+        )
+    ''', (new_date_str, bid))
+
+    # Update stock transaction date if matched by bill reference
+    conn.execute('''
+        UPDATE stock_transactions
+        SET date = ?
+        WHERE ref = ?
+    ''', (full_date_str, bill['bill_no']))
+
+    conn.commit()
+    conn.close()
+
+    log_activity('EDIT_BILL_DATE', f"Changed date of Bill {bill['bill_no']} from {old_date} to {full_date_str}", 'bills', bid)
+    return ok(message=f"Bill {bill['bill_no']} date updated to {new_date_str} successfully")
+
+@app.route('/api/bills/<int:bid>/purge', methods=['DELETE'])
+def purge_bill(bid):
+    user_role = session.get('user_role', '')
+    user_id = session.get('user_id')
+    user_perms = get_user_permissions(user_id) if user_id else []
+    if user_role not in ('admin', 'md') and '*' not in user_perms and 'billing.purge' not in user_perms and 'billing.delete' not in user_perms:
+        return err("Only Managing Director (MD) or Admin can permanently delete bills.", 403)
+
+    conn = get_db()
+    bill = conn.execute('SELECT * FROM bills WHERE id=?', (bid,)).fetchone()
+    if not bill:
+        conn.close()
+        return err("Bill not found", 404)
+
+    bill_no = bill['bill_no']
+
+    try:
+        def safe_delete(query, params=()):
+            try:
+                conn.execute(query, params)
+            except Exception:
+                pass
+
+        # If bill was active (not cancelled), restore deducted product stock to inventory
+        if bill['status'] != 'cancelled':
+            items = conn.execute('SELECT product_id, quantity FROM bill_items WHERE bill_id=?', (bid,)).fetchall()
+            for it in items:
+                if it['product_id'] and it['quantity']:
+                    prod = conn.execute('SELECT conversion_factor FROM products WHERE id=?', (it['product_id'],)).fetchone()
+                    conv = float(prod['conversion_factor'] or 1.0) if prod else 1.0
+                    qty_purchase = round(float(it['quantity']) / conv, 4)
+                    conn.execute(
+                        'UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id=?',
+                        (qty_purchase, it['product_id'])
+                    )
+
+        # Delete associated bill items, payments, loyalty logs
+        safe_delete('DELETE FROM bill_items WHERE bill_id=?', (bid,))
+        safe_delete('DELETE FROM bill_payments WHERE bill_id=?', (bid,))
+        safe_delete('DELETE FROM loyalty_ledger WHERE bill_id=?', (bid,))
+
+        # Delete double-entry ledger entries & vouchers if present
+        safe_delete("DELETE FROM ledger_entries WHERE reference_table = 'bills' AND reference_id = ?", (bid,))
+        safe_delete("DELETE FROM ledger_entries WHERE narration LIKE ?", (f"%{bill_no}%",))
+
+        # Delete associated stock transactions matching bill_no or reference_id
+        safe_delete("DELETE FROM stock_transactions WHERE reference_id = ? OR ref = ? OR notes LIKE ?", (str(bid), bill_no, f"%{bill_no}%"))
+
+        # Delete credit notes referencing this bill if any
+        safe_delete("DELETE FROM credit_note_items WHERE credit_note_id IN (SELECT id FROM credit_notes WHERE bill_id=?)", (bid,))
+        safe_delete("DELETE FROM credit_notes WHERE bill_id=?", (bid,))
+
+        # Delete the bill record
+        conn.execute('DELETE FROM bills WHERE id=?', (bid,))
+
+        conn.commit()
+        conn.close()
+
+        log_activity('PURGE_BILL', f"Permanently deleted Bill {bill_no} (ID: {bid})", 'bills', bid)
+        return ok(message=f"Bill {bill_no} permanently deleted and inventory corrected successfully")
+    except Exception as e:
+        conn.rollback()
+        conn.close()
+        return err(f"Failed to delete bill: {str(e)}", 500)
 
 @app.route('/api/bills/<int:bid>/payments', methods=['POST'])
 @require_permission('billing.payment')
@@ -3979,17 +4630,13 @@ def create_credit_note(bid):
             igst_total += igst_amt
             total += item_amount
 
-            # Restore stock via update_stock
+            # Restore stock via update_stock with correct cost basis
             if orig_item['product_id']:
-                pid = orig_item['product_id']
-                prod = conn.execute('SELECT conversion_factor FROM products WHERE id=?', (pid,)).fetchone()
-                conv = float(prod['conversion_factor'] or 1.0) if prod else 1.0
-                qty_purchase = round(ret_qty / conv, 4)
-                update_stock(
-                    conn, pid, qty_purchase, 'in',
-                    unit_price=unit_price,
+                _restore_stock_from_bill_item(
+                    conn, orig_item, ret_qty,
                     ref=bill['bill_no'],
-                    notes=f"Credit note {cn_no} against {bill['bill_no']}"
+                    notes=f"Credit note {cn_no} against {bill['bill_no']}",
+                    unit_price=unit_price
                 )
 
             computed_items.append({
@@ -4834,6 +5481,29 @@ def stock_report():
     for r in result:
         conv = float(r.get('conversion_factor') or 1.0)
         r['current_stock_sale_unit'] = round(float(r['current_stock']) * conv, 3)
+
+    if wants_excel():
+        excel_rows = []
+        for r in result:
+            excel_rows.append([
+                r.get('code') or '',
+                r.get('name') or '',
+                r.get('category_name') or '',
+                float(r.get('current_stock') or 0),
+                r.get('purchase_unit') or '',
+                float(r.get('current_stock_sale_unit') or 0),
+                r.get('sale_unit') or '',
+                float(r.get('purchase_price') or 0),
+                float(r.get('selling_price') or 0),
+                float(r.get('stock_value') or 0)
+            ])
+        sheets = [{
+            "sheet_name": "Stock Valuation",
+            "headers": ["Code", "Product Name", "Category", "Stock (Pur. Unit)", "Pur. Unit", "Stock (Sale Unit)", "Sale Unit", "Pur. Price (₹)", "Sale Price (₹)", "Stock Value (₹)"],
+            "rows": excel_rows
+        }]
+        return export_to_excel(sheets, "stock_valuation_report")
+
     return ok({"products": result, "total_value": total_value})
 
 @app.route('/api/reports/top-products', methods=['GET'])
@@ -4850,6 +5520,24 @@ def top_products():
         GROUP BY bi.product_name ORDER BY total_revenue DESC LIMIT 20
     ''', (date_from, date_to)).fetchall()
     conn.close()
+
+    if wants_excel():
+        excel_rows = []
+        for r in rows:
+            excel_rows.append([
+                r['product_name'] or '',
+                float(r['total_qty'] or 0),
+                r['unit'] or '',
+                float(r['total_revenue'] or 0),
+                int(r['bill_count'] or 0)
+            ])
+        sheets = [{
+            "sheet_name": "Top Selling Products",
+            "headers": ["Product Name", "Quantity Sold", "Unit", "Total Revenue (₹)", "Bill Count"],
+            "rows": excel_rows
+        }]
+        return export_to_excel(sheets, f"top_products_{date_from}_to_{date_to}")
+
     return ok(dict_rows(rows))
 
 @app.route('/api/reports/expiring-soon', methods=['GET'])
@@ -5893,8 +6581,14 @@ def profit_loss_report():
         dr_sum = float(sums['dr_sum'])
         cr_sum = float(sums['cr_sum'])
 
+        # Only include opening balance if NO date range filter is applied (all-time view)
+        include_op_bal = not date_from and not date_to
+
         if group == 'Income':
-            inc_net = round(cr_sum - dr_sum + (op_bal if op_type == 'cr' else -op_bal), 2)
+            inc_net = cr_sum - dr_sum
+            if include_op_bal:
+                inc_net += (op_bal if op_type == 'cr' else -op_bal)
+            inc_net = round(inc_net, 2)
             income_accounts.append({
                 'account_id': acc_id,
                 'account_name': acc['name'],
@@ -5902,7 +6596,10 @@ def profit_loss_report():
             })
             total_income += inc_net
         else:
-            exp_net = round(dr_sum - cr_sum + (op_bal if op_type == 'dr' else -op_bal), 2)
+            exp_net = dr_sum - cr_sum
+            if include_op_bal:
+                exp_net += (op_bal if op_type == 'dr' else -op_bal)
+            exp_net = round(exp_net, 2)
             expense_accounts.append({
                 'account_id': acc_id,
                 'account_name': acc['name'],
@@ -6372,6 +7069,47 @@ def backup_cloud_now():
     if success:
         return ok(data={'message': msg}, message=f"Cloud Backup Success: {msg}")
     return err(f"Cloud Backup Failed: {msg}", 400)
+
+@app.route('/api/backup/external/status', methods=['GET'])
+@require_permission('backup.manage')
+def get_external_backup_status_route():
+    status = get_external_backup_status()
+    return ok(data=status)
+
+@app.route('/api/backup/external/config', methods=['POST'])
+@require_permission('backup.manage')
+def save_external_backup_config_route():
+    data = request.get_json() or {}
+    enabled = 'true' if data.get('enabled') in (True, 'true', 1, '1') else 'false'
+    path = str(data.get('path') or '').strip()
+    retention = str(data.get('retention_days') or '30').strip()
+    allow_network = 'true' if data.get('allow_network') in (True, 'true', 1, '1') else 'false'
+
+    if enabled == 'true' and path:
+        connected, conn_msg = is_drive_connected(path, allow_network=(allow_network == 'true'))
+        if not connected:
+            return err(f"Cannot enable external backup: {conn_msg}", 400)
+
+    conn = get_db()
+    conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('external_backup_enabled', ?)", (enabled,))
+    conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('external_backup_path', ?)", (path,))
+    conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('external_backup_retention_days', ?)", (retention,))
+    conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('external_backup_allow_network', ?)", (allow_network,))
+    conn.commit()
+    conn.close()
+
+    if enabled == 'true' and path:
+        trigger_external_backup_async()
+
+    return ok(message="External backup settings saved successfully.", data=get_external_backup_status())
+
+@app.route('/api/backup/external/test', methods=['POST'])
+@require_permission('backup.manage')
+def test_external_backup_route():
+    success, msg = perform_external_backup(is_manual=True)
+    if success:
+        return ok(data={'message': msg}, message=f"External Backup Success: {msg}")
+    return err(f"External Backup Failed: {msg}", 400)
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 

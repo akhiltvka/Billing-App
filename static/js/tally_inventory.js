@@ -102,6 +102,8 @@ const TallyInventory = {
         <div class="tally-header-date">📅 ${today}</div>
         <div class="tally-header-btns">
           <button class="tally-hbtn" onclick="TallyInventory.render()">↺ Refresh</button>
+          <button class="tally-hbtn" style="background:#7c3aed;color:#fff" onclick="TallyInventory.showBulkBarcodeModal()">🏷️ Bulk Barcodes</button>
+          ${(Auth.can('inventory.create') || Auth.can('inventory.edit') || Auth.isRole('admin', 'md', 'manager')) ? '<button class="tally-hbtn" style="background:#27ae60;color:#fff" onclick="Inventory.showProductModal()">➕ Product Entry</button>' : ''}
           ${Auth.can('stock.in') ? '<button class="tally-hbtn tally-hbtn-primary" onclick="TallyInventory.openVoucher(\'stock-in\')">+ Stock-In</button>' : ''}
         </div>
       </div>`;
@@ -126,8 +128,11 @@ const TallyInventory = {
     const rawKeys = {
       summary: [
         { key:'F2', desc:'Period', onclick:"document.getElementById('tally-from')?.focus()" },
+        { key:'F4', desc:'Product Entry', perm:'inventory.view', onclick:"Inventory.showProductModal()" },
         { key:'F5', desc:'Stock-In',      perm:'stock.in', onclick:"TallyInventory.openVoucher('stock-in')" },
+        { key:'Alt+B', desc:'Bulk Stock In', perm:'stock.in', onclick:"Inventory.showBulkStockInModal()" },
         { key:'F6', desc:'Wastage',       perm:'stock.wastage', onclick:"TallyInventory.openVoucher('wastage')" },
+        { key:'F7', desc:'Bulk Barcodes', perm:'inventory.view', onclick:"TallyInventory.showBulkBarcodeModal()" },
         { key:'F8', desc:'Purchase Order', perm:'purchase.view', onclick:"TallyInventory.openVoucher('po')" },
         { key:'F9', desc:'Categories',    perm:'inventory.view', onclick:"TallyInventory.openCategories()" },
         { key:'F10', desc:'Products',     perm:'inventory.view', onclick:"TallyInventory.openProducts()" },
@@ -146,7 +151,14 @@ const TallyInventory = {
       ],
       categories: [
         { key:'Esc', desc:'Back',          onclick:"TallyInventory.render()" },
+        { key:'F4', desc:'Add Product',   perm:'inventory.view', onclick:"Inventory.showProductModal()" },
         { key:'F5', desc:'Add Category',   perm:'inventory.create', onclick:"Inventory.showCategoryModal()" },
+      ],
+      products: [
+        { key:'Esc', desc:'Back',          onclick:"TallyInventory.render()" },
+        { key:'F2',  desc:'Edit Product',  perm:'inventory.edit', onclick:"TallyInventory._editSelectedProduct()" },
+        { key:'Ctrl+Enter', desc:'Edit Item', perm:'inventory.edit', onclick:"TallyInventory._editSelectedProduct()" },
+        { key:'F4',  desc:'Add Product',   perm:'inventory.create', onclick:"Inventory.showProductModal()" },
       ],
     };
 
@@ -357,6 +369,24 @@ const TallyInventory = {
     let rowIdx = 0;
     let html = '';
 
+    // Compute duplicate product names or codes across entire catalog
+    const nameCounts = {};
+    const codeCounts = {};
+    this._products.forEach(p => {
+      const nm = (p.name || '').trim().toLowerCase();
+      const cd = (p.code || '').trim().toUpperCase();
+      if (nm) nameCounts[nm] = (nameCounts[nm] || 0) + 1;
+      if (cd) codeCounts[cd] = (codeCounts[cd] || 0) + 1;
+    });
+
+    this._products.forEach(p => {
+      const nm = (p.name || '').trim().toLowerCase();
+      const cd = (p.code || '').trim().toUpperCase();
+      if (nameCounts[nm] > 1 || codeCounts[cd] > 1) {
+        p.is_duplicate = true;
+      }
+    });
+
     Object.entries(groups).forEach(([group, items]) => {
       const gTotal = items.reduce((a, p) => a + (p.closing || 0), 0);
       const gValue = items.reduce((a, p) => a + (p.stock_value || 0), 0);
@@ -372,12 +402,17 @@ const TallyInventory = {
         const snc  = this._stockNumClass(p);
         const badge = this._stockBadge(p);
         const unit  = p.sale_unit || p.unit || '—';
+        const isDup = p.is_duplicate || p.is_dup;
+        const dupRowStyle = isDup ? 'background:rgba(239,68,68,0.18) !important;color:#7f1d1d;font-weight:700;' : '';
+        const dupBadge = isDup ? ' <span class="badge badge-danger" style="background:#dc2626;color:#ffffff;font-weight:800;font-size:10px;padding:2px 7px;border-radius:4px;margin-left:6px;box-shadow:0 1px 2px rgba(0,0,0,0.15)">⚠️ DUPLICATE ITEM</span>' : '';
+
         html += `
           <tr class="tally-row ${sc}" id="tally-row-${rowIdx}" data-idx="${rowIdx}" data-id="${p.id}"
+              style="${dupRowStyle}"
               onclick="TallyInventory._selectRow(${rowIdx})"
               ondblclick="TallyInventory.openItemLedger(${p.id})">
             <td class="item-name">
-              <span class="tally-row-arrow">▶</span>${p.name}${badge}
+              <span class="tally-row-arrow">▶</span>${App.escapeHtml(p.name)}${badge}${dupBadge}
             </td>
             <td>${p.category_name || '—'}</td>
             <td>${unit}</td>
@@ -491,15 +526,22 @@ const TallyInventory = {
         <button class="tally-action-btn" onclick="TallyInventory.openItemLedger(${p.id})">
           📋 View Ledger
         </button>
-        <button class="tally-action-btn" onclick="TallyInventory.openVoucher('stock-in', ${JSON.stringify(JSON.stringify(p))})">
+        <button class="tally-action-btn" onclick="TallyInventory.openVoucher('stock-in', ${p.id})">
           ⬆ Stock Receipt
         </button>
-        <button class="tally-action-btn" onclick="TallyInventory.openVoucher('wastage', ${JSON.stringify(JSON.stringify(p))})">
+        <button class="tally-action-btn" onclick="TallyInventory.openVoucher('wastage', ${p.id})">
           ⚠ Record Wastage
         </button>
-        <button class="tally-action-btn" onclick="Inventory.showProductModal(${JSON.stringify(JSON.stringify(p))})">
+        <button class="tally-action-btn" onclick="Inventory.showProductModalById(${p.id})">
           ✏ Edit Item
         </button>
+        <button class="tally-action-btn" style="background:rgba(139,92,246,.08);border-color:rgba(139,92,246,.25);color:#7c3aed" onclick="Inventory.printProductBarcode(${p.id},'${p.name.replace(/'/g, "\\'")}','${p.barcode || p.code}',${p.selling_price},'${p.sale_unit || p.unit}','${p.code}')">
+          🏷️ Print Barcode
+        </button>
+        ${(Auth.can('inventory.delete') || Auth.isRole('admin','md','manager')) ? `
+        <button class="tally-action-btn" style="background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.3);color:#dc2626;font-weight:700" onclick="Inventory.deleteProduct(${p.id}, '${p.name.replace(/'/g, "\\'")}')">
+          🗑️ Deactivate / Delete Item
+        </button>` : ''}
       </div>`;
   },
 
@@ -511,9 +553,18 @@ const TallyInventory = {
 
     this._keyNavHandler = (e) => {
       if (this._currentView !== 'summary') return;
+      const modalOpen = !!document.querySelector('.modal-overlay.active');
+      if (modalOpen) return;
 
       const tag = document.activeElement?.tagName;
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+
+      if (e.key === 'F2' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) {
+        e.preventDefault();
+        const p = this._filteredRows[this._selectedIdx];
+        if (p) Inventory.showProductModalById(p.id);
+        return;
+      }
 
       switch (e.key) {
         case 'ArrowDown':
@@ -537,6 +588,13 @@ const TallyInventory = {
           this._drillDown();
           break;
 
+        case 'Delete':
+        case 'Del':
+          e.preventDefault();
+          const pDel = this._filteredRows[this._selectedIdx];
+          if (pDel) Inventory.deleteProduct(pDel.id, pDel.name);
+          break;
+
         case 'F5':
           e.preventDefault();
           this.openVoucher('stock-in', JSON.stringify(this._filteredRows[this._selectedIdx] || null));
@@ -545,6 +603,11 @@ const TallyInventory = {
         case 'F6':
           e.preventDefault();
           this.openVoucher('wastage', JSON.stringify(this._filteredRows[this._selectedIdx] || null));
+          break;
+
+        case 'F7':
+          e.preventDefault();
+          this.showBulkBarcodeModal();
           break;
 
         case 'F8':
@@ -584,14 +647,14 @@ const TallyInventory = {
       if (['INPUT','SELECT','TEXTAREA'].includes(tag)) {
         if (e.key === 'Escape') { document.activeElement.blur(); return; }
       }
-      if (e.key === 'F5' || e.key === 'F6' || e.key === 'F8' || e.key === 'F9' || e.key === 'F10') {
+      if (e.key === 'F2' || e.key === 'F5' || e.key === 'F6' || e.key === 'F7' || e.key === 'F8' || e.key === 'F9' || e.key === 'F10') {
         e.preventDefault();
         this._keyNavHandler(e);
       }
     };
 
     document.addEventListener('keydown', this._keyNavHandler);
-    document.addEventListener('keydown', this._fkeyHandler);
+    document.addEventListener('keydown', this._fkeyHandler, true);
   },
 
   _destroyKeyListeners() {
@@ -703,12 +766,19 @@ const TallyInventory = {
           { label: 'Stock Summary', onclick: 'TallyInventory.render()' },
           { label: p.name }
         ], false)}
-        <div class="tally-period-bar">
-          <span style="color:#1B2A47;font-weight:700">Period: ${this._fmtDate(this._periodFrom)} — ${this._fmtDate(this._periodTo)}</span>
-          <span style="margin-left:20px;color:#555">Closing Balance: <strong style="font-family:monospace;color:#1B2A47">${this._fmtNum(p.closing)} ${unit}</strong></span>
-          <span style="margin-left:16px;color:#1a6e2c">Inward: <strong>${this._fmtNum(totalIn)} ${punit}</strong></span>
-          <span style="margin-left:16px;color:#b32020">Outward: <strong>${this._fmtNum(totalOut)} ${unit}</strong></span>
-          <button class="tally-period-apply" style="margin-left:auto" onclick="TallyInventory.render()">← Back</button>
+        <div class="tally-period-bar" style="display:flex;align-items:center;justify-content:space-between">
+          <div>
+            <span style="color:#1B2A47;font-weight:700">Period: ${this._fmtDate(this._periodFrom)} — ${this._fmtDate(this._periodTo)}</span>
+            <span style="margin-left:20px;color:#555">Closing Balance: <strong style="font-family:monospace;color:#1B2A47">${this._fmtNum(p.closing)} ${unit}</strong></span>
+            <span style="margin-left:16px;color:#1a6e2c">Inward: <strong>${this._fmtNum(totalIn)} ${punit}</strong></span>
+            <span style="margin-left:16px;color:#b32020">Outward: <strong>${this._fmtNum(totalOut)} ${unit}</strong></span>
+          </div>
+          <div style="display:flex;gap:6px">
+            ${(Auth.can('inventory.edit') || Auth.isRole('admin','md','manager')) ? `
+              <button class="tally-period-apply" style="background:#7c3aed;color:#fff;font-weight:700" onclick="Inventory.showProductModalById(${p.id})">✏️ Edit Product (F2)</button>
+            ` : ''}
+            <button class="tally-period-apply" onclick="TallyInventory.render()">← Back (Esc)</button>
+          </div>
         </div>
         <div class="tally-body" style="flex-direction:column;overflow:auto">
           <div class="tally-ledger-wrap">
@@ -785,6 +855,42 @@ const TallyInventory = {
         </div>
         ${this._renderFKeyBar('ledger')}
       </div>`;
+
+    this._initLedgerKeyNav(p);
+  },
+
+  _initLedgerKeyNav(p) {
+    this._destroyKeyListeners();
+    this._keyNavHandler = (e) => {
+      if (this._currentView !== 'ledger') return;
+      const modalOpen = !!document.querySelector('.modal-overlay.active');
+      if (modalOpen) return;
+
+      const tag = document.activeElement?.tagName;
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+
+      if (e.key === 'F2' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey))) {
+        e.preventDefault();
+        if (p && p.id) Inventory.showProductModalById(p.id);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        this.render();
+      }
+    };
+
+    this._fkeyHandler = (e) => {
+      if (this._currentView !== 'ledger') return;
+      const modalOpen = !!document.querySelector('.modal-overlay.active');
+      if (modalOpen) return;
+
+      if (e.key === 'F2') {
+        e.preventDefault();
+        this._keyNavHandler(e);
+      }
+    };
+
+    document.addEventListener('keydown', this._keyNavHandler);
+    document.addEventListener('keydown', this._fkeyHandler, true);
   },
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -905,10 +1011,16 @@ const TallyInventory = {
           <!-- Top fields -->
           <div class="tally-voucher-top">
             <div class="tally-field">
-              <label>Date</label>
+              <label>Entry Date</label>
               <input type="date" id="v-date" value="${today}" max="${today}"
                 onchange="TallyInventory._voucherState.date=this.value;document.getElementById('vhdr-date').textContent=TallyInventory._fmtDate(this.value)">
             </div>
+            ${type === 'stock-in' ? `
+            <div class="tally-field">
+              <label style="color:#7c3aed;font-weight:700">Date of Purchase *</label>
+              <input type="date" id="v-purchasedate" value="${today}" max="${today}" style="border:1.5px solid #7c3aed"
+                onchange="TallyInventory._voucherState.purchaseDate=this.value">
+            </div>` : ''}
             ${meta.hasSupplier ? `
             <div class="tally-field">
               <label>Supplier / Party</label>
@@ -988,6 +1100,9 @@ const TallyInventory = {
           <button class="tally-vbtn" onclick="TallyInventory._addVoucherRow()">
             <span class="tally-vbtn-key">Alt+D</span> Add Row
           </button>
+          ${type === 'stock-in' ? `<button class="tally-vbtn" style="background:rgba(139,92,246,.15);color:#7c3aed;border-color:rgba(139,92,246,.35)" onclick="TallyInventory._previewVoucherBarcodes()">
+            <span class="tally-vbtn-key">Alt+B</span> 🏷️ Barcodes
+          </button>` : ''}
           <button class="tally-vbtn cancel" onclick="TallyInventory.render()">
             <span class="tally-vbtn-key">Esc</span> Cancel
           </button>
@@ -1114,11 +1229,12 @@ const TallyInventory = {
     const meta = this._voucherMeta[vs.type];
 
     // Collect live form values
-    vs.date     = document.getElementById('v-date')?.value     || vs.date;
-    vs.supplier = document.getElementById('v-supplier')?.value || vs.supplier;
-    vs.refNo    = document.getElementById('v-refno')?.value    || vs.refNo;
-    vs.reason   = document.getElementById('v-reason')?.value   || vs.reason;
-    vs.narration= document.getElementById('v-narration')?.value|| vs.narration;
+    vs.date         = document.getElementById('v-date')?.value         || vs.date;
+    vs.purchaseDate = document.getElementById('v-purchasedate')?.value || vs.purchaseDate || vs.date;
+    vs.supplier     = document.getElementById('v-supplier')?.value     || vs.supplier;
+    vs.refNo        = document.getElementById('v-refno')?.value        || vs.refNo;
+    vs.reason       = document.getElementById('v-reason')?.value       || vs.reason;
+    vs.narration    = document.getElementById('v-narration')?.value    || vs.narration;
 
     // Collect row values from DOM
     vs.rows.forEach((row, idx) => {
@@ -1140,12 +1256,13 @@ const TallyInventory = {
     try {
       for (const row of validRows) {
         const payload = {
-          product_id: parseInt(row.productId),
-          quantity:   parseFloat(row.qty),
-          unit_price: parseFloat(row.rate) || 0,   // API field: unit_price
-          date:       vs.date,
-          notes:      vs.narration || vs.reason || '',
-          reference:  vs.refNo || '',              // API field: reference
+          product_id:    parseInt(row.productId),
+          quantity:      parseFloat(row.qty),
+          unit_price:    parseFloat(row.rate) || 0,   // API field: unit_price
+          date:          vs.date,
+          purchase_date: vs.purchaseDate || vs.date,
+          notes:         vs.narration || vs.reason || '',
+          reference:     vs.refNo || '',              // API field: reference
         };
 
         if (vs.type === 'stock-in') {
@@ -1173,13 +1290,112 @@ const TallyInventory = {
         }
       }
       App.showToast(`${meta.title} saved successfully`, 'success');
-      this._periodFrom = this._monthStart();
-      this._periodTo   = this._today();
-      this.render();
+
+      // After stock-in, offer barcode printing
+      if (vs.type === 'stock-in') {
+        const savedRows = [...validRows];
+        this._periodFrom = this._monthStart();
+        this._periodTo   = this._today();
+        this._showBarcodePrintOffer(savedRows);
+      } else {
+        this._periodFrom = this._monthStart();
+        this._periodTo   = this._today();
+        this.render();
+      }
     } catch(e) {
       App.showToast('Error: ' + e.message, 'error');
       if (btn) { btn.disabled = false; btn.innerHTML = `<span class="tally-vbtn-key">Alt+S</span> ${meta.btnLabel}`; }
     }
+  },
+
+  // ─── Barcode offer after stock-in ────────────────────────────────────────
+  _showBarcodePrintOffer(rows) {
+    // Rows have productId + qty — resolve product info from cache
+    const items = rows.map(r => {
+      const p = (this._products || []).find(x => String(x.id) === String(r.productId));
+      return {
+        id:            r.productId,
+        name:          p?.name || `Product #${r.productId}`,
+        code:          p?.code || '',
+        barcode:       p?.barcode || p?.code || '',
+        selling_price: p?.selling_price || 0,
+        unit:          p?.sale_unit || p?.unit || '',
+        qty:           Math.max(1, Math.round(parseFloat(r.qty) || 1)),
+      };
+    });
+
+    App.showModal(`
+      <div class="modal modal-lg">
+        <div class="modal-header">
+          <div class="modal-title"><span class="modal-title-icon">🏷️</span> Print Barcode Labels?</div>
+          <button class="modal-close" onclick="App.closeModal();TallyInventory.render()">✕</button>
+        </div>
+        <p style="color:var(--text-muted);font-size:13px;margin-bottom:16px">
+          Stock receipt saved. Do you want to print barcode labels for the received items?
+        </p>
+        <div style="border:1px solid var(--border);border-radius:var(--r-md);overflow:hidden;margin-bottom:16px">
+          <table style="width:100%;border-collapse:collapse">
+            <thead><tr style="background:var(--bg-input)">
+              <th style="padding:8px 12px;text-align:left;font-size:12px;font-weight:600">Product</th>
+              <th style="padding:8px 12px;text-align:left;font-size:12px;font-weight:600">Barcode Value</th>
+              <th style="padding:8px 12px;text-align:center;font-size:12px;font-weight:600">Qty Received</th>
+              <th style="padding:8px 12px;text-align:center;font-size:12px;font-weight:600">Labels to Print</th>
+            </tr></thead>
+            <tbody id="bc-offer-rows">
+              ${items.map((item, idx) => `
+                <tr style="border-top:1px solid var(--border)">
+                  <td style="padding:8px 12px;font-weight:600;font-size:13px">${item.name}</td>
+                  <td style="padding:8px 12px;font-family:monospace;font-size:12px;color:var(--gold)">${item.barcode || item.code || '—'}</td>
+                  <td style="padding:8px 12px;text-align:center;color:var(--text-muted);font-size:13px">${item.qty}</td>
+                  <td style="padding:8px 12px;text-align:center">
+                    <input type="number" min="1" max="200" value="${item.qty}"
+                      style="width:65px;text-align:center;border:1px solid var(--border);border-radius:6px;padding:4px 6px"
+                      id="bc-copies-${idx}">
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="App.closeModal();TallyInventory.render()">⏭ Skip</button>
+          <button class="btn btn-primary" style="background:linear-gradient(135deg,#7c3aed,#5b21b6)" onclick="TallyInventory._openBarcodePrintWindow(${JSON.stringify(JSON.stringify(items))})">🏷️ Print Labels (A4)</button>
+        </div>
+      </div>`);
+  },
+
+  _openBarcodePrintWindow(itemsJson) {
+    const items = typeof itemsJson === 'string' ? JSON.parse(itemsJson) : itemsJson;
+    // Read custom label counts from inputs
+    const rows = document.querySelectorAll('#bc-offer-rows tr');
+    rows.forEach((tr, idx) => {
+      const inp = document.getElementById(`bc-copies-${idx}`);
+      if (inp && items[idx]) items[idx].qty = Math.max(1, parseInt(inp.value) || 1);
+    });
+    // Encode items as base64 for URL param
+    const encoded = btoa(JSON.stringify(items));
+    App.closeModal();
+    window.open(`/printables/barcodes?items=${encodeURIComponent(encoded)}`, '_blank');
+    this.render();
+  },
+
+  _previewVoucherBarcodes() {
+    // Preview barcodes for current voucher rows without submitting
+    const rows = this._voucherState.rows.filter(r => r.productId && parseFloat(r.qty) > 0);
+    if (!rows.length) { App.showToast('Add at least one item first', 'warning'); return; }
+    const items = rows.map(r => {
+      const p = (this._products || []).find(x => String(x.id) === String(r.productId));
+      return {
+        id:            r.productId,
+        name:          p?.name || `Product #${r.productId}`,
+        code:          p?.code || '',
+        barcode:       p?.barcode || p?.code || '',
+        selling_price: p?.selling_price || 0,
+        unit:          p?.sale_unit || p?.unit || '',
+        qty:           Math.max(1, Math.round(parseFloat(r.qty) || 1)),
+      };
+    });
+    const encoded = btoa(JSON.stringify(items));
+    window.open(`/printables/barcodes?items=${encodeURIComponent(encoded)}`, '_blank');
   },
 
   _initVoucherKeyListeners() {
@@ -1187,6 +1403,7 @@ const TallyInventory = {
     this._fkeyHandler = (e) => {
       if (e.altKey && e.key === 's') { e.preventDefault(); this._submitVoucher(); }
       if (e.altKey && e.key === 'd') { e.preventDefault(); this._addVoucherRow(); }
+      if (e.altKey && e.key === 'b') { e.preventDefault(); this._previewVoucherBarcodes(); }
       if (e.key === 'Escape') { e.preventDefault(); this.render(); }
     };
     document.addEventListener('keydown', this._fkeyHandler);
@@ -1266,6 +1483,7 @@ const TallyInventory = {
   async openProducts() {
     this._currentView = 'products';
     this._destroyKeyListeners();
+    this._prodSelectedIdx = 0;
     const content = document.getElementById('page-content');
     content.innerHTML = `
       <div class="tally-shell">
@@ -1276,7 +1494,7 @@ const TallyInventory = {
         <div class="tally-body" style="flex-direction:column;overflow:auto;background:#fff">
           ${[...Array(6)].map(() => `<div class="tally-shimmer" style="margin:6px 10px"></div>`).join('')}
         </div>
-        ${this._renderFKeyBar('categories')}
+        ${this._renderFKeyBar('products')}
       </div>`;
 
     try {
@@ -1290,28 +1508,64 @@ const TallyInventory = {
       const catMap = {};
       cats.forEach(c => { catMap[c.id] = c.name; });
 
-      const rows = products.map(p => {
+      // Group by normalized name & code to detect duplicates
+      const nameCounts = {};
+      const codeCounts = {};
+      products.forEach(p => {
+        const nm = (p.name || '').trim().toLowerCase();
+        const cd = (p.code || '').trim().toUpperCase();
+        if (nm) nameCounts[nm] = (nameCounts[nm] || 0) + 1;
+        if (cd) codeCounts[cd] = (codeCounts[cd] || 0) + 1;
+      });
+
+      const duplicateItems = products.filter(p => {
+        const nm = (p.name || '').trim().toLowerCase();
+        const cd = (p.code || '').trim().toUpperCase();
+        return (nameCounts[nm] > 1 || codeCounts[cd] > 1 || p.is_duplicate);
+      });
+      const duplicateCount = duplicateItems.length;
+
+      const rows = products.map((p, i) => {
         const unit  = p.sale_unit || p.unit;
         const punit = p.purchase_unit || p.unit;
         const sc    = p.current_stock <= 0 ? 'color:#b32020;font-weight:700'
                     : p.current_stock <= p.min_stock ? 'color:#a06000;font-weight:700'
                     : 'color:#1a6e2c';
+
+        const nm = (p.name || '').trim().toLowerCase();
+        const cd = (p.code || '').trim().toUpperCase();
+        const isDup = (nameCounts[nm] > 1 || codeCounts[cd] > 1 || p.is_duplicate);
+        const dupRowStyle = isDup ? 'background:#fee2e2;border-left:5px solid #dc2626;' : (i % 2 === 0 ? 'background:#ffffff;' : 'background:#f8fafc;');
+        const dupBadge = isDup ? ' <span class="badge badge-danger" style="background:#dc2626;color:#ffffff;font-weight:800;font-size:10px;padding:2px 7px;border-radius:4px;margin-left:6px;box-shadow:0 1px 2px rgba(0,0,0,0.15)">⚠️ DUPLICATE ITEM</span>' : '';
+
         return `
-          <tr style="border-bottom:1px solid #EBEBEB;cursor:pointer"
-              ondblclick="Inventory.showProductModal(${JSON.stringify(JSON.stringify(p))})">
+          <tr class="tally-prod-row ${i === 0 ? 'tally-row-selected' : ''}"
+              data-id="${p.id}" data-idx="${i}"
+              style="border-bottom:1px solid #EBEBEB;cursor:pointer;${dupRowStyle}"
+              onclick="TallyInventory._selectProductRow(${i})"
+              ondblclick="Inventory.showProductModalById(${p.id})">
             <td style="padding:6px 14px;font-weight:600;color:#1B2A47;font-family:monospace">${p.code}</td>
-            <td style="padding:6px 14px;font-weight:600">${p.name}</td>
-            <td style="padding:6px 14px;color:#555">${catMap[p.category_id] || '—'}</td>
+            <td style="padding:6px 14px;font-weight:600">${App.escapeHtml(p.name)}${dupBadge}</td>
+            <td style="padding:6px 14px;color:#555">${App.escapeHtml(catMap[p.category_id] || '—')}</td>
             <td style="padding:6px 14px;text-align:right;font-family:monospace;${sc}">${(p.current_stock||0).toFixed(3)} ${unit}</td>
             <td style="padding:6px 14px;text-align:right;font-family:monospace;color:#555">${(p.min_stock||0).toFixed(3)} ${unit}</td>
             <td style="padding:6px 14px;text-align:right;font-family:monospace">₹${parseFloat(p.purchase_price||0).toFixed(2)}/${punit}</td>
             <td style="padding:6px 14px;text-align:right;font-family:monospace;color:#8B6914">₹${parseFloat(p.selling_price||0).toFixed(2)}/${unit}</td>
-            <td style="padding:6px 14px">
-              <button class="tally-hbtn" onclick="Inventory.showProductModal(${JSON.stringify(JSON.stringify(p))})">✏</button>
-              <button class="tally-hbtn" style="color:#4AE84A" onclick="TallyInventory.openVoucher('stock-in',${JSON.stringify(JSON.stringify(p))})">⬆</button>
+            <td style="padding:6px 14px;display:flex;gap:4px">
+              <button class="tally-hbtn" onclick="Inventory.showProductModalById(${p.id})" title="Edit Product (F2 / Ctrl+Enter)">✏ Edit (F2)</button>
+              <button class="tally-hbtn" style="color:#4AE84A" onclick="TallyInventory.openVoucher('stock-in',${p.id})" title="Stock In">⬆ Stock In</button>
+              <button class="tally-hbtn" style="color:#EF4444" onclick="Inventory.deleteProduct(${p.id}, '${App.escapeHtml(p.name).replace(/'/g, "\\'")}')" title="Deactivate Item">🗑 Delete</button>
             </td>
           </tr>`;
       }).join('');
+
+      const dupBannerHtml = duplicateCount > 0 ? `
+        <div style="background:rgba(239,68,68,0.12);border:1.5px solid rgba(239,68,68,0.35);padding:10px 16px;border-radius:6px;margin:10px 14px;display:flex;align-items:center;justify-content:space-between">
+          <div style="color:#991b1b;font-weight:700;font-size:13px;display:flex;align-items:center;gap:8px">
+            <span style="font-size:18px">⚠️</span> Warning: ${duplicateCount} duplicate product entries detected in catalog! (Marked in red with DUPLICATE labels below)
+          </div>
+          <span style="font-size:11px;color:#7f1d1d">Please review and edit/deactivate duplicate items to maintain catalog accuracy.</span>
+        </div>` : '';
 
       content.innerHTML = `
         <div class="tally-shell">
@@ -1320,6 +1574,11 @@ const TallyInventory = {
             { label: 'Stock Items' }
           ], false)}
           <div class="tally-body" style="flex-direction:column;overflow:auto;background:#fff">
+            ${dupBannerHtml}
+            <div style="padding:10px 14px;background:#f1f5f9;border-bottom:1px solid #cbd5e1;display:flex;justify-content:space-between;align-items:center">
+              <div style="font-weight:700;color:#1e293b">${products.length} Registered Products <span style="font-weight:400;font-size:11px;color:#64748b;margin-left:8px">(Press <strong>F2</strong> or <strong>Ctrl+Enter</strong> to Edit selected item)</span></div>
+              ${(Auth.can('inventory.create') || Auth.can('inventory.edit') || Auth.isRole('admin', 'md', 'manager')) ? '<button class="tally-hbtn" style="background:#27ae60;color:#fff" onclick="Inventory.showProductModal()">➕ Product Entry / Add Product</button>' : ''}
+            </div>
             <table style="width:100%;border-collapse:collapse;font-size:12.5px">
               <thead style="position:sticky;top:0;z-index:5">
                 <tr style="background:#D8DCE8;border-bottom:2px solid #B0B4C0">
@@ -1336,10 +1595,305 @@ const TallyInventory = {
               <tbody>${rows}</tbody>
             </table>
           </div>
-          ${this._renderFKeyBar('categories')}
+          ${this._renderFKeyBar('products')}
         </div>`;
+
+      this._initProductsKeyNav();
     } catch(e) {
       App.showToast(e.message, 'error');
     }
+  },
+
+  _selectProductRow(idx) {
+    const rowEls = document.querySelectorAll('.tally-prod-row');
+    if (!rowEls.length) return;
+    rowEls.forEach((r, i) => {
+      if (i === idx) {
+        r.classList.add('tally-row-selected');
+        this._prodSelectedIdx = i;
+      } else {
+        r.classList.remove('tally-row-selected');
+      }
+    });
+  },
+
+  _initProductsKeyNav() {
+    this._destroyKeyListeners();
+    this._prodSelectedIdx = 0;
+
+    this._keyNavHandler = (e) => {
+      if (this._currentView !== 'products') return;
+      const modalOpen = !!document.querySelector('.modal-overlay.active');
+      if (modalOpen) return;
+
+      const tag = document.activeElement?.tagName;
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+
+      const rowEls = document.querySelectorAll('.tally-prod-row');
+      if (!rowEls.length) return;
+
+      if (e.key === 'ArrowDown' || e.key === 'j') {
+        e.preventDefault();
+        rowEls[this._prodSelectedIdx]?.classList.remove('tally-row-selected');
+        this._prodSelectedIdx = Math.min(this._prodSelectedIdx + 1, rowEls.length - 1);
+        const sel = rowEls[this._prodSelectedIdx];
+        sel?.classList.add('tally-row-selected');
+        sel?.scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'ArrowUp' || e.key === 'k') {
+        e.preventDefault();
+        rowEls[this._prodSelectedIdx]?.classList.remove('tally-row-selected');
+        this._prodSelectedIdx = Math.max(this._prodSelectedIdx - 1, 0);
+        const sel = rowEls[this._prodSelectedIdx];
+        sel?.classList.add('tally-row-selected');
+        sel?.scrollIntoView({ block: 'nearest' });
+      } else if (e.key === 'F2' || (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) || e.key === 'Enter') {
+        e.preventDefault();
+        const sel = rowEls[this._prodSelectedIdx];
+        const pid = sel?.getAttribute('data-id');
+        if (pid) {
+          Inventory.showProductModalById(pid);
+        } else if (this._products && this._products[0]) {
+          Inventory.showProductModalById(this._products[0].id);
+        } else {
+          Inventory.showProductModal();
+        }
+      } else if (e.key === 'F4') {
+        e.preventDefault();
+        Inventory.showProductModal();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        this.render();
+      }
+    };
+
+    this._fkeyHandler = (e) => {
+      if (this._currentView !== 'products') return;
+      const modalOpen = !!document.querySelector('.modal-overlay.active');
+      if (modalOpen) return;
+
+      if (e.key === 'F2' || e.key === 'F4') {
+        e.preventDefault();
+        this._keyNavHandler(e);
+      }
+    };
+
+    document.addEventListener('keydown', this._keyNavHandler);
+    document.addEventListener('keydown', this._fkeyHandler, true);
+  },
+
+  _editSelectedProduct() {
+    const rowEls = document.querySelectorAll('.tally-prod-row');
+    const idx = this._prodSelectedIdx || 0;
+    const sel = rowEls[idx] || rowEls[0];
+    const pid = sel?.getAttribute('data-id') || (this._products && this._products[0]?.id);
+    if (pid) {
+      Inventory.showProductModalById(pid);
+    } else {
+      Inventory.showProductModal();
+    }
+  },
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  BULK BARCODE PRINTING MODAL
+  // ═══════════════════════════════════════════════════════════════════════════
+  async showBulkBarcodeModal() {
+    let prods = this._products;
+    if (!prods || prods.length === 0) {
+      try {
+        prods = await App.api('/products?active=true');
+        this._products = prods;
+      } catch(e) {
+        App.showToast('Could not load products: ' + e.message, 'error');
+        return;
+      }
+    }
+
+    if (!prods || prods.length === 0) {
+      App.showToast('No active products found', 'warning');
+      return;
+    }
+
+    const catMap = {};
+    (this._categories || []).forEach(c => { catMap[c.id] = c.name; });
+
+    // Map items with initial print quantity (default 1)
+    const items = prods.map(p => ({
+      id:            p.id,
+      name:          p.name,
+      code:          p.code || '',
+      category_name: catMap[p.category_id] || p.category_name || 'Uncategorised',
+      barcode:       p.barcode || p.code || '',
+      selling_price: p.selling_price || 0,
+      unit:          p.sale_unit || p.unit || '',
+      current_stock: p.current_stock || 0,
+      selected:      true,
+      qty:           1
+    }));
+
+    this._bulkBarcodeItems = items;
+    this._renderBulkBarcodeModalHtml();
+  },
+
+  _renderBulkBarcodeModalHtml() {
+    const items = this._bulkBarcodeItems || [];
+    const filterQ = (document.getElementById('bc-search-q')?.value || '').toLowerCase();
+    const filtered = filterQ ? items.filter(i =>
+      i.name.toLowerCase().includes(filterQ) ||
+      i.code.toLowerCase().includes(filterQ) ||
+      i.barcode.toLowerCase().includes(filterQ)
+    ) : items;
+
+    const totalLabels = items.reduce((sum, i) => sum + (i.selected ? (parseInt(i.qty) || 0) : 0), 0);
+    const estPages = Math.ceil(totalLabels / 44) || 1;
+
+    App.showModal(`
+      <div class="modal modal-xl" style="max-width:980px">
+        <div class="modal-header" style="padding-bottom:12px;margin-bottom:12px">
+          <div class="modal-title">
+            <span class="modal-title-icon">🏷️</span> Bulk Barcode Printing
+            <span class="badge badge-gold" id="bc-total-badge" style="margin-left:12px;font-size:12px">${totalLabels} label${totalLabels !== 1 ? 's' : ''} (${estPages} A4 page${estPages !== 1 ? 's' : ''})</span>
+          </div>
+          <button class="modal-close" onclick="App.closeModal()">✕</button>
+        </div>
+
+        <!-- Controls Toolbar -->
+        <div style="background:var(--bg-input);border:1px solid var(--border);border-radius:var(--r-md);padding:10px 14px;margin-bottom:12px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px">
+          <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:220px">
+            <span style="font-size:14px">🔎</span>
+            <input type="text" id="bc-search-q" class="form-control" placeholder="Search product name, 4-letter code, or barcode…"
+              value="${filterQ}" oninput="TallyInventory._filterBulkBarcodeModal(this.value)" style="font-size:13px">
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-secondary btn-sm" onclick="TallyInventory._setBulkCopies('all', 1)">Set All = 1 Copy</button>
+            <button class="btn btn-secondary btn-sm" onclick="TallyInventory._setBulkCopies('all', 'stock')">Set All = Stock Qty</button>
+            <button class="btn btn-secondary btn-sm" onclick="TallyInventory._setBulkCopies('all', 0)">Clear All (0)</button>
+            <button class="btn btn-secondary btn-sm" onclick="TallyInventory._toggleBulkSelect(true)">Select All</button>
+            <button class="btn btn-secondary btn-sm" onclick="TallyInventory._toggleBulkSelect(false)">Deselect All</button>
+          </div>
+        </div>
+
+        <!-- Products Table -->
+        <div style="border:1px solid var(--border);border-radius:var(--r-md);overflow:hidden;max-height:50vh;overflow-y:auto;margin-bottom:12px">
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead>
+              <tr style="background:var(--bg-input);position:sticky;top:0;z-index:2;border-bottom:1px solid var(--border)">
+                <th style="padding:8px 12px;text-align:center;width:40px">
+                  <input type="checkbox" id="bc-chk-master" checked onchange="TallyInventory._toggleBulkSelect(this.checked)" style="accent-color:var(--gold)">
+                </th>
+                <th style="padding:8px 12px;text-align:left">Product Name &amp; Code</th>
+                <th style="padding:8px 12px;text-align:left">Category</th>
+                <th style="padding:8px 12px;text-align:center">Current Stock</th>
+                <th style="padding:8px 12px;text-align:right">Price (₹)</th>
+                <th style="padding:8px 12px;text-align:left">Barcode Value</th>
+                <th style="padding:8px 12px;text-align:center;width:130px">Labels to Print</th>
+              </tr>
+            </thead>
+            <tbody id="bc-modal-rows">
+              ${filtered.map((item) => {
+                const realIdx = items.indexOf(item);
+                return `
+                <tr style="border-bottom:1px solid var(--border);background:${item.selected ? 'transparent' : 'rgba(0,0,0,0.03)'}">
+                  <td style="padding:8px 12px;text-align:center">
+                    <input type="checkbox" ${item.selected ? 'checked' : ''} onchange="TallyInventory._onBulkItemSelect(${realIdx}, this.checked)" style="accent-color:var(--gold)">
+                  </td>
+                  <td style="padding:8px 12px;font-weight:600">
+                    ${item.name} <span class="badge badge-gold" style="font-family:monospace;font-size:10px;padding:1px 4px">[${item.code}]</span>
+                  </td>
+                  <td style="padding:8px 12px;color:var(--text-muted);font-size:12px">${item.category_name}</td>
+                  <td style="padding:8px 12px;text-align:center;font-weight:600">${App.fmtNum(item.current_stock)} ${item.unit}</td>
+                  <td style="padding:8px 12px;text-align:right;color:var(--gold);font-weight:600">${App.fmt(item.selling_price)}</td>
+                  <td style="padding:8px 12px;font-family:monospace;font-size:12px;color:var(--gold)">${item.barcode}</td>
+                  <td style="padding:8px 12px;text-align:center">
+                    <input type="number" min="0" max="500" value="${item.qty}"
+                      style="width:75px;text-align:center;border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-weight:700"
+                      oninput="TallyInventory._onBulkItemQtyChange(${realIdx}, this.value)">
+                  </td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Footer Actions -->
+        <div class="modal-footer" style="padding-top:12px">
+          <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button class="btn btn-primary" style="background:linear-gradient(135deg,#7c3aed,#5b21b6);font-weight:700" onclick="TallyInventory._launchBulkBarcodePrint()">
+            🖨️ Print Selected Barcodes (A4 Sheet)
+          </button>
+        </div>
+      </div>`);
+  },
+
+  _filterBulkBarcodeModal(q) {
+    this._renderBulkBarcodeModalHtml();
+  },
+
+  _onBulkItemSelect(idx, checked) {
+    if (this._bulkBarcodeItems && this._bulkBarcodeItems[idx]) {
+      this._bulkBarcodeItems[idx].selected = checked;
+      if (!checked) this._bulkBarcodeItems[idx].qty = 0;
+      else if (this._bulkBarcodeItems[idx].qty === 0) this._bulkBarcodeItems[idx].qty = 1;
+      this._updateBulkTotalBadge();
+    }
+  },
+
+  _onBulkItemQtyChange(idx, val) {
+    if (this._bulkBarcodeItems && this._bulkBarcodeItems[idx]) {
+      const q = Math.max(0, parseInt(val) || 0);
+      this._bulkBarcodeItems[idx].qty = q;
+      this._bulkBarcodeItems[idx].selected = q > 0;
+      this._updateBulkTotalBadge();
+    }
+  },
+
+  _setBulkCopies(target, val) {
+    (this._bulkBarcodeItems || []).forEach(item => {
+      let q = 1;
+      if (val === 'stock') {
+        q = Math.max(1, Math.round(parseFloat(item.current_stock) || 1));
+      } else {
+        q = parseInt(val) || 0;
+      }
+      item.qty = q;
+      item.selected = q > 0;
+    });
+    this._renderBulkBarcodeModalHtml();
+  },
+
+  _toggleBulkSelect(checked) {
+    (this._bulkBarcodeItems || []).forEach(item => {
+      item.selected = checked;
+      if (checked && item.qty === 0) item.qty = 1;
+      if (!checked) item.qty = 0;
+    });
+    this._renderBulkBarcodeModalHtml();
+  },
+
+  _updateBulkTotalBadge() {
+    const items = this._bulkBarcodeItems || [];
+    const totalLabels = items.reduce((sum, i) => sum + (i.selected ? (parseInt(i.qty) || 0) : 0), 0);
+    const estPages = Math.ceil(totalLabels / 44) || 1;
+    const badge = document.getElementById('bc-total-badge');
+    if (badge) badge.textContent = `${totalLabels} label${totalLabels !== 1 ? 's' : ''} (${estPages} A4 page${estPages !== 1 ? 's' : ''})`;
+  },
+
+  _launchBulkBarcodePrint() {
+    const selected = (this._bulkBarcodeItems || []).filter(i => i.selected && parseInt(i.qty) > 0);
+    if (!selected.length) {
+      App.showToast('Select at least one product with labels > 0', 'warning');
+      return;
+    }
+    const printItems = selected.map(i => ({
+      id:            i.id,
+      name:          i.name,
+      code:          i.code,
+      barcode:       i.barcode,
+      selling_price: i.selling_price,
+      unit:          i.unit,
+      qty:           parseInt(i.qty) || 1
+    }));
+    const encoded = btoa(JSON.stringify(printItems));
+    App.closeModal();
+    window.open(`/printables/barcodes?items=${encodeURIComponent(encoded)}`, '_blank');
   },
 };

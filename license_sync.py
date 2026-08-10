@@ -105,7 +105,20 @@ def sync_with_cloud_server():
             else:
                 raise
 
-        res_json = json.loads(resp_body)
+        try:
+            res_json = json.loads(resp_body) if resp_body else {}
+        except Exception:
+            res_json = {}
+
+        # ── REVOKED OUTLET: Central server returned HTTP 403 ──
+        if resp_status == 403:
+            conn = get_db()
+            conn.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_revoked', '1')")
+            conn.commit()
+            conn.close()
+            msg = (res_json.get('message') or (res_json.get('data') or {}).get('message') or
+                   "Outlet access has been revoked by central administration. Please contact support.")
+            return False, f"OUTLET_REVOKED: {msg}"
 
         # ── NEEDS RE-REGISTER: Developer deleted this outlet from the admin portal ──
         # The server returns license_status='needs_reregister'; we clear local data so

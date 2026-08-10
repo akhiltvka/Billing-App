@@ -16,11 +16,11 @@ const Suppliers = {
               <h1>🚚 Suppliers</h1>
               <p>${suppliers.length} registered suppliers</p>
             </div>
-            ${Auth.can('suppliers.manage') ? '<button class="btn btn-primary" onclick="Suppliers.showModal()">➕ Add Supplier</button>' : ''}
+            ${(Auth.can('suppliers.manage') || Auth.can('suppliers.view') || Auth.isRole('admin', 'md', 'manager')) ? '<button class="btn btn-primary" onclick="Suppliers.showModal()">➕ Add Supplier</button>' : ''}
           </div>
 
           ${suppliers.length === 0
-            ? '<div class="empty-state"><div class="empty-state-icon">🚚</div><h3>No suppliers yet</h3><p>Add your meat and product suppliers</p></div>'
+            ? `<div class="empty-state"><div class="empty-state-icon">🚚</div><h3>No suppliers yet</h3><p>Add your meat and product suppliers</p>${(Auth.can('suppliers.manage') || Auth.can('suppliers.view') || Auth.isRole('admin', 'md', 'manager')) ? '<button class="btn btn-primary mt-16" onclick="Suppliers.showModal()">➕ Add First Supplier</button>' : ''}</div>`
             : `<div class="grid-auto">
                 ${suppliers.map(s => `
                   <div class="card" style="padding:20px">
@@ -29,7 +29,7 @@ const Suppliers = {
                         <div style="font-size:16px;font-weight:700">${s.name}</div>
                         ${s.contact_person ? `<div class="text-muted text-sm">Contact: ${s.contact_person}</div>` : ''}
                       </div>
-                      ${Auth.can('suppliers.manage') ? `
+                      ${(Auth.can('suppliers.manage') || Auth.can('suppliers.view') || Auth.isRole('admin', 'md', 'manager')) ? `
                       <div style="display:flex;gap:6px">
                         <button class="btn btn-secondary btn-sm btn-icon" onclick="Suppliers.showModal(${JSON.stringify(JSON.stringify(s))})" title="Edit">✏️</button>
                         <button class="btn btn-danger btn-sm btn-icon" onclick="Suppliers.delete(${s.id},'${s.name}')" title="Delete">🗑️</button>

@@ -35,3 +35,11 @@ Add a entry to your user crontab (`crontab -e`) to execute daily at 2:00 AM:
    - **Add arguments**: `backup_scheduler.py`
    - **Start in**: `D:\Programs - New\Billing and Inventory App`
 5. Click **Finish**. You can right-click the task and select **Run** to test manually.
+
+---
+
+## Building Standalone Installers (.exe)
+
+- **Standard Windows 10/11 (64-bit)**: Run `build_exe.bat` to generate `dist\MPI_Billing_Software_Installer.exe`.
+- **Legacy Windows 7 / 8 (32-bit x86)**: Run `build_win7_32bit.bat` to generate `dist\MPI_Billing_Software_Installer_Win7_32bit.exe`. See [WINDOWS7_32BIT_BUILD_GUIDE.md](file:///d:/Programs%20-%20New/Billing%20and%20Inventory%20App/WINDOWS7_32BIT_BUILD_GUIDE.md) for details.
+

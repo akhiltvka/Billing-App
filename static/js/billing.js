@@ -66,16 +66,35 @@ const Billing = {
                 <div style="font-family:'Inter',sans-serif;font-size:14px;font-weight:700">📋 Bill Summary <kbd style="font-family:sans-serif;background:rgba(0,0,0,0.12);padding:1px 4px;border-radius:3px;font-size:10px;margin-left:4px">Ctrl+1</kbd></div>
                 <div style="font-size:11px;color:var(--text-muted)">Upcoming: <span id="pos-bill-no" class="font-bold text-gold">Loading…</span></div>
               </div>
-            <div style="display:flex;align-items:center;gap:8px">
-              <button class="btn btn-secondary btn-sm" onclick="Billing.showSwitchBillsModal()" title="Switch Bills (Ctrl+2 / F6)" style="border:1.5px solid var(--gold);color:var(--gold);background:rgba(201,168,76,.1);padding:6px 10px;font-weight:600;font-size:12px">
-                🔄 Bills <span id="switch-bills-badge" style="font-size:11px;background:var(--gold);color:#0f172a;border-radius:10px;padding:1px 6px;font-weight:700;margin-left:2px"></span>
+            <div style="display:flex;align-items:center;gap:6px">
+              <button id="format-toggle-badge" class="btn btn-secondary btn-sm"
+                onclick="Billing.togglePrintFormatSetting()" title="Click to switch default print format (Thermal vs A4)" style="padding:5px 8px;font-weight:600;font-size:11px">
+                ${this.settings?.default_print_format === 'a4' ? '📄 A4' : '🧾 Thermal'}
+              </button>
+              <button id="preview-toggle-badge" class="${this.settings?.show_print_preview === 'true' ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm'}"
+                onclick="Billing.togglePrintPreviewSetting()" title="Click to toggle Print Preview on/off for counter staff" style="padding:5px 8px;font-weight:600;font-size:11px">
+                ${this.settings?.show_print_preview === 'true' ? '👁️ Preview: ON' : '⚡ Direct Print: ON'}
+              </button>
+              <button class="btn btn-secondary btn-sm" onclick="Billing.showSwitchBillsModal()" title="Switch Bills (Ctrl+2 / F6)" style="border:1.5px solid var(--gold);color:var(--gold);background:rgba(201,168,76,.1);padding:5px 8px;font-weight:600;font-size:11px">
+                🔄 Bills <span id="switch-bills-badge" style="font-size:10px;background:var(--gold);color:#0f172a;border-radius:10px;padding:1px 5px;font-weight:700;margin-left:2px"></span>
               </button>
               ${Auth.can('billing.hold') ? `
-              <button class="btn btn-warning btn-sm" onclick="Billing.holdCurrentBill()" title="Hold Bill (F5)" style="padding:6px 10px;font-weight:600;font-size:12px">
+              <button class="btn btn-warning btn-sm" onclick="Billing.holdCurrentBill()" title="Hold Bill (F5)" style="padding:5px 8px;font-weight:600;font-size:11px">
                 ⏸️ Hold
               </button>` : ''}
             </div>
             </div>
+
+            ${(Auth.isRole('admin', 'md') || Auth.can('billing.backdate')) ? `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 16px;background:rgba(201,168,76,0.08);border-bottom:1px solid var(--border)">
+              <label style="font-size:11px;font-weight:700;color:var(--gold);margin:0;display:flex;align-items:center;gap:4px">
+                <span>📅</span> Bill Date (MD Back-Date):
+              </label>
+              <input type="date" id="pos-custom-date" class="form-control" style="width:130px;padding:2px 6px;font-size:11px;font-weight:700"
+                max="${new Date().toISOString().split('T')[0]}"
+                value="${this.customBillDate || new Date().toISOString().split('T')[0]}"
+                onchange="Billing.customBillDate = this.value">
+            </div>` : ''}
 
             <div class="customer-panel" style="padding:6px 16px">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
@@ -89,6 +108,21 @@ const Billing = {
                 ${(Auth.can('billing.give_discount') ? [0,5,10,15,20] : [0,2.5,5,7.5,10]).map(d =>
                   `<button class="btn btn-secondary btn-sm" style="flex:1;padding:4px" onclick="Billing.setDiscount(${d})">${d}%</button>`
                 ).join('')}
+              </div>
+
+              <!-- Redeem Points Input Container -->
+              <div id="loyalty-redemption-panel" style="margin-top:10px;padding:8px 10px;background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.25);border-radius:var(--r-sm);${(this.customer && (this.settings?.loyalty_enabled !== 'false')) ? 'display:block' : 'display:none'}">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                  <span class="form-label" style="margin:0;font-size:11px;color:var(--gold);font-weight:700">⭐ Redeem Loyalty Points</span>
+                  <span id="avail-points-display" style="font-size:11px;font-weight:700;color:var(--text-secondary)">
+                    Avail: ${parseFloat(this.customer?.loyalty_points || 0).toFixed(2)} pts
+                  </span>
+                </div>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input type="number" id="redeem-points-input" class="form-control" placeholder="0" min="0" max="${this.customer?.loyalty_points || 0}" step="0.5" value="${this.redeemPoints || ''}" style="font-size:13px;font-weight:700;padding:4px 8px;height:30px" oninput="Billing.setRedeemPoints(this.value)">
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="Billing.redeemMaxPoints()" style="padding:4px 8px;font-size:11px;white-space:nowrap;font-weight:700;color:var(--gold)">Max</button>
+                </div>
+                <div id="points-discount-val-display" style="font-size:11px;color:var(--text-muted);margin-top:4px">Discount value: ₹0.00</div>
               </div>
             </div>
 
@@ -248,6 +282,30 @@ const Billing = {
         onEscape:         () => App.closeModal(),
       });
     }
+
+    // Auto-focus search input & initialize barcode listener for POS
+    setTimeout(() => {
+      document.getElementById('product-search')?.focus();
+    }, 150);
+    this.initBarcodeScanner();
+  },
+
+  // ─── Start New Bill (F1 Shortcut) ──────────────────────────────────────────
+  startNewBill() {
+    this.cart = [];
+    this.customer = null;
+    this.discountPct = 0;
+    this.redeemPoints = 0;
+    this.amountPaid = '';
+    this.notes = '';
+    this.customBillDate = null;
+
+    if (typeof App !== 'undefined' && App.currentPage !== 'billing') {
+      App.navigate('billing');
+    } else {
+      this.render();
+      App.toast('✨ New Bill Started', 'info');
+    }
   },
 
   // ─── Bill Summary Floating Popup (Ctrl+1) ──────────────────────────────────
@@ -292,7 +350,7 @@ const Billing = {
         <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;font-weight:700">${App.fmt(i.quantity * i.unit_price)}</td>
       </tr>`).join('');
 
-    const gstRows = (cgstEl && sgstEl) ? `
+    const gstRows = (App.isGstEnabled() && cgstEl && sgstEl) ? `
       <tr><td style="padding:4px 8px;color:var(--text-muted);font-size:12px">CGST</td><td colspan="3" style="padding:4px 8px;text-align:right;color:var(--text-muted);font-size:12px">${cgstEl.textContent}</td></tr>
       <tr><td style="padding:4px 8px;color:var(--text-muted);font-size:12px">SGST</td><td colspan="3" style="padding:4px 8px;text-align:right;color:var(--text-muted);font-size:12px">${sgstEl.textContent}</td></tr>` : '';
 
@@ -449,11 +507,102 @@ const Billing = {
     this.setPayment(mode);
   },
 
+  async togglePrintPreviewSetting() {
+    const current = this.settings && this.settings.show_print_preview === 'true';
+    const nextVal = current ? 'false' : 'true';
+    if (!this.settings) this.settings = {};
+    this.settings.show_print_preview = nextVal;
+    try {
+      await App.api('/settings', 'POST', { show_print_preview: nextVal });
+      App.toast(`Print Preview modal ${nextVal === 'true' ? 'enabled (Preview ON)' : 'disabled (Direct Print to Default Printer)'}`, 'info');
+      const badge = document.getElementById('preview-toggle-badge');
+      if (badge) {
+        badge.textContent = nextVal === 'true' ? '👁️ Preview: ON' : '⚡ Direct Print: ON';
+        badge.className = nextVal === 'true' ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm';
+      }
+    } catch(e) {
+      App.toast('Failed to save print preview setting: ' + e.message, 'error');
+    }
+  },
+
+  printInvoice(billId, format = 'thermal', token = '') {
+    if (this.settings && this.settings.show_print_preview === 'true') {
+      this.showPrintPreviewModal(billId, format, token);
+    } else {
+      this.directPrint(billId, format, token);
+    }
+  },
+
+  async togglePrintFormatSetting() {
+    const current = this.settings && this.settings.default_print_format === 'a4' ? 'a4' : 'thermal';
+    const nextVal = current === 'thermal' ? 'a4' : 'thermal';
+    if (!this.settings) this.settings = {};
+    this.settings.default_print_format = nextVal;
+    try {
+      await App.api('/settings', 'POST', { default_print_format: nextVal });
+      App.toast(`Default Print Format switched to: ${nextVal === 'thermal' ? 'Thermal Receipt (80mm/58mm)' : 'A4 Paper Invoice'}`, 'info');
+      const badge = document.getElementById('format-toggle-badge');
+      if (badge) {
+        badge.textContent = nextVal === 'thermal' ? '🧾 Thermal' : '📄 A4';
+      }
+    } catch(e) {
+      App.toast('Failed to save print format setting: ' + e.message, 'error');
+    }
+  },
+
+  getInvoiceUrl(billId, format = 'thermal', token = '') {
+    const thermalWidth = (this.settings && this.settings.thermal_paper_width) || '80';
+    const params = new URLSearchParams();
+    if (format === 'thermal') {
+      params.set('width', thermalWidth);
+    }
+    if (token) {
+      params.set('token', token);
+    }
+    params.set('v', Date.now().toString());
+
+    const basePath = format === 'thermal' ? `/invoice/${billId}/thermal` : `/invoice/${billId}`;
+    return `${basePath}?${params.toString()}`;
+  },
+
+  directPrint(billId, format = 'thermal', token = '') {
+    const url = this.getInvoiceUrl(billId, format, token);
+
+    let iframe = document.getElementById('silent-print-iframe');
+    if (!iframe) {
+      iframe = document.createElement('iframe');
+      iframe.id = 'silent-print-iframe';
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      iframe.style.visibility = 'hidden';
+      document.body.appendChild(iframe);
+    }
+
+    let printAttempted = false;
+    const triggerPrint = () => {
+      if (printAttempted) return;
+      printAttempted = true;
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch (e) {
+        console.error('Direct print error:', e);
+        this.showPrintPreviewModal(billId, format, token);
+      }
+    };
+
+    iframe.onload = () => {
+      setTimeout(triggerPrint, 250);
+    };
+    iframe.src = url;
+  },
+
   showPrintPreviewModal(billId, format = 'thermal', token = '') {
-    const urlSuffix = format === 'thermal' ? '/thermal' : '';
-    const tokenParam = token ? `?token=${token}` : '';
-    const sep = tokenParam ? '&' : '?';
-    const url = `/invoice/${billId}${urlSuffix}${tokenParam}${sep}v=${Date.now()}`;
+    const url = this.getInvoiceUrl(billId, format, token);
 
     App.showModal(`
       <div class="modal" style="max-width:850px;width:95vw;height:85vh;display:flex;flex-direction:column;padding:0">
@@ -465,10 +614,14 @@ const Billing = {
           <iframe id="print-preview-iframe" src="${url}" style="width:100%;height:100%;border:none;"></iframe>
         </div>
         <div class="modal-footer" style="padding:12px 16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:var(--bg-card)">
-          <div>
+          <div style="display:flex;gap:8px">
             <button class="btn btn-secondary btn-sm" onclick="Billing.togglePreviewFormat(${billId}, '${format}', '${token}')">
               🔄 Switch to ${format === 'thermal' ? 'A4 Invoice' : 'Thermal Receipt'}
             </button>
+            ${format === 'thermal' ? `
+            <button class="btn btn-secondary btn-sm" onclick="Billing.togglePreviewWidth(${billId}, '${token}')" title="Click to toggle thermal paper roll width (80mm vs 58mm)">
+              📏 Roll: ${(this.settings?.thermal_paper_width || '80')}mm
+            </button>` : ''}
           </div>
           <div style="display:flex;gap:8px">
             <button class="btn btn-gold" onclick="Billing.printIframeContent()" style="padding:8px 20px;font-weight:700">
@@ -484,6 +637,17 @@ const Billing = {
   togglePreviewFormat(billId, currentFormat, token) {
     const nextFormat = currentFormat === 'thermal' ? 'a4' : 'thermal';
     this.showPrintPreviewModal(billId, nextFormat, token);
+  },
+
+  async togglePreviewWidth(billId, token = '') {
+    const current = (this.settings && this.settings.thermal_paper_width) || '80';
+    const nextWidth = current === '80' ? '58' : '80';
+    if (!this.settings) this.settings = {};
+    this.settings.thermal_paper_width = nextWidth;
+    try {
+      await App.api('/settings', 'POST', { thermal_paper_width: nextWidth });
+    } catch(e) {}
+    this.showPrintPreviewModal(billId, 'thermal', token);
   },
 
   printIframeContent() {
@@ -757,11 +921,16 @@ const Billing = {
         <div class="search-result-item${isActive}" data-id="${p.id}" onmousedown="event.preventDefault(); Billing.selectProductById(${p.id})">
           <div>
             <div class="item-name">${App.escapeHtml(p.name)} <span class="badge badge-gold" style="font-family:monospace;font-size:11px;padding:1px 5px">[${App.escapeHtml(p.code || '')}]</span></div>
-            <div class="item-meta">${App.escapeHtml(p.category_name || '')} &bull; ${App.escapeHtml(p.unit || '')} &bull; HSN: ${App.escapeHtml(p.hsn_code || 'N/A')}</div>
+            <div class="item-meta">${App.escapeHtml(p.category_name || '')} &bull; ${App.escapeHtml(p.unit || '')} ${p.hsn_code ? '&bull; HSN: ' + App.escapeHtml(p.hsn_code) : ''}</div>
           </div>
-          <div style="text-align:right">
-            <div class="item-price">${App.fmt(p.selling_price)}/${App.escapeHtml(p.unit || '')}</div>
-            <div class="item-stock">${App.stockBadge(p.current_stock, p.min_stock)}</div>
+          <div style="text-align:right;display:flex;align-items:center;gap:8px">
+            <div>
+              <div class="item-price">${App.fmt(p.selling_price)}/${App.escapeHtml(p.unit || '')}</div>
+              <div class="item-stock">${App.stockBadge(p.current_stock, p.min_stock)}</div>
+            </div>
+            ${(Auth.can('inventory.edit') || Auth.isRole('admin','md','manager')) ? `
+              <button type="button" class="btn btn-secondary btn-sm btn-icon" style="padding:2px 6px;font-size:12px;margin-left:4px" onmousedown="event.stopPropagation(); event.preventDefault(); Inventory.showProductModalById(${p.id})" title="Edit Product">✏️ Edit</button>
+            ` : ''}
           </div>
         </div>`;
     }).join('');
@@ -856,17 +1025,33 @@ const Billing = {
         return;
       }
 
-      // Case B: Barcode lookup
+      // Case B: Local & API Barcode / Item Code Lookup
       if (val) {
+        const valLower = val.toLowerCase();
+        const localMatch = (this.products || []).find(p =>
+          (p.code && String(p.code).toLowerCase() === valLower) ||
+          (p.barcode && String(p.barcode).toLowerCase() === valLower) ||
+          (p.id && String(p.id) === val)
+        );
+
+        if (localMatch) {
+          this.addToCart(localMatch);
+          return;
+        }
+
         App.api(`/products/barcode/${encodeURIComponent(val)}`).then(bResult => {
           if (bResult) {
             this.addToCart(bResult);
           } else if (this.lastProductResults && this.lastProductResults.length > 0) {
             this.addToCart(this.lastProductResults[0]);
+          } else {
+            App.toast(`No product found matching code/barcode "${val}"`, 'warning');
           }
         }).catch(() => {
           if (this.lastProductResults && this.lastProductResults.length > 0) {
             this.addToCart(this.lastProductResults[0]);
+          } else {
+            App.toast(`No product found matching code/barcode "${val}"`, 'warning');
           }
         });
       } else if (this.lastProductResults && this.lastProductResults.length > 0) {
@@ -898,6 +1083,8 @@ const Billing = {
     if (existing) {
       existing.quantity = parseFloat((existing.quantity + 1).toFixed(3));
       this.renderCart();
+      App.toast(`🛒 ${p.name} (+1) — Total Qty: ${existing.quantity} ${p.unit || ''}`, 'success');
+      setTimeout(() => document.getElementById('product-search')?.focus(), 50);
       return;
     }
 
@@ -915,7 +1102,78 @@ const Billing = {
       is_price_inclusive_of_tax: p.is_price_inclusive_of_tax ?? 1,
     });
     this.renderCart();
-    App.toast(`${p.name} added to cart`, 'success');
+    App.toast(`🛒 ${p.name} added to cart`, 'success');
+    setTimeout(() => document.getElementById('product-search')?.focus(), 50);
+  },
+
+  // ─── Global USB Barcode Scanner Listener ───
+  _barcodeBuffer: '',
+  _barcodeTimer: null,
+  _barcodeBound: false,
+
+  initBarcodeScanner() {
+    if (this._barcodeBound) return;
+    this._barcodeBound = true;
+
+    window.addEventListener('keydown', (e) => {
+      if (typeof App === 'undefined' || App.currentPage !== 'billing') return;
+
+      const activeEl = document.activeElement;
+      if (activeEl && activeEl.tagName === 'INPUT' && activeEl.id !== 'product-search') {
+        return;
+      }
+      if (activeEl && (activeEl.tagName === 'TEXTAREA' || activeEl.tagName === 'SELECT')) {
+        return;
+      }
+      if (document.querySelector('.modal-overlay.active')) {
+        return;
+      }
+      if (activeEl && activeEl.id === 'product-search') {
+        return; // Handled directly by onSearchKey
+      }
+
+      if (e.key === 'Enter') {
+        if (this._barcodeBuffer && this._barcodeBuffer.length >= 1) {
+          e.preventDefault();
+          const code = this._barcodeBuffer.trim();
+          this._barcodeBuffer = '';
+          this.processBarcodeScan(code);
+        }
+      } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        this._barcodeBuffer += e.key;
+        clearTimeout(this._barcodeTimer);
+        this._barcodeTimer = setTimeout(() => {
+          this._barcodeBuffer = '';
+        }, 300);
+      }
+    });
+  },
+
+  async processBarcodeScan(code) {
+    if (!code) return;
+    const codeLower = code.toLowerCase();
+
+    const localMatch = (this.products || []).find(p =>
+      (p.code && String(p.code).toLowerCase() === codeLower) ||
+      (p.barcode && String(p.barcode).toLowerCase() === codeLower) ||
+      (p.id && String(p.id) === code)
+    );
+
+    if (localMatch) {
+      this.addToCart(localMatch);
+      return;
+    }
+
+    try {
+      const p = await App.api(`/products/barcode/${encodeURIComponent(code)}`);
+      if (p) {
+        this.addToCart(p);
+      } else {
+        App.toast(`Barcode "${code}" not found in inventory`, 'warning');
+      }
+    } catch(e) {
+      App.toast(`Barcode "${code}" not found in inventory`, 'warning');
+    }
   },
 
   // ─── Render Cart ──────────────────────────────────────────────────────────
@@ -1233,10 +1491,17 @@ const Billing = {
     const container = document.getElementById('customer-panel-container');
     if (!container) return;
 
+    const isLoyaltyEnabled = (this.settings?.loyalty_enabled !== 'false' && this.settings?.loyalty_enabled !== false);
+    const loyaltyPts = parseFloat(this.customer?.loyalty_points || 0);
+    const ptsVal = parseFloat(this.settings?.loyalty_redemption_value || 0.50);
+
     if (this.customer) {
       const dues = parseFloat(this.customer.total_dues || 0);
       const duesHtml = dues > 0 
         ? `<span class="badge badge-danger" style="font-weight:700;font-size:11px;padding:3px 8px;margin-left:8px;border-radius:4px">Dues: ₹${dues.toFixed(2)}</span>` 
+        : '';
+      const ptsHtml = isLoyaltyEnabled
+        ? `<span class="badge badge-gold" style="font-weight:700;font-size:11px;padding:3px 8px;margin-left:6px;border-radius:4px" title="Available Loyalty Points">⭐ ${loyaltyPts.toFixed(2)} pts (₹${(loyaltyPts * ptsVal).toFixed(2)})</span>`
         : '';
       
       container.innerHTML = `
@@ -1247,6 +1512,7 @@ const Billing = {
               <div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px">
                 <span style="font-weight:800;font-size:14px;color:var(--text-primary);letter-spacing:0.1px">${App.escapeHtml(this.customer.name)}</span>
                 ${duesHtml}
+                ${ptsHtml}
               </div>
               <div style="font-size:12px;color:var(--text-secondary);font-family:monospace;margin-top:2px;display:flex;align-items:center;gap:4px">
                 <span style="opacity:0.7">📱 Phone:</span> <strong style="color:var(--text-primary)">${App.escapeHtml(this.customer.phone || 'No phone')}</strong>
@@ -1258,6 +1524,7 @@ const Billing = {
           </button>
         </div>`;
     } else {
+      this.redeemPoints = 0;
       container.innerHTML = `
         <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;width:100%">
           <div style="flex:1;min-width:240px;position:relative">
@@ -1274,6 +1541,43 @@ const Billing = {
           </div>
         </div>`;
     }
+
+    const redeemPanel = document.getElementById('loyalty-redemption-panel');
+    if (redeemPanel) {
+      redeemPanel.style.display = (this.customer && isLoyaltyEnabled) ? 'block' : 'none';
+    }
+    const availDisplay = document.getElementById('avail-points-display');
+    if (availDisplay) {
+      availDisplay.textContent = `Avail: ${loyaltyPts.toFixed(2)} pts (₹${(loyaltyPts * ptsVal).toFixed(2)})`;
+    }
+    const ptsInput = document.getElementById('redeem-points-input');
+    if (ptsInput) {
+      ptsInput.max = loyaltyPts;
+      if (!this.customer) ptsInput.value = '';
+    }
+    this.updateTotals();
+  },
+
+  setRedeemPoints(val) {
+    const maxPts = parseFloat(this.customer?.loyalty_points || 0);
+    let pts = parseFloat(val) || 0;
+    if (pts < 0) pts = 0;
+    if (pts > maxPts) {
+      pts = maxPts;
+      const inp = document.getElementById('redeem-points-input');
+      if (inp) inp.value = pts;
+      App.toast(`Cannot redeem more than customer's available points (${maxPts.toFixed(2)} pts)`, 'warning');
+    }
+    this.redeemPoints = pts;
+    this.updateTotals();
+  },
+
+  redeemMaxPoints() {
+    if (!this.customer) return;
+    const maxPts = parseFloat(this.customer.loyalty_points || 0);
+    const inp = document.getElementById('redeem-points-input');
+    if (inp) inp.value = maxPts;
+    this.setRedeemPoints(maxPts);
   },
 
   // ─── Discount & Totals Calculations ─────────────────────────────────────
@@ -1318,17 +1622,23 @@ const Billing = {
     let rawSubtotal = 0;
     let cgstTotal = 0;
     let sgstTotal = 0;
+    const gstEnabled = App.isGstEnabled();
 
     this.cart.forEach(i => {
       const lineRaw = i.quantity * i.unit_price;
       const lineTaxable = lineRaw * (1 - this.discountPct / 100);
       rawSubtotal += lineTaxable;
-      cgstTotal += lineTaxable * (i.gst_rate / 2) / 100;
-      sgstTotal += lineTaxable * (i.gst_rate / 2) / 100;
+      if (gstEnabled) {
+        cgstTotal += lineTaxable * (i.gst_rate / 2) / 100;
+        sgstTotal += lineTaxable * (i.gst_rate / 2) / 100;
+      }
     });
 
+    const ptsVal = parseFloat(this.settings?.loyalty_redemption_value || 0.50);
+    const ptsDiscountAmt = (this.redeemPoints || 0) * ptsVal;
     const discountAmt = (this.cart.reduce((s, i) => s + i.quantity * i.unit_price, 0)) * (this.discountPct / 100);
-    const grandTotal = rawSubtotal + cgstTotal + sgstTotal;
+    const totalDiscountAmt = discountAmt + ptsDiscountAmt;
+    const grandTotal = Math.max(0, rawSubtotal + (gstEnabled ? (cgstTotal + sgstTotal) : 0) - ptsDiscountAmt);
 
     const elSub = document.getElementById('sum-subtotal');
     const elDisc = document.getElementById('sum-discount');
@@ -1338,10 +1648,15 @@ const Billing = {
     const elPaid = document.getElementById('amount-paid');
 
     if (elSub) elSub.textContent = App.fmt(this.cart.reduce((s, i) => s + i.quantity * i.unit_price, 0));
-    if (elDisc) elDisc.textContent = discountAmt > 0 ? `− ${App.fmt(discountAmt)}` : '— ₹0.00';
+    if (elDisc) elDisc.textContent = totalDiscountAmt > 0 ? `− ${App.fmt(totalDiscountAmt)}` : '— ₹0.00';
     if (elCgst) elCgst.textContent = App.fmt(cgstTotal);
     if (elSgst) elSgst.textContent = App.fmt(sgstTotal);
     if (elTot) elTot.textContent = App.fmt(grandTotal);
+
+    const valDisp = document.getElementById('points-discount-val-display');
+    if (valDisp) {
+      valDisp.textContent = ptsDiscountAmt > 0 ? `Discount value: − ₹${ptsDiscountAmt.toFixed(2)}` : 'Discount value: ₹0.00';
+    }
 
     if (elPaid && !elPaid.value) {
       elPaid.value = grandTotal > 0 ? grandTotal.toFixed(2) : '';
@@ -1412,12 +1727,18 @@ const Billing = {
         paid = total;
       }
 
+      const customDateVal = document.getElementById('pos-custom-date')?.value || this.customBillDate || null;
+      const todayStr = new Date().toISOString().split('T')[0];
+      const finalBillDate = (customDateVal && customDateVal <= todayStr) ? customDateVal : null;
+
       const payload = {
+        date:            finalBillDate,
         customer_id:     this.customer?.id || null,
         customer_name:   this.customer?.name || document.getElementById('customer-search')?.value || 'Walk-in Customer',
         customer_phone:  this.customer?.phone || '',
         customer_gstin:  this.customer?.gstin || '',
         discount_percent: this.discountPct,
+        redeem_points:   this.redeemPoints || 0,
         amount_paid:     paid,
         payment_mode:    this.paymentMode,
         notes:           document.getElementById('bill-notes')?.value || '',
@@ -1438,12 +1759,13 @@ const Billing = {
       this.cart = [];
       this.customer = null;
       this.discountPct = 0;
+      this.redeemPoints = 0;
       this.amountPaid = '';
       this.notes = '';
 
       if (print) {
         const fmt = (this.settings && this.settings.default_print_format) === 'a4' ? 'a4' : 'thermal';
-        this.showPrintPreviewModal(bill.id, fmt, bill.print_token || '');
+        this.printInvoice(bill.id, fmt, bill.print_token || '');
       }
 
       this.render();
@@ -1541,10 +1863,16 @@ const Billing = {
                        </div>`}</td>
                   <td>
                     <div style="display:flex;gap:6px">
-                      <button class="btn btn-secondary btn-sm" onclick="Billing.showPrintPreviewModal(${b.id}, 'a4', '${b.print_token || ''}')" title="Print Full Invoice (A4)">🖨️</button>
-                      <button class="btn btn-secondary btn-sm" onclick="Billing.showPrintPreviewModal(${b.id}, 'thermal', '${b.print_token || ''}')" title="Print Thermal Receipt">🧾</button>
+                      <button class="btn btn-secondary btn-sm" onclick="Billing.printInvoice(${b.id}, 'a4', '${b.print_token || ''}')" title="Print Full Invoice (A4)">🖨️</button>
+                      <button class="btn btn-secondary btn-sm" onclick="Billing.printInvoice(${b.id}, 'thermal', '${b.print_token || ''}')" title="Print Thermal Receipt">🧾</button>
+                      ${(Auth.isRole('admin', 'md') || Auth.can('billing.backdate') || Auth.can('billing.edit_date'))
+                        ? `<button class="btn btn-secondary btn-sm" onclick="Billing.promptEditBillDate(${b.id}, '${b.bill_no}', '${b.date}')" title="Edit Bill Date (MD Only)" style="border:1px solid var(--gold);color:var(--gold);font-weight:600">📅 Date</button>`
+                        : ''}
                       ${b.status === 'paid' && Auth.can('billing.void_bill')
-                        ? `<button class="btn btn-danger btn-sm" onclick="Billing.promptCancelBill(${b.id},'${b.bill_no}')" title="Cancel Bill">✕ Cancel</button>`
+                        ? `<button class="btn btn-warning btn-sm" onclick="Billing.promptCancelBill(${b.id},'${b.bill_no}')" title="Cancel Bill">✕ Cancel</button>`
+                        : ''}
+                      ${(Auth.isRole('admin', 'md') || Auth.can('billing.purge') || Auth.can('billing.delete'))
+                        ? `<button class="btn btn-danger btn-sm" onclick="Billing.promptPurgeBill(${b.id}, '${b.bill_no}', '${b.status}')" title="Permanently Delete Bill (MD Only)" style="background:#dc2626;border-color:#dc2626;color:#fff;font-weight:700">🗑️ Delete</button>`
                         : ''}
                     </div>
                   </td>
@@ -1615,6 +1943,106 @@ const Billing = {
       App.toast(`Bill ${billNo} cancelled & stock restored!`, 'warning');
       this.loadHistory();
     } catch(e) { App.toast(e.message, 'error'); }
+  },
+
+  // ─── Edit Bill Date (MD / Admin Only) ─────────────────────────────────────
+  promptEditBillDate(id, billNo, currentDate) {
+    const currDateStr = currentDate ? currentDate.slice(0, 10) : new Date().toISOString().split('T')[0];
+    const maxDate = new Date().toISOString().split('T')[0];
+
+    App.showModal(`
+      <div class="modal" style="max-width:440px;border-top:4px solid var(--gold)">
+        <div class="modal-header">
+          <div class="modal-title" style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:20px">📅</span> Edit Invoice Date — Bill ${billNo}
+          </div>
+          <button class="modal-close" onclick="App.closeModal()">✕</button>
+        </div>
+        <div style="padding:16px 20px">
+          <div style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:6px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--text-secondary)">
+            Current Bill Date: <strong style="color:var(--gold)">${currentDate}</strong><br>
+            <em>Note: MD permission active. Changing date will update ledger postings, sales registers, and financial reports.</em>
+          </div>
+
+          <div class="form-group mb-16">
+            <label class="form-label required">Select New Bill Date (Back-Date Only)</label>
+            <input type="date" id="edit-bill-date-input" class="form-control" value="${currDateStr}" max="${maxDate}">
+            <div style="font-size:11px;color:var(--text-muted);margin-top:4px">Future dates are disabled (back-dates only).</div>
+          </div>
+        </div>
+        <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:10px">
+          <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="Billing.confirmEditBillDate(${id}, '${billNo}')">💾 Update Date</button>
+        </div>
+      </div>
+    `);
+  },
+
+  async confirmEditBillDate(id, billNo) {
+    const newDate = document.getElementById('edit-bill-date-input')?.value;
+    if (!newDate) {
+      App.toast('Please select a valid date', 'error');
+      return;
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    if (newDate > today) {
+      App.toast('Bill date cannot be in the future. Back-dates only are permitted.', 'error');
+      return;
+    }
+
+    try {
+      await App.api(`/bills/${id}/date`, 'PUT', { date: newDate });
+      App.toast(`Bill #${billNo} date updated to ${newDate} successfully!`, 'success');
+      App.closeModal();
+      this.loadHistory();
+    } catch(e) {
+      App.toast(e.message, 'error');
+    }
+  },
+
+  // ─── Permanent Delete Bill (MD / Admin Only) ──────────────────────────────
+  promptPurgeBill(id, billNo, status) {
+    App.showModal(`
+      <div class="modal" style="max-width:480px;border-top:5px solid #dc2626">
+        <div class="modal-header">
+          <div class="modal-title text-danger" style="display:flex;align-items:center;gap:8px;font-weight:800;color:#dc2626">
+            <span style="font-size:22px">⚠️</span> PERMANENT DELETE BILL ${billNo}
+          </div>
+          <button class="modal-close" onclick="App.closeModal()">✕</button>
+        </div>
+        <div style="padding:16px 20px">
+          <div style="background:rgba(239,68,68,0.08);border:1.5px solid rgba(239,68,68,0.3);border-radius:8px;padding:14px;margin-bottom:16px">
+            <div style="font-weight:800;color:#991b1b;font-size:15px;margin-bottom:6px">
+              Are you sure you want to PERMANENTLY DELETE Bill ${billNo}?
+            </div>
+            <div style="font-size:13px;color:#7f1d1d;line-height:1.6">
+              • Bill Status: <strong>${(status || '').toUpperCase()}</strong><br>
+              • This will permanently erase the bill record, line items, payment history, and double-entry ledger vouchers.<br>
+              • <strong>This action cannot be undone.</strong>
+            </div>
+          </div>
+          <p style="font-size:13px;color:#475569;margin:0">Confirming will erase Bill ${billNo} from history and free all linked item records.</p>
+        </div>
+        <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:10px;padding:12px 20px;background:#f8fafc;border-top:1px solid #e2e8f0">
+          <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button class="btn btn-danger" style="background:#dc2626;border-color:#dc2626;font-weight:800;padding:8px 20px" onclick="Billing.confirmPurgeBill(${id}, '${billNo}')">
+            🗑️ Yes, Permanently Delete Bill
+          </button>
+        </div>
+      </div>
+    `);
+  },
+
+  async confirmPurgeBill(id, billNo) {
+    try {
+      await App.api(`/bills/${id}/purge`, 'DELETE');
+      App.toast(`Bill ${billNo} permanently deleted successfully!`, 'warning');
+      App.closeModal();
+      this.loadHistory();
+    } catch(e) {
+      App.toast(e.message, 'error');
+    }
   },
 };
 

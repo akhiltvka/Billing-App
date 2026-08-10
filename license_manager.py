@@ -237,11 +237,31 @@ def get_license_info():
         except Exception:
             lic_data = None
 
-    # 2b. Check re-registration flag (set when server signals outlet was deleted)
+    # 2b. Check revocation and re-registration flags
+    row_revoked = conn.execute("SELECT value FROM shop_settings WHERE key = 'outlet_revoked'").fetchone()
+    is_revoked = row_revoked and str(row_revoked['value']).strip() == '1'
+
     row_rereg = conn.execute("SELECT value FROM shop_settings WHERE key = 'outlet_needs_reregister'").fetchone()
     needs_reregister = row_rereg and str(row_rereg['value']).strip() == '1'
 
     machine_id = get_machine_id()
+
+    if is_revoked:
+        conn.close()
+        return {
+            'status': 'revoked',
+            'days_left': 0,
+            'is_locked': True,
+            'installed_at': inst_str,
+            'activated_at': None,
+            'expires_at': '',
+            'grace_expires_at': '',
+            'active_key': None,
+            'machine_id': machine_id,
+            'price_inr': YEARLY_PRICE_INR,
+            'upi_id': '9809840548@axisb',
+            'upi_name': 'MPI Billing Software'
+        }
 
     if needs_reregister:
         conn.close()

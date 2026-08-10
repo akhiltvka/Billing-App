@@ -25,18 +25,150 @@
     }
 
     @media print {
-      body { background: white; }
-      .page { width: 100%; min-height: auto !important; margin: 0; padding: 12px; box-shadow: none; }
-      .no-print { display: none !important; }
-      @page { margin: 0; size: A4 portrait; }
+      * {
+        color: #000 !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        text-shadow: none !important;
+        filter: none !important;
+      }
+      body {
+        background: #fff !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      .page {
+        width: 100% !important;
+        min-height: auto !important;
+        margin: 0 !important;
+        padding: 4mm 6mm !important;
+        box-shadow: none !important;
+      }
+      .no-print {
+        display: none !important;
+      }
+      .shop-header {
+        border-bottom: 1.5px solid #000 !important;
+        padding-bottom: 4px !important;
+        margin-bottom: 6px !important;
+      }
+      .shop-name {
+        color: #000 !important;
+        font-size: 16px !important;
+      }
+      .shop-tagline, .shop-info, .shop-gstin, .shop-fssai {
+        color: #000 !important;
+      }
+      .invoice-title {
+        border: 1px solid #000 !important;
+        padding: 2px !important;
+        margin: 6px 0 !important;
+        font-size: 13px !important;
+        color: #000 !important;
+      }
+      .bill-meta {
+        margin-bottom: 6px !important;
+      }
+      .bill-meta-block {
+        line-height: 1.4 !important;
+      }
+      .bill-meta-label, .bill-meta-value {
+        color: #000 !important;
+      }
+      .section-label {
+        color: #000 !important;
+        border-bottom: 1px solid #000 !important;
+        margin-bottom: 2px !important;
+        padding-bottom: 1px !important;
+      }
+      .customer-name, .customer-info {
+        color: #000 !important;
+        margin-bottom: 4px !important;
+      }
+      .items-table {
+        margin: 6px 0 !important;
+        font-size: 11px !important;
+      }
+      .items-table th {
+        background: transparent !important;
+        color: #000 !important;
+        border-top: 1px solid #000 !important;
+        border-bottom: 2px solid #000 !important;
+        padding: 3px 4px !important;
+        font-size: 10px !important;
+      }
+      .items-table td {
+        padding: 3px 4px !important;
+        border-bottom: 1px dashed #666 !important;
+        color: #000 !important;
+      }
+      .items-table .item-detail {
+        color: #000 !important;
+      }
+      .totals-section {
+        margin-top: 6px !important;
+        border-top: 1.5px solid #000 !important;
+        padding-top: 4px !important;
+      }
+      .total-row {
+        padding: 1px 0 !important;
+        font-size: 11px !important;
+      }
+      .total-label, .total-value {
+        color: #000 !important;
+      }
+      .total-row.final {
+        font-size: 14px !important;
+        color: #000 !important;
+        border-top: 2px solid #000 !important;
+        margin-top: 4px !important;
+        padding-top: 4px !important;
+      }
+      .gst-table {
+        margin: 4px 0 !important;
+        font-size: 10px !important;
+        border: 1px solid #000 !important;
+      }
+      .gst-table th, .gst-table td {
+        padding: 2px 4px !important;
+        border: 1px solid #000 !important;
+        background: transparent !important;
+        color: #000 !important;
+      }
+      .payment-section {
+        margin: 6px 0 !important;
+        padding: 4px 6px !important;
+        background: transparent !important;
+        border: 1px solid #000 !important;
+      }
+      .change-due {
+        color: #000 !important;
+      }
+      .amount-words {
+        font-size: 10px !important;
+        margin: 4px 0 !important;
+        color: #000 !important;
+      }
+      .invoice-footer {
+        margin-top: 10px !important;
+        padding-top: 6px !important;
+        border-top: 1px dashed #000 !important;
+        font-size: 10px !important;
+        line-height: 1.4 !important;
+        color: #000 !important;
+      }
+      .thank-you {
+        color: #000 !important;
+        font-size: 12px !important;
+      }
     }
 
     /* Receipt (narrow) mode override */
     body.receipt-mode .page {
       width: {{ width }}mm;
       min-height: auto;
-      padding: 16px 14px;
-      font-size: 13px;
+      padding: 12px 10px;
+      font-size: 12px;
     }
 
     /* Hide HSN and GST% columns in receipt mode for item table space saving */
@@ -49,7 +181,7 @@
 
     /* Header */
     .shop-header { text-align: center; border-bottom: 2px solid #1a1a1a; padding-bottom: 10px; margin-bottom: 10px; }
-    .shop-name { font-size: 18px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; color: #047857; }
+    .shop-name { font-size: 18px; font-weight: 800; letter-spacing: 1px; color: #047857; }
     .shop-tagline { font-size: 11px; color: #555; font-style: italic; margin-bottom: 4px; }
     .shop-info { font-size: 11px; color: #333; line-height: 1.6; }
     .shop-gstin { font-size: 10px; font-weight: 700; color: #1a1a1a; margin-top: 4px; }
@@ -133,7 +265,7 @@
 <body class="{{ 'receipt-mode' if is_thermal else '' }}">
 
 <div class="no-print">
-  <button class="print-btn secondary" onclick="toggleA4()">Toggle A4 / Receipt</button>
+  <button class="print-btn secondary" onclick="window.location.href='/invoice/' + billId + '/thermal'">🧾 Switch to Thermal Receipt</button>
   <button class="print-btn primary" onclick="window.print()">🖨️ Print</button>
   <button class="print-btn secondary" onclick="window.close()">✕ Close</button>
 </div>
@@ -159,7 +291,7 @@
     if (isA4) {
       styleEl.textContent = `
         @media print {
-          @page { size: A4 portrait; margin: 15mm; }
+          @page { size: A4 portrait; margin: 8mm; }
           .page { width: 100%; min-height: auto !important; max-width: 100%; padding: 0; box-shadow: none; margin: 0; }
         }
       `;
@@ -167,7 +299,7 @@
       styleEl.textContent = `
         @media print {
           @page { size: {{ width }}mm auto; margin: 0; }
-          .page { width: 100%; min-height: auto !important; padding: 12px; box-shadow: none; margin: 0; }
+          .page { width: 100%; min-height: auto !important; padding: 2px 4px; box-shadow: none; margin: 0; }
         }
       `;
     }
@@ -221,7 +353,9 @@
       billData = json.data;
       renderInvoice(billData);
       setTimeout(() => {
-        if (billData.settings && billData.settings.print_after_bill === 'true') window.print();
+        if (window.self === window.top && billData.settings && billData.settings.print_after_bill === 'true') {
+          window.print();
+        }
       }, 500);
     } catch(e) {
       document.getElementById('invoice-content').innerHTML = '<div style="text-align:center;padding:40px;color:red">Error: ' + e.message + '</div>';
@@ -240,6 +374,7 @@
       gstin:   isGstGlobal ? (s.shop_gstin || '') : '',
       fssai:   s.shop_fssai   || '',
       logo:    s.shop_logo    || '',
+      brand_font: s.shop_brand_font || '',
     };
     const items = data.items || [];
 
@@ -266,7 +401,7 @@
       <!-- Shop Header -->
       <div class="shop-header">
         ${shop.logo ? `<img src="${shop.logo}" alt="Logo" style="max-height:48px;max-width:90%;object-fit:contain;margin:0 auto 6px auto;display:block;border-radius:4px;">` : ''}
-        <div class="shop-name">${shop.name}</div>
+        <div class="shop-name" style="${shop.brand_font ? `font-family: '${shop.brand_font}', sans-serif;` : ''}">${shop.name}</div>
         <div class="shop-tagline">${shop.tagline}</div>
         <div class="shop-info">
           ${shop.address}<br>
@@ -393,7 +528,7 @@
       <div class="payment-section">
         <div class="amount-paid-row">
           <span>Received (${payIcon})</span>
-          <span class="font-weight:600">₹${fmt(data.amount_paid)}</span>
+          <span class="font-weight:600">₹${fmt(data.amount_paid + (data.change_amount || 0))}</span>
         </div>
         <div class="amount-paid-row">
           <span>Change Due</span>

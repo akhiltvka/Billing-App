@@ -152,6 +152,18 @@ const BillingShortcuts = (function () {
   function handleGlobalKeydown(e) {
     if (!initialized) return;
 
+    // F1 key works globally from any page to jump to/start New Bill!
+    if (e.key === 'F1') {
+      e.preventDefault();
+      if (typeof Billing !== 'undefined' && typeof Billing.startNewBill === 'function') {
+        Billing.startNewBill();
+      }
+      return;
+    }
+
+    if (typeof App !== 'undefined' && App.currentPage && App.currentPage !== 'billing') return;
+    if (!document.getElementById('product-search')) return;
+
     // Esc always allowed, even inside inputs/modals — closes things.
     if (e.key === 'Escape') {
       call('onEscape');

@@ -13,7 +13,7 @@ const App = {
   navigate(page) {
     // Permission gate — redirect to first permitted page if not permitted
     if (!Auth.can(page)) {
-      const allPages = ['billing','bills','dashboard','inventory','stock-in','purchase-orders','categories','customers','suppliers','expenses','accounts','reports','settings','users'];
+      const allPages = ['billing','bills','dashboard','inventory','stock-overview','stock-in','purchase-orders','categories','customers','suppliers','expenses','accounts','reports','settings','users'];
       const fallback = allPages.find(p => Auth.can(p)) || 'billing';
       if (page !== fallback) { this.navigate(fallback); return; }
       return;
@@ -29,6 +29,7 @@ const App = {
       billing:          ['🧾 New Bill / POS',  'Create a new sale invoice'],
       bills:            ['📋 Bill History',    'View and manage all bills'],
       inventory:        ['📦 Products',        'Manage product catalog and stock'],
+      'stock-overview': ['📊 Stock Overview',  'Comprehensive stock levels, alerts, expiry warnings and charts'],
       'stock-in':       ['⬆️ Stock In',        'Record incoming stock from suppliers'],
       'purchase-orders':['🛒 Purchase Orders', 'Manage supplier purchase orders'],
       categories:       ['🏷️ Categories',      'Manage product categories'],
@@ -55,6 +56,7 @@ const App = {
       billing:           () => Billing.render(),
       bills:             () => Billing.renderHistory(),
       inventory:         () => Inventory.render(),
+      'stock-overview':  () => StockOverview.render(),
       'stock-in':        () => Inventory.renderStockIn(),
       'purchase-orders': () => Inventory.renderPurchaseOrders(),
       categories:        () => Inventory.renderCategories(),
@@ -127,26 +129,36 @@ const App = {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.id = id;
+    if (options.closable === false) {
+      overlay.dataset.closable = 'false';
+    }
     overlay.innerHTML = html;
-    if (wide) {
-      // Apply wide class to the inner .modal div after insertion
-      overlay.addEventListener('click', e => { if (e.target === overlay) App.closeModal(id); });
-      document.getElementById('modals-container').appendChild(overlay);
-      requestAnimationFrame(() => {
-        overlay.classList.add('active');
+
+    // Track mousedown target to prevent accidental modal closure when dragging/selecting text inside modal and releasing outside
+    let mouseDownOnOverlay = false;
+    overlay.addEventListener('mousedown', e => {
+      mouseDownOnOverlay = (e.target === overlay);
+    });
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay && mouseDownOnOverlay && options.closable !== false) {
+        App.closeModal(id);
+      }
+    });
+
+    document.getElementById('modals-container').appendChild(overlay);
+    requestAnimationFrame(() => {
+      overlay.classList.add('active');
+      if (wide) {
         const inner = overlay.querySelector('.modal, .modal-header')?.closest('[class*="modal"]') || overlay.firstElementChild;
         if (inner) inner.style.maxWidth = '720px';
-      });
-    } else {
-      overlay.addEventListener('click', e => { if (e.target === overlay) App.closeModal(id); });
-      document.getElementById('modals-container').appendChild(overlay);
-      requestAnimationFrame(() => overlay.classList.add('active'));
-    }
+      }
+    });
   },
 
   closeModal(id = 'main-modal') {
     const el = document.getElementById(id);
     if (!el) return;
+    if (el.dataset.closable === 'false') return;
     el.classList.remove('active');
     setTimeout(() => el.remove(), 300);
   },
@@ -226,7 +238,15 @@ const App = {
     const update = () => {
       const now = new Date();
       const timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const dateStr = now.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+      
+      // Formatting date in DD/MM/YYYY format with name of day:
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const dayName = dayNames[now.getDay()];
+      const day = String(now.getDate()).padStart(2, '0');
+      const month = String(now.getMonth() + 1).padStart(2, '0');
+      const year = now.getFullYear();
+      const dateStr = `${dayName}, ${day}/${month}/${year}`;
+      
       const clockEl = document.getElementById('sidebar-clock');
       const dateEl = document.getElementById('topbar-date');
       if (clockEl) clockEl.textContent = timeStr;
@@ -577,8 +597,7 @@ const App = {
     if (!settings) return;
     this.settings = { ...this.settings, ...settings };
     this.currency = this.settings.currency_symbol || '₹';
-    // Prefer outlet_name as the display name (set during MD registration)
-    const shopName    = this.settings.outlet_name || this.settings.shop_name || 'Meat Products of India';
+    const shopName    = this.settings.shop_name || this.settings.outlet_name || 'Meat Products of India';
     const shopTagline = this.settings.shop_tagline || 'Fresh. Pure. Delicious.';
     const outletCity  = this.settings.outlet_city  || '';
 
@@ -618,6 +637,16 @@ const App = {
     document.title = `${shopName} — Billing & Inventory`;
     const winTitle = document.getElementById('win-titlebar-title');
     if (winTitle) winTitle.textContent = `${shopName} — Billing & Inventory`;
+
+    this.applyShopLogo(this.settings.shop_logo);
+
+    // 4. Apply Brand Font CSS Variable
+    const brandFont = this.settings.shop_brand_font || '';
+    const fontValue = brandFont ? `'${brandFont}', sans-serif` : `'Inter', sans-serif`;
+    document.documentElement.style.setProperty('--brand-font', fontValue);
+    if (document.body) {
+      document.body.style.setProperty('--brand-font', fontValue);
+    }
   },
 
   // ── Window Control Actions (Desktop App Mode) ────────────────────────────
@@ -679,8 +708,10 @@ const App = {
       </div>`;
     document.body.appendChild(overlay);
 
-    // Close on backdrop click
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    // Close on intentional backdrop click (both mousedown and click on overlay)
+    let mouseDownOnOverlay = false;
+    overlay.addEventListener('mousedown', (e) => { mouseDownOnOverlay = (e.target === overlay); });
+    overlay.addEventListener('click', (e) => { if (e.target === overlay && mouseDownOnOverlay) overlay.remove(); });
 
     // Confirm button handler
     document.getElementById(`${id}-confirm`).addEventListener('click', () => {
@@ -971,29 +1002,56 @@ const App = {
     const hasSession = await Auth.checkSession();
     if (!hasSession) {
       setTimeout(() => document.getElementById('login-username')?.focus(), 200);
+    } else {
+      this.startExternalDriveMonitoring();
     }
   },
 
-  applySettings(settings) {
-    if (!settings) return;
-    this.settings = settings;
-    if (settings.currency_symbol) this.currency = settings.currency_symbol;
 
-    const shopName = settings.shop_name || 'Meat Products of India';
-    const sidebarShopEl = document.getElementById('sidebar-shop-name');
-    if (sidebarShopEl) sidebarShopEl.textContent = shopName;
 
-    const loginBrandEl = document.getElementById('login-brand-name');
-    if (loginBrandEl && settings.shop_name) {
-      loginBrandEl.innerHTML = settings.shop_name;
+  async checkExternalDriveWarning() {
+    try {
+      const res = await this.api('/backup/external/status');
+      const data = (res && res.data) ? res.data : res;
+      const warningBannerId = 'ext-drive-warning-banner';
+      let bannerEl = document.getElementById(warningBannerId);
+
+      if (data && data.enabled && !data.is_connected) {
+        if (!bannerEl) {
+          bannerEl = document.createElement('div');
+          bannerEl.id = warningBannerId;
+          bannerEl.style.cssText = 'background:#e74c3c;color:#ffffff;padding:10px 16px;font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 8px rgba(0,0,0,0.3);position:sticky;top:0;z-index:9999;border-bottom:2px solid #c0392b;';
+          const container = document.querySelector('.main-content') || document.body;
+          if (container) {
+            container.insertBefore(bannerEl, container.firstChild);
+          }
+        }
+        const drivePath = data.path || 'Not Set';
+        bannerEl.innerHTML = `
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:18px">⚠️</span>
+            <span><strong>External Backup Drive Warning:</strong> Real-time backup drive (<code>${drivePath}</code>) is disconnected! Real-time backups are paused. Please plug in your USB drive.</span>
+          </div>
+          <button onclick="App.checkExternalDriveWarning()" class="btn btn-sm" style="background:rgba(255,255,255,0.2);color:#fff;border:1px solid rgba(255,255,255,0.4);font-size:11px;padding:3px 10px;border-radius:4px;cursor:pointer">🔄 Re-check</button>
+        `;
+        bannerEl.style.display = 'flex';
+      } else {
+        if (bannerEl) bannerEl.style.display = 'none';
+      }
+    } catch(e) {
+      console.warn("External drive check warning notice:", e);
     }
+  },
 
-    const titlebarTitleEl = document.getElementById('win-titlebar-title');
-    if (titlebarTitleEl) {
-      titlebarTitleEl.textContent = `${shopName} — Billing & Inventory`;
+  startExternalDriveMonitoring() {
+    this.checkExternalDriveWarning();
+    if (!this._driveMonitorInterval) {
+      this._driveMonitorInterval = setInterval(() => {
+        if (Auth.user) {
+          this.checkExternalDriveWarning();
+        }
+      }, 30000);
     }
-
-    this.applyShopLogo(settings.shop_logo);
   },
 
   applyShopLogo(logoUrl) {
@@ -1224,3 +1282,13 @@ const LoginAnimations = {
     setTimeout(tick, 1200); // slight startup delay
   },
 };
+
+// Global F1 key listener for New Bill
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'F1') {
+    e.preventDefault();
+    if (typeof Billing !== 'undefined' && typeof Billing.startNewBill === 'function') {
+      Billing.startNewBill();
+    }
+  }
+});

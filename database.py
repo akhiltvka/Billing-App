@@ -73,6 +73,7 @@ def init_db():
             brand              TEXT DEFAULT NULL,
             pack_size          TEXT DEFAULT NULL,
             reorder_lead_time_days INTEGER DEFAULT 1,
+            shelf_life_days    INTEGER DEFAULT NULL,
             active             INTEGER DEFAULT 1,
             created_at         TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at         TEXT DEFAULT CURRENT_TIMESTAMP
@@ -88,8 +89,19 @@ def init_db():
             gstin          TEXT,
             state_code     TEXT,
             credit_balance REAL DEFAULT 0,
+            loyalty_points REAL DEFAULT 0,
             is_active      INTEGER DEFAULT 1,
             created_at     TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Loyalty points ledger
+        CREATE TABLE IF NOT EXISTS loyalty_ledger (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            customer_id   INTEGER NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+            bill_id       INTEGER REFERENCES bills(id) ON DELETE SET NULL,
+            points_change REAL NOT NULL,
+            reason        TEXT,
+            created_at    TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
         -- Supplier master
@@ -473,6 +485,16 @@ def init_db():
         pass
 
     try:
+        c.execute('ALTER TABLE stock_transactions ADD COLUMN purchase_date TEXT')
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        c.execute('ALTER TABLE stock_batches ADD COLUMN purchase_date TEXT')
+    except sqlite3.OperationalError:
+        pass
+
+    try:
         c.execute('ALTER TABLE stock_transactions ADD COLUMN created_by TEXT')
     except sqlite3.OperationalError:
         pass
@@ -499,6 +521,11 @@ def init_db():
 
     try:
         c.execute('ALTER TABLE customers ADD COLUMN is_active INTEGER DEFAULT 1')
+    except sqlite3.OperationalError:
+        pass
+
+    try:
+        c.execute('ALTER TABLE customers ADD COLUMN loyalty_points REAL DEFAULT 0')
     except sqlite3.OperationalError:
         pass
 
@@ -713,6 +740,9 @@ def init_db():
     if 'reorder_lead_time_days' not in p_cols:
         try: c.execute("ALTER TABLE products ADD COLUMN reorder_lead_time_days INTEGER DEFAULT 1")
         except Exception: pass
+    if 'shelf_life_days' not in p_cols:
+        try: c.execute("ALTER TABLE products ADD COLUMN shelf_life_days INTEGER DEFAULT NULL")
+        except Exception: pass
 
     # Backfill all existing products to product_type = 'perishable'
     c.execute("UPDATE products SET product_type = 'perishable' WHERE product_type IS NULL OR product_type = ''")
@@ -801,6 +831,34 @@ def init_db():
 
     conn.commit()
 
+    # Auto-approve any pending stock transactions created by Admin, MD, or Manager
+    pending_txs = c.execute('''
+        SELECT st.* FROM stock_transactions st
+        WHERE st.status = 'pending_verification'
+          AND (st.created_by IN (SELECT username FROM users WHERE role IN ('admin', 'md', 'manager')) OR st.created_by IS NULL)
+    ''').fetchall()
+
+    for tx in pending_txs:
+        tx_id = tx['id']
+        pid = tx['product_id']
+        qty = float(tx['quantity'] or 0)
+        approver = tx['created_by'] or 'system'
+
+        c.execute('UPDATE stock_transactions SET status="approved", approved_by=? WHERE id=?', (approver, tx_id))
+        c.execute('UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id=?', (qty, pid))
+
+        if tx['type'] in ('in', 'adjustment') and qty > 0:
+            b_no = f"BATCH-{tx_id:05d}"
+            p_date = tx['purchase_date'] if ('purchase_date' in tx.keys() and tx['purchase_date']) else tx['date']
+            c.execute(
+                '''INSERT INTO stock_batches
+                   (product_id, batch_no, quantity_remaining, unit_price, expiry_date, supplier_id, stock_transaction_id, purchase_date)
+                   VALUES (?,?,?,?,?,?,?,?)''',
+                (pid, b_no, qty, tx['unit_price'], tx['expiry_date'], tx['supplier_id'], tx_id, p_date)
+            )
+
+    conn.commit()
+
     # Assign 4-letter unique codes for any existing products missing a code
     rows_no_code = c.execute('SELECT id, name FROM products WHERE code IS NULL OR code = ""').fetchall()
     for row in rows_no_code:
@@ -884,10 +942,20 @@ def init_db():
         'next_conversion_no': '1',
         'gst_enabled':      'true',
         'print_after_bill': 'true',
+        'show_print_preview': 'false',
+        'default_print_format': 'thermal',
+        'thermal_paper_width': '80',
         'low_stock_alert':  'true',
         'decimal_places':   '2',
         'shop_logo':        '',
+        'shop_brand_font':  '',
         'fy_reset_numbering': '0',
+        'external_backup_enabled': 'false',
+        'external_backup_path': '',
+        'external_backup_retention_days': '30',
+        'loyalty_enabled': 'true',
+        'loyalty_points_per_rupee': '0.01',
+        'loyalty_redemption_value': '0.50',
     }
     for k, v in defaults.items():
         c.execute('INSERT OR IGNORE INTO shop_settings (key, value) VALUES (?, ?)', (k, v))

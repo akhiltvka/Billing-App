@@ -5,8 +5,12 @@ __pycache__/
 
 # Local Database & Test Data
 data/*.db
+data/*.db-wal
+data/*.db-shm
 data/*.sqlite
 data/backups/
+data/external_backup_status.json
+backups/
 cloud_license_server/central_licenses.db
 cloud_license_server/cloud_backups/
 
@@ -16,7 +20,11 @@ cloud_license_server/cloud_backups/
 env/
 venv/
 
-# PyInstaller Build Output (large compiled binaries — distribute separately)
+# PyInstaller Build Output & Archive Binaries
 dist/
 build/
-*.spec
+dist_32bit/
+tools/
+*.exe
+*.zip
+scratch/
