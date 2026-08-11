@@ -135,6 +135,42 @@ const Inventory = {
     }
   },
 
+  toggleStockAdjustmentSection(checked) {
+    const sec = document.getElementById('p-stockadj-section');
+    const newStockInput = document.getElementById('p-new-stock');
+    if (sec) sec.style.display = checked ? 'block' : 'none';
+    if (newStockInput && checked) {
+      newStockInput.focus();
+      newStockInput.select();
+    }
+  },
+
+  updateStockAdjDelta(currentStock, unit = '') {
+    const newStockInput = document.getElementById('p-new-stock');
+    const badge = document.getElementById('p-stock-delta-badge');
+    if (!newStockInput || !badge) return;
+    const newStock = parseFloat(newStockInput.value) || 0;
+    const delta = newStock - currentStock;
+    if (Math.abs(delta) < 1e-4) {
+      badge.textContent = `No change (0.000 ${unit})`;
+      badge.style.color = 'var(--text-muted)';
+    } else if (delta > 0) {
+      badge.textContent = `▲ +${delta.toFixed(3)} ${unit} (Stock Increase)`;
+      badge.style.color = '#16a34a';
+    } else {
+      badge.textContent = `▼ ${delta.toFixed(3)} ${unit} (Stock Decrease)`;
+      badge.style.color = '#dc2626';
+    }
+  },
+
+  handleStockAdjReasonChange(val) {
+    const group = document.getElementById('p-stockadj-custom-notes-group');
+    if (group) {
+      group.style.display = (val === 'custom') ? 'block' : 'none';
+      if (val === 'custom') document.getElementById('p-stockadj-custom-note')?.focus();
+    }
+  },
+
   async checkAndShowMissingDatesModal() {
     try {
       const res = await App.api('/stock/missing-purchase-dates');
@@ -336,6 +372,50 @@ const Inventory = {
             <input class="form-control" id="p-shelflife" type="number" min="1" step="1" value="${p?.shelf_life_days || ''}" placeholder="e.g. 3">
           </div>
         </div>
+
+        ${p ? `
+        <!-- Stock Management & Correction Section -->
+        <div style="background:var(--bg-input, rgba(0,0,0,0.03));border:1px solid var(--border);border-radius:var(--r-md, 8px);padding:12px 14px;margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;font-weight:700;letter-spacing:0.5px">Current In-Stock Quantity</div>
+              <div style="font-size:18px;font-weight:800;color:${(p.current_stock||0) <= 0 ? 'var(--crimson, #ef4444)' : 'var(--primary, #1B2A47)'};margin-top:2px">
+                ${App.fmtNum(p.current_stock||0)} <span style="font-size:13px;font-weight:600;color:var(--text-secondary)">${p.unit || 'units'}</span>
+              </div>
+            </div>
+            ${(Auth.can('stock.adjustment') || Auth.can('inventory.edit') || Auth.isRole('admin','md','manager')) ? `
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px;font-weight:700;color:var(--primary);background:rgba(99,102,241,0.08);padding:6px 12px;border-radius:6px;border:1px solid rgba(99,102,241,0.2)">
+              <input type="checkbox" id="p-enable-stockadj" onchange="Inventory.toggleStockAdjustmentSection(this.checked)" style="width:16px;height:16px;accent-color:var(--crimson)">
+              <span>✏️ Edit / Adjust Stock Balance</span>
+            </label>` : ''}
+          </div>
+
+          <div id="p-stockadj-section" style="display:none;margin-top:12px;padding-top:12px;border-top:1px dashed var(--border)">
+            <div class="form-row">
+              <div class="form-group" style="flex:1">
+                <label class="form-label required">Adjusted / New Stock Qty (${p.unit || 'units'})</label>
+                <input class="form-control" id="p-new-stock" type="number" step="0.001" min="0" value="${p.current_stock || 0}" oninput="Inventory.updateStockAdjDelta(${p.current_stock || 0}, '${p.unit || ''}')">
+                <div id="p-stock-delta-badge" style="font-size:11px;font-weight:700;margin-top:4px;color:var(--text-muted)">No change (0.000 ${p.unit || ''})</div>
+              </div>
+              <div class="form-group" style="flex:1.5">
+                <label class="form-label required">Reason / Type of Adjustment</label>
+                <select class="form-control" id="p-stockadj-reason" onchange="Inventory.handleStockAdjReasonChange(this.value)">
+                  <option value="Opening stock correction">Opening Stock Correction</option>
+                  <option value="Physical stock count reconciliation">Physical Stock Count / Audit</option>
+                  <option value="Data entry correction">Data Entry Error Correction</option>
+                  <option value="Damage / Spoilage correction">Damage / Spoilage Adjustment</option>
+                  <option value="Supplier return adjustment">Supplier Return Adjustment</option>
+                  <option value="custom">✍️ Other (Custom Note)...</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group" id="p-stockadj-custom-notes-group" style="display:none;margin-top:6px">
+              <label class="form-label">Custom Adjustment Note</label>
+              <input class="form-control" id="p-stockadj-custom-note" placeholder="Explain reason for stock adjustment...">
+            </div>
+          </div>
+        </div>` : ''}
+
         ${!p ? `
         <div class="form-group mb-12">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
@@ -432,6 +512,25 @@ const Inventory = {
       }
     }
 
+    const enableStockAdj = document.getElementById('p-enable-stockadj')?.checked || false;
+    let adjustStockPayload = {};
+    if (id && enableStockAdj) {
+      const newStockVal = parseFloat(document.getElementById('p-new-stock')?.value || 0);
+      if (isNaN(newStockVal) || newStockVal < 0) {
+        App.toast('Stock quantity cannot be negative', 'error');
+        document.getElementById('p-new-stock')?.focus();
+        return;
+      }
+      const reasonVal = document.getElementById('p-stockadj-reason')?.value || 'Stock adjustment';
+      const customNote = document.getElementById('p-stockadj-custom-note')?.value.trim() || '';
+      const notes = reasonVal === 'custom' ? (customNote || 'Manual adjustment') : (customNote ? `${reasonVal}: ${customNote}` : reasonVal);
+      adjustStockPayload = {
+        adjust_stock: true,
+        new_stock: newStockVal,
+        stock_notes: notes
+      };
+    }
+
     const payload = {
       name,
       code,
@@ -446,6 +545,7 @@ const Inventory = {
       purchase_date: id ? undefined : (enableOpenstock ? purchaseDate : null),
       barcode:     document.getElementById('p-barcode')?.value || null,
       shelf_life_days: parseInt(document.getElementById('p-shelflife')?.value) || null,
+      ...adjustStockPayload,
     };
 
     try {
@@ -1711,5 +1811,174 @@ const Inventory = {
         App.toast(e.message || 'Failed to remove unit', 'error');
       }
     });
+  },
+
+  async showStockAdjustmentModal(productOrId) {
+    let p = null;
+    if (typeof productOrId === 'number' || (typeof productOrId === 'string' && /^\d+$/.test(productOrId))) {
+      const pid = parseInt(productOrId);
+      p = (this._allProducts || []).find(x => x.id === pid) || (typeof TallyInventory !== 'undefined' ? (TallyInventory._products || []).find(x => x.id === pid) : null);
+      if (!p) {
+        try {
+          p = await App.api(`/products/${pid}`);
+        } catch(e) {}
+      }
+    } else if (productOrId) {
+      p = typeof productOrId === 'string' ? JSON.parse(productOrId) : productOrId;
+    }
+
+    if (!p) {
+      App.toast('Product not found', 'error');
+      return;
+    }
+
+    const curStock = parseFloat(p.current_stock || 0);
+    const unit = p.unit || 'units';
+
+    App.showModal(`
+      <div class="modal" style="max-width:540px">
+        <div class="modal-header" style="background:linear-gradient(135deg,rgba(2,132,199,0.1),rgba(99,102,241,0.1));border-bottom:1px solid rgba(2,132,199,0.2)">
+          <div class="modal-title" style="color:#0284c7;font-weight:800">
+            <span class="modal-title-icon">⚙️</span> Edit &amp; Adjust Stock
+          </div>
+          <button class="modal-close" onclick="App.closeModal()">✕</button>
+        </div>
+
+        <div style="padding:16px 20px">
+          <!-- Product Summary Box -->
+          <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg-input, rgba(0,0,0,0.03));border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:16px">
+            <div>
+              <div style="font-weight:800;font-size:15px;color:var(--text)">${App.escapeHtml(p.name)}</div>
+              <div style="font-size:12px;color:var(--text-muted);margin-top:2px">Code: <strong>${p.code || '—'}</strong> | Category: ${App.escapeHtml(p.category_name || '—')}</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:10px;text-transform:uppercase;color:var(--text-muted);font-weight:700;letter-spacing:0.5px">Current Stock</div>
+              <div style="font-size:18px;font-weight:800;color:${curStock <= 0 ? 'var(--crimson, #ef4444)' : 'var(--primary, #1B2A47)'}">
+                ${App.fmtNum(curStock)} <span style="font-size:12px;font-weight:600">${unit}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- New Quantity Input -->
+          <div class="form-group mb-12">
+            <label class="form-label required" style="font-weight:700">New Corrected Stock Quantity (${unit})</label>
+            <div class="input-group">
+              <input class="form-control" id="m-adj-new-qty" type="number" step="0.001" min="0" value="${curStock}" style="font-size:16px;font-weight:700" oninput="Inventory._updateQuickAdjDelta(${curStock}, '${unit}')">
+              <div class="input-group-suffix" style="font-weight:700">${unit}</div>
+            </div>
+            <div id="m-adj-delta-badge" style="font-size:12px;font-weight:700;margin-top:4px;color:var(--text-muted)">No change (0.000 ${unit})</div>
+          </div>
+
+          <!-- Quick Presets -->
+          <div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap">
+            <span style="font-size:11px;color:var(--text-muted);align-self:center;margin-right:2px">Quick Set:</span>
+            <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px" onclick="document.getElementById('m-adj-new-qty').value=${curStock + 1};Inventory._updateQuickAdjDelta(${curStock}, '${unit}')">+1 ${unit}</button>
+            <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px" onclick="document.getElementById('m-adj-new-qty').value=${curStock + 5};Inventory._updateQuickAdjDelta(${curStock}, '${unit}')">+5 ${unit}</button>
+            <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px" onclick="document.getElementById('m-adj-new-qty').value=${curStock + 10};Inventory._updateQuickAdjDelta(${curStock}, '${unit}')">+10 ${unit}</button>
+            <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px" onclick="document.getElementById('m-adj-new-qty').value=${Math.max(0, curStock - 1)};Inventory._updateQuickAdjDelta(${curStock}, '${unit}')">-1 ${unit}</button>
+            <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px" onclick="document.getElementById('m-adj-new-qty').value=0;Inventory._updateQuickAdjDelta(${curStock}, '${unit}')">Set 0 (Out of stock)</button>
+          </div>
+
+          <!-- Adjustment Reason -->
+          <div class="form-group mb-12">
+            <label class="form-label required">Reason / Type of Stock Adjustment</label>
+            <select class="form-control" id="m-adj-reason" onchange="const g = document.getElementById('m-adj-custom-note-group'); if (g) g.style.display = (this.value==='custom'?'block':'none');">
+              <option value="Opening stock correction">Opening Stock Correction</option>
+              <option value="Physical stock count reconciliation">Physical Stock Count / Audit</option>
+              <option value="Data entry correction">Data Entry Error Correction</option>
+              <option value="Damage / Spoilage correction">Damage / Spoilage Adjustment</option>
+              <option value="Supplier return adjustment">Supplier Return Adjustment</option>
+              <option value="custom">✍️ Other (Custom Note)...</option>
+            </select>
+          </div>
+
+          <div class="form-group" id="m-adj-custom-note-group" style="display:none;margin-bottom:12px">
+            <label class="form-label">Custom Adjustment Note</label>
+            <input class="form-control" id="m-adj-custom-note" placeholder="Explain reason for adjustment...">
+          </div>
+
+          <div class="form-group mb-12">
+            <label class="form-label">Adjustment / Entry Date</label>
+            <input class="form-control" id="m-adj-date" type="date" value="${new Date().toISOString().slice(0, 10)}" max="${new Date().toISOString().slice(0, 10)}">
+          </div>
+        </div>
+
+        <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;background:var(--bg-input, #f8fafc);border-top:1px solid var(--border)">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+          <button type="button" class="btn btn-primary" style="background:#0284c7;border-color:#0284c7;font-weight:700;padding:8px 20px" onclick="Inventory._submitStockAdjustment(${p.id})">
+            💾 Save Stock Adjustment
+          </button>
+        </div>
+      </div>
+    `);
+
+    setTimeout(() => {
+      const input = document.getElementById('m-adj-new-qty');
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    }, 100);
+  },
+
+  _updateQuickAdjDelta(currentStock, unit = '') {
+    const input = document.getElementById('m-adj-new-qty');
+    const badge = document.getElementById('m-adj-delta-badge');
+    if (!input || !badge) return;
+    const newStock = parseFloat(input.value) || 0;
+    const delta = newStock - currentStock;
+    if (Math.abs(delta) < 1e-4) {
+      badge.textContent = `No change (0.000 ${unit})`;
+      badge.style.color = 'var(--text-muted)';
+    } else if (delta > 0) {
+      badge.textContent = `▲ +${delta.toFixed(3)} ${unit} (Stock Increase)`;
+      badge.style.color = '#16a34a';
+    } else {
+      badge.textContent = `▼ ${delta.toFixed(3)} ${unit} (Stock Decrease)`;
+      badge.style.color = '#dc2626';
+    }
+  },
+
+  async _submitStockAdjustment(productId) {
+    const newQtyInput = document.getElementById('m-adj-new-qty');
+    if (!newQtyInput || newQtyInput.value.trim() === '') {
+      App.toast('Please enter a valid new stock quantity', 'error');
+      return;
+    }
+    const newQty = parseFloat(newQtyInput.value);
+    if (isNaN(newQty) || newQty < 0) {
+      App.toast('Stock quantity cannot be negative', 'error');
+      return;
+    }
+
+    const reasonSel = document.getElementById('m-adj-reason')?.value || 'Manual stock adjustment';
+    const customNote = document.getElementById('m-adj-custom-note')?.value.trim() || '';
+    const notes = reasonSel === 'custom' ? (customNote || 'Manual adjustment') : (customNote ? `${reasonSel}: ${customNote}` : reasonSel);
+    const purchaseDate = document.getElementById('m-adj-date')?.value || new Date().toISOString().slice(0, 10);
+
+    try {
+      const res = await App.api('/stock/adjustment', 'POST', {
+        product_id: productId,
+        new_quantity: newQty,
+        notes: notes,
+        purchase_date: purchaseDate
+      });
+      App.closeModal();
+      App.toast(res?.message || 'Stock adjusted successfully!', 'success');
+
+      if (typeof TallyInventory !== 'undefined' && TallyInventory._currentView === 'ledger' && TallyInventory._currentProduct) {
+        TallyInventory.openItemLedger(productId);
+      } else if (typeof TallyInventory !== 'undefined' && TallyInventory._currentView === 'products') {
+        TallyInventory.openProducts();
+      } else if (typeof TallyInventory !== 'undefined') {
+        TallyInventory.render();
+      } else if (typeof StockOverview !== 'undefined' && App.currentPage === 'stock-overview') {
+        StockOverview.render();
+      } else {
+        this.render();
+      }
+    } catch(e) {
+      App.toast(e.message || 'Failed to adjust stock', 'error');
+    }
   },
 };

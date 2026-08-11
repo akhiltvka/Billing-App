@@ -136,12 +136,14 @@ const TallyInventory = {
         { key:'F8', desc:'Purchase Order', perm:'purchase.view', onclick:"TallyInventory.openVoucher('po')" },
         { key:'F9', desc:'Categories',    perm:'inventory.view', onclick:"TallyInventory.openCategories()" },
         { key:'F10', desc:'Products',     perm:'inventory.view', onclick:"TallyInventory.openProducts()" },
+        { key:'F11', desc:'Adjust Stock', perm:'stock.adjustment', onclick:"TallyInventory._openStockAdjForSelected()" },
         { key:'Enter', desc:'Drill Down', onclick:"TallyInventory._drillDown()" },
       ],
       ledger: [
         { key:'Esc', desc:'Back',         onclick:"TallyInventory.render()" },
         { key:'F5', desc:'Stock-In',      perm:'stock.in', onclick:"TallyInventory.openVoucher('stock-in',TallyInventory._currentProduct)" },
         { key:'F6', desc:'Wastage',       perm:'stock.wastage', onclick:"TallyInventory.openVoucher('wastage',TallyInventory._currentProduct)" },
+        { key:'F11', desc:'Adjust Stock', perm:'stock.adjustment', onclick:"Inventory.showStockAdjustmentModal(TallyInventory._currentProduct ? TallyInventory._currentProduct.id : null)" },
         { key:'F3', desc:'Batch Detail',  onclick:"TallyInventory._toggleBatchSection()" },
       ],
       voucher: [
@@ -158,6 +160,7 @@ const TallyInventory = {
         { key:'Esc', desc:'Back',          onclick:"TallyInventory.render()" },
         { key:'F2',  desc:'Edit Product',  perm:'inventory.edit', onclick:"TallyInventory._editSelectedProduct()" },
         { key:'Ctrl+Enter', desc:'Edit Item', perm:'inventory.edit', onclick:"TallyInventory._editSelectedProduct()" },
+        { key:'F11', desc:'Adjust Stock',  perm:'stock.adjustment', onclick:"TallyInventory._openStockAdjForSelectedProduct()" },
         { key:'F4',  desc:'Add Product',   perm:'inventory.create', onclick:"Inventory.showProductModal()" },
       ],
     };
@@ -529,6 +532,9 @@ const TallyInventory = {
         <button class="tally-action-btn" onclick="TallyInventory.openVoucher('stock-in', ${p.id})">
           ⬆ Stock Receipt
         </button>
+        <button class="tally-action-btn" style="background:rgba(2,132,199,.08);border-color:rgba(2,132,199,.3);color:#0284c7;font-weight:700" onclick="Inventory.showStockAdjustmentModal(${p.id})">
+          ⚙️ Edit / Adjust Stock
+        </button>
         <button class="tally-action-btn" onclick="TallyInventory.openVoucher('wastage', ${p.id})">
           ⚠ Record Wastage
         </button>
@@ -623,6 +629,11 @@ const TallyInventory = {
         case 'F10':
           e.preventDefault();
           this.openProducts();
+          break;
+
+        case 'F11':
+          e.preventDefault();
+          this._openStockAdjForSelected();
           break;
 
         case '/':
@@ -774,6 +785,9 @@ const TallyInventory = {
             <span style="margin-left:16px;color:#b32020">Outward: <strong>${this._fmtNum(totalOut)} ${unit}</strong></span>
           </div>
           <div style="display:flex;gap:6px">
+            ${(Auth.can('stock.adjustment') || Auth.can('inventory.edit') || Auth.isRole('admin','md','manager')) ? `
+              <button class="tally-period-apply" style="background:#0284c7;color:#fff;font-weight:700" onclick="Inventory.showStockAdjustmentModal(${p.id})">⚙️ Adjust Stock (F11)</button>
+            ` : ''}
             ${(Auth.can('inventory.edit') || Auth.isRole('admin','md','manager')) ? `
               <button class="tally-period-apply" style="background:#7c3aed;color:#fff;font-weight:700" onclick="Inventory.showProductModalById(${p.id})">✏️ Edit Product (F2)</button>
             ` : ''}
@@ -1553,6 +1567,7 @@ const TallyInventory = {
             <td style="padding:6px 14px;text-align:right;font-family:monospace;color:#8B6914">₹${parseFloat(p.selling_price||0).toFixed(2)}/${unit}</td>
             <td style="padding:6px 14px;display:flex;gap:4px">
               <button class="tally-hbtn" onclick="Inventory.showProductModalById(${p.id})" title="Edit Product (F2 / Ctrl+Enter)">✏ Edit (F2)</button>
+              <button class="tally-hbtn" style="color:#0284c7;font-weight:700" onclick="Inventory.showStockAdjustmentModal(${p.id})" title="Edit / Adjust Stock Quantity">⚙️ Edit Stock</button>
               <button class="tally-hbtn" style="color:#4AE84A" onclick="TallyInventory.openVoucher('stock-in',${p.id})" title="Stock In">⬆ Stock In</button>
               <button class="tally-hbtn" style="color:#EF4444" onclick="Inventory.deleteProduct(${p.id}, '${App.escapeHtml(p.name).replace(/'/g, "\\'")}')" title="Deactivate Item">🗑 Delete</button>
             </td>
@@ -1657,6 +1672,9 @@ const TallyInventory = {
         } else {
           Inventory.showProductModal();
         }
+      } else if (e.key === 'F11') {
+        e.preventDefault();
+        this._openStockAdjForSelectedProduct();
       } else if (e.key === 'F4') {
         e.preventDefault();
         Inventory.showProductModal();
@@ -1671,7 +1689,7 @@ const TallyInventory = {
       const modalOpen = !!document.querySelector('.modal-overlay.active');
       if (modalOpen) return;
 
-      if (e.key === 'F2' || e.key === 'F4') {
+      if (e.key === 'F2' || e.key === 'F4' || e.key === 'F11') {
         e.preventDefault();
         this._keyNavHandler(e);
       }
@@ -1679,6 +1697,25 @@ const TallyInventory = {
 
     document.addEventListener('keydown', this._keyNavHandler);
     document.addEventListener('keydown', this._fkeyHandler, true);
+  },
+
+  _openStockAdjForSelected() {
+    const p = this._filteredRows[this._selectedIdx];
+    if (p && p.id) {
+      Inventory.showStockAdjustmentModal(p.id);
+    } else if (this._products && this._products[0]) {
+      Inventory.showStockAdjustmentModal(this._products[0].id);
+    }
+  },
+
+  _openStockAdjForSelectedProduct() {
+    const rowEls = document.querySelectorAll('.tally-prod-row');
+    const idx = this._prodSelectedIdx || 0;
+    const sel = rowEls[idx] || rowEls[0];
+    const pid = sel?.getAttribute('data-id') || (this._products && this._products[0]?.id);
+    if (pid) {
+      Inventory.showStockAdjustmentModal(pid);
+    }
   },
 
   _editSelectedProduct() {

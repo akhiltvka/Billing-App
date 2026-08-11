@@ -115,6 +115,57 @@ class TestStockAdjustment(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_stock_adjustment_via_product_put(self):
+        """PUT /api/products/<id> with adjust_stock=True must update product details and adjust stock balance."""
+        with self.client.session_transaction() as sess:
+            sess['user_id'] = self.user_id
+            sess['username'] = 'test_stock_manager'
+            sess['user_role'] = 'manager'
+
+        payload = {
+            "name": "Adjustment Test Item",
+            "code": "ADJ9",
+            "selling_price": 160.0,
+            "purchase_price": 110.0,
+            "unit": "kg",
+            "adjust_stock": True,
+            "new_stock": 85.5,
+            "stock_notes": "Opening stock correction during inventory review"
+        }
+
+        response = self.client.put('/api/products/999',
+                                   data=json.dumps(payload),
+                                   content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+
+        conn = get_db()
+        prod = conn.execute("SELECT current_stock, selling_price FROM products WHERE id=999").fetchone()
+        tx = conn.execute("SELECT type, quantity, notes FROM stock_transactions WHERE product_id=999 ORDER BY id DESC LIMIT 1").fetchone()
+        conn.close()
+
+        self.assertAlmostEqual(float(prod['current_stock']), 85.5, places=2)
+        self.assertAlmostEqual(float(prod['selling_price']), 160.0, places=2)
+        self.assertEqual(tx['type'], 'adjustment')
+        self.assertIn("Opening stock correction", tx['notes'])
+
+    def test_negative_stock_adjustment_rejected(self):
+        """Stock adjustment with negative quantity must be rejected."""
+        with self.client.session_transaction() as sess:
+            sess['user_id'] = self.user_id
+            sess['username'] = 'test_stock_manager'
+            sess['user_role'] = 'manager'
+
+        payload = {
+            "product_id": 999,
+            "new_quantity": -5.0
+        }
+        response = self.client.post('/api/stock/adjustment',
+                                    data=json.dumps(payload),
+                                    content_type='application/json')
+        self.assertEqual(response.status_code, 400)
+        data = json.loads(response.data.decode('utf-8'))
+        self.assertIn("negative", data.get('message', '').lower())
+
 
 if __name__ == '__main__':
     unittest.main()

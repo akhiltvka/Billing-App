@@ -660,6 +660,7 @@ const StockOverview = {
             <th class="num">Min Req</th>
             <th class="num">Total Cost Value</th>
             <th>Stock Status</th>
+            <th style="text-align:center">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -700,13 +701,18 @@ const StockOverview = {
           <td class="num text-muted">${p.min_stock} ${p.unit}</td>
           <td class="num font-bold text-gold">${App.fmt(p.total_cost)}</td>
           <td>${statusHtml}</td>
+          <td style="text-align:center" onclick="event.stopPropagation()">
+            <button class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;color:#0284c7;font-weight:700" onclick="Inventory.showStockAdjustmentModal(${p.product_id})" title="Edit / Correct Stock Balance">
+              ⚙️ Edit Stock
+            </button>
+          </td>
         </tr>
       `;
 
       if (isExpanded) {
         html += `
           <tr>
-            <td colspan="8" style="padding:0;background:var(--bg-input)">
+            <td colspan="9" style="padding:0;background:var(--bg-input)">
               <div class="so-subtable-wrapper">
                 <div style="font-size:11px;font-weight:700;margin-bottom:6px;color:var(--text-secondary);text-transform:uppercase">
                   📦 Batch Breakdown for ${p.name}

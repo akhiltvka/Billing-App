@@ -2107,6 +2107,36 @@ def update_product(pid):
              ptype, mrp_val, inc_tax, brand_val, pack_size_val, lead_time, shelf_life,
              d.get('active', 1), pid)
         )
+
+        # Handle stock adjustment if requested during product edit
+        if d.get('adjust_stock') or ('new_stock' in d and d['new_stock'] is not None):
+            try:
+                new_qty = float(d.get('new_stock', d.get('current_stock', 0)))
+                if new_qty < 0:
+                    conn.close()
+                    return err("Stock quantity cannot be negative", 400)
+                punit = p_unit or s_unit or ''
+                if is_discrete_unit(punit, conn) and abs(new_qty - round(new_qty)) > 1e-4:
+                    conn.close()
+                    return err(f"Product '{d['name']}' has unit '{punit}' which requires whole number quantities (decimals not allowed).", 400)
+
+                cur_prod_stock = conn.execute('SELECT current_stock FROM products WHERE id=?', (pid,)).fetchone()
+                cur_stock_val = float(cur_prod_stock['current_stock'] or 0) if cur_prod_stock else 0.0
+                delta = new_qty - cur_stock_val
+                if abs(delta) > 1e-6:
+                    notes = (d.get('stock_notes') or d.get('adjustment_notes') or 'Stock adjustment via product edit').strip()
+                    username = session.get('username')
+                    role = session.get('user_role')
+                    st_status = 'approved' if role in ('admin', 'md', 'manager') else 'pending_verification'
+                    st_approver = username if role in ('admin', 'md', 'manager') else None
+                    update_stock(conn, pid, delta, 'adjustment', unit_price=d.get('purchase_price', 0),
+                                 notes=notes, status=st_status, created_by=username, approved_by=st_approver,
+                                 purchase_date=d.get('purchase_date'))
+                    log_activity('STOCK_ADJUSTMENT', f"Adjusted stock for '{d['name']}' from {cur_stock_val} to {new_qty} ({notes})", 'products', pid)
+            except Exception as se:
+                conn.close()
+                return err(f"Stock adjustment error: {str(se)}", 400)
+
         conn.commit()
         row = conn.execute(
             'SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON p.category_id=c.id WHERE p.id=?',
@@ -3619,19 +3649,32 @@ def stock_adjustment():
     except (ValueError, TypeError):
         return err("Valid new_quantity required")
 
+    if new_qty < 0:
+        return err("Stock quantity cannot be negative", 400)
+
     conn = get_db()
     try:
-        prod = conn.execute('SELECT name, unit, purchase_unit, current_stock FROM products WHERE id=?', (d['product_id'],)).fetchone()
+        prod = conn.execute('SELECT id, name, unit, purchase_unit, current_stock, purchase_price FROM products WHERE id=?', (d['product_id'],)).fetchone()
         if not prod:
             return err("Product not found", 404)
         punit = prod['purchase_unit'] or prod['unit'] or ''
-        if is_discrete_unit(punit) and abs(new_qty - round(new_qty)) > 1e-4:
+        if is_discrete_unit(punit, conn) and abs(new_qty - round(new_qty)) > 1e-4:
             return err(f"Product '{prod['name']}' has unit '{punit}' which requires whole number quantities (decimals not allowed).", 400)
-        delta = new_qty - prod['current_stock']
-        update_stock(conn, d['product_id'], delta, 'adjustment', notes=d.get('notes', 'Manual adjustment'))
+
+        cur_stock_val = float(prod['current_stock'] or 0)
+        delta = new_qty - cur_stock_val
+        username = session.get('username')
+        notes = (d.get('notes') or d.get('reason') or 'Manual stock adjustment').strip()
+        p_date = d.get('purchase_date') or str(date.today())
+        u_price = float(d.get('unit_price') or prod['purchase_price'] or 0)
+
+        update_stock(conn, d['product_id'], delta, 'adjustment', unit_price=u_price,
+                     notes=notes, status='approved', created_by=username, approved_by=username,
+                     purchase_date=p_date)
         conn.commit()
+        log_activity('STOCK_ADJUSTMENT', f"Adjusted stock for '{prod['name']}' from {cur_stock_val} to {new_qty} ({notes})", 'products', d['product_id'])
         row = conn.execute('SELECT * FROM products WHERE id=?', (d['product_id'],)).fetchone()
-        return ok(dict_row(row), "Stock adjusted successfully")
+        return ok(dict_row(row), f"Stock adjusted successfully from {cur_stock_val} to {new_qty} {punit}")
     except Exception as e:
         conn.rollback()
         return err(f"Stock adjustment failed: {str(e)}", 500)
