@@ -63,6 +63,12 @@
         margin-bottom: 1px !important;
         color: #000 !important;
       }
+      .shop-tagline {
+        font-size: 9.5px !important;
+        font-style: italic !important;
+        color: #000 !important;
+        margin-bottom: 2px !important;
+      }
       .shop-details {
         font-size: 9px !important;
         line-height: 1.15 !important;
@@ -101,6 +107,13 @@
       font-weight: 800;
       letter-spacing: 0.5px;
       margin-bottom: 2px;
+    }
+
+    .shop-tagline {
+      font-size: 10.5px;
+      color: #555;
+      font-style: italic;
+      margin-bottom: 3px;
     }
 
     .shop-details {
@@ -218,6 +231,7 @@
     const s = data.settings || {};
     const isGstGlobal = s.gst_enabled !== 'false' && s.gst_enabled !== false;
     const shopName = s.shop_name || 'Meat Products of India';
+    const shopTagline = (s.shop_tagline !== undefined && s.shop_tagline !== null) ? s.shop_tagline : 'Fresh. Pure. Delicious.';
     const shopAddr = s.shop_address || '';
     const shopPhone = s.shop_phone || '';
     const shopGstin = isGstGlobal ? (s.shop_gstin || '') : '';
@@ -284,6 +298,7 @@
       <div class="text-center">
         ${shopLogo ? `<img src="${shopLogo}" alt="Logo" style="max-height:48px;max-width:90%;object-fit:contain;margin:0 auto 4px auto;display:block;">` : ''}
         <div class="shop-name" style="${shopBrandFont ? `font-family: '${shopBrandFont}', sans-serif;` : ''}">${shopName}</div>
+        ${shopTagline ? `<div class="shop-tagline">${shopTagline}</div>` : ''}
         <div class="shop-details">
           ${shopAddr ? `<div>${shopAddr}</div>` : ''}
           ${shopPhone ? `<div>Ph: ${shopPhone}</div>` : ''}

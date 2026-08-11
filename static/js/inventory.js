@@ -248,6 +248,7 @@ const Inventory = {
     }
 
     const cats = this._categories || await App.api('/categories');
+    await this.loadUnits();
     const title = p ? `Edit Product — ${p.name}` : 'Add New Product (Product Entry)';
 
     App.showModal(`
@@ -276,10 +277,18 @@ const Inventory = {
             </select>
           </div>
           <div class="form-group">
-            <label class="form-label required">Unit</label>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+              <label class="form-label required" style="margin-bottom:0">Unit</label>
+              <button type="button" class="btn btn-secondary btn-sm" style="padding:1px 6px;font-size:11px;height:22px" onclick="Inventory.showManageUnitsModal()" title="Manage or Add Custom Units">⚙️ Units</button>
+            </div>
             <select class="form-control" id="p-unit">
-              ${['kg','g','piece','pack','dozen','litre','ml'].map(u =>
-                `<option ${p?.unit === u ? 'selected' : ''}>${u}</option>`).join('')}
+              ${(this.units && this.units.length > 0 ? this.units : [
+                {name:'kg', is_discrete:0},{name:'g', is_discrete:0},{name:'litre', is_discrete:0},{name:'ml', is_discrete:0},
+                {name:'piece', is_discrete:1},{name:'pcs', is_discrete:1},{name:'pack', is_discrete:1},{name:'dozen', is_discrete:1},
+                {name:'box', is_discrete:1},{name:'bottle', is_discrete:1},{name:'can', is_discrete:1},{name:'tray', is_discrete:1},
+                {name:'tin', is_discrete:1},{name:'strip', is_discrete:1},{name:'bag', is_discrete:1},{name:'nos', is_discrete:1}
+              ]).map(u =>
+                `<option value="${u.name}" ${p?.unit === u.name ? 'selected' : ''}>${u.name} (${u.is_discrete ? 'Whole Number' : 'Decimal'})</option>`).join('')}
             </select>
           </div>
         </div>
@@ -1511,5 +1520,196 @@ const Inventory = {
     } catch(e) {
       App.toast(e.message, 'error');
     }
+  },
+
+  // ─── Units Master Management ─────────────────────────────────────────────
+  units: [],
+
+  async loadUnits() {
+    try {
+      const res = await App.api('/units');
+      this.units = (res && res.units) ? res.units : [];
+      return this.units;
+    } catch(e) {
+      this.units = [
+        { id: 1, name: 'kg', symbol: 'kg', is_discrete: 0 },
+        { id: 2, name: 'g', symbol: 'g', is_discrete: 0 },
+        { id: 3, name: 'litre', symbol: 'l', is_discrete: 0 },
+        { id: 4, name: 'ml', symbol: 'ml', is_discrete: 0 },
+        { id: 5, name: 'piece', symbol: 'pc', is_discrete: 1 },
+        { id: 6, name: 'pcs', symbol: 'pcs', is_discrete: 1 },
+        { id: 7, name: 'pack', symbol: 'pkt', is_discrete: 1 },
+        { id: 8, name: 'dozen', symbol: 'doz', is_discrete: 1 },
+        { id: 9, name: 'box', symbol: 'box', is_discrete: 1 },
+        { id: 10, name: 'bottle', symbol: 'btl', is_discrete: 1 },
+        { id: 11, name: 'can', symbol: 'can', is_discrete: 1 },
+        { id: 12, name: 'tray', symbol: 'tray', is_discrete: 1 },
+        { id: 13, name: 'tin', symbol: 'tin', is_discrete: 1 },
+        { id: 14, name: 'nos', symbol: 'nos', is_discrete: 1 }
+      ];
+      return this.units;
+    }
+  },
+
+  async showManageUnitsModal() {
+    await this.loadUnits();
+    const modalHtml = `
+      <div class="modal modal-lg" style="max-width:560px">
+        <div class="modal-header">
+          <div class="modal-title"><span class="modal-title-icon">⚙️</span> Manage Product Units</div>
+          <button class="modal-close" onclick="App.closeModal('modal-manage-units')">✕</button>
+        </div>
+        <div class="modal-body" style="padding:16px 20px">
+          <div style="background:var(--bg-input, #1E293B);padding:14px;border-radius:8px;border:1px solid var(--border);margin-bottom:18px">
+            <h4 style="margin-top:0;margin-bottom:10px;font-size:13px;color:var(--gold, #F59E0B);text-transform:uppercase;letter-spacing:0.5px">➕ Add New Custom Unit</h4>
+            <div style="display:flex;gap:10px;flex-wrap:wrap">
+              <div style="flex:2;min-width:140px">
+                <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Unit Name *</label>
+                <input id="new-unit-name" class="form-control" placeholder="e.g. carton, bundle, roll" style="padding:6px 10px;font-size:13px">
+              </div>
+              <div style="flex:1;min-width:90px">
+                <label style="font-size:11px;font-weight:600;display:block;margin-bottom:4px">Symbol</label>
+                <input id="new-unit-symbol" class="form-control" placeholder="e.g. ctn" style="padding:6px 10px;font-size:13px">
+              </div>
+            </div>
+            <div style="margin-top:10px">
+              <label style="font-size:11px;font-weight:600;display:block;margin-bottom:6px">Quantity Type *</label>
+              <div style="display:flex;gap:16px;font-size:12px">
+                <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+                  <input type="radio" name="new-unit-discrete" value="1" checked> 📦 Whole Number Only (pack, piece, carton)
+                </label>
+                <label style="display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+                  <input type="radio" name="new-unit-discrete" value="0"> ⚖️ Allows Decimals (kg, litre, meter)
+                </label>
+              </div>
+            </div>
+            <div style="margin-top:12px;text-align:right">
+              <button type="button" class="btn btn-primary btn-sm" onclick="Inventory.saveCustomUnit()">+ Add Unit</button>
+            </div>
+          </div>
+
+          <h4 style="margin-top:0;margin-bottom:10px;font-size:13px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px">Active Units</h4>
+          <div style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
+            <table style="width:100%;border-collapse:collapse;font-size:12px">
+              <thead>
+                <tr style="background:var(--bg-input);border-bottom:1px solid var(--border)">
+                  <th style="padding:8px 12px;text-align:left">Unit Name</th>
+                  <th style="padding:8px 12px;text-align:left">Symbol</th>
+                  <th style="padding:8px 12px;text-align:center">Quantity Mode</th>
+                  <th style="padding:8px 12px;text-align:center;width:60px">Action</th>
+                </tr>
+              </thead>
+              <tbody id="manage-units-tbody">
+                ${(this.units || []).map(u => `
+                  <tr style="border-bottom:1px solid var(--border)">
+                    <td style="padding:8px 12px;font-weight:600">${App.escapeHtml(u.name)}</td>
+                    <td style="padding:8px 12px;color:var(--text-muted)">${App.escapeHtml(u.symbol || u.name)}</td>
+                    <td style="padding:8px 12px;text-align:center">
+                      <span class="badge ${u.is_discrete ? 'badge-gold' : 'badge-secondary'}" style="font-size:10px">
+                        ${u.is_discrete ? 'Whole Number' : 'Decimal'}
+                      </span>
+                    </td>
+                    <td style="padding:8px 12px;text-align:center">
+                      <button type="button" class="btn btn-danger btn-sm btn-icon" style="width:22px;height:22px;font-size:10px" onclick="Inventory.deleteCustomUnit(${u.id}, '${App.escapeHtml(u.name)}')" title="Remove Unit">✕</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="modal-footer" style="padding:10px 20px">
+          <button type="button" class="btn btn-secondary" onclick="App.closeModal('modal-manage-units')">Close</button>
+        </div>
+      </div>
+    `;
+    App.showModal(modalHtml, { id: 'modal-manage-units' });
+  },
+
+  async saveCustomUnit() {
+    const nameEl = document.getElementById('new-unit-name');
+    const symbolEl = document.getElementById('new-unit-symbol');
+    const isDiscreteEl = document.querySelector('input[name="new-unit-discrete"]:checked');
+    const name = (nameEl?.value || '').trim().toLowerCase();
+    const symbol = (symbolEl?.value || '').trim() || name;
+    const is_discrete = isDiscreteEl ? parseInt(isDiscreteEl.value) : 1;
+
+    if (!name) {
+      App.toast('Unit name is required', 'warning');
+      return;
+    }
+
+    try {
+      await App.api('/units', 'POST', { name, symbol, is_discrete });
+      App.toast(`Unit "${name}" added successfully!`, 'success');
+      await this.loadUnits();
+
+      const tbody = document.getElementById('manage-units-tbody');
+      if (tbody) {
+        tbody.innerHTML = (this.units || []).map(u => `
+          <tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:8px 12px;font-weight:600">${App.escapeHtml(u.name)}</td>
+            <td style="padding:8px 12px;color:var(--text-muted)">${App.escapeHtml(u.symbol || u.name)}</td>
+            <td style="padding:8px 12px;text-align:center">
+              <span class="badge ${u.is_discrete ? 'badge-gold' : 'badge-secondary'}" style="font-size:10px">
+                ${u.is_discrete ? 'Whole Number' : 'Decimal'}
+              </span>
+            </td>
+            <td style="padding:8px 12px;text-align:center">
+              <button type="button" class="btn btn-danger btn-sm btn-icon" style="width:22px;height:22px;font-size:10px" onclick="Inventory.deleteCustomUnit(${u.id}, '${App.escapeHtml(u.name)}')" title="Remove Unit">✕</button>
+            </td>
+          </tr>
+        `).join('');
+      }
+
+      const pUnit = document.getElementById('p-unit');
+      if (pUnit) {
+        pUnit.innerHTML = (this.units || []).map(u =>
+          `<option value="${u.name}" ${u.name === name ? 'selected' : ''}>${u.name} (${u.is_discrete ? 'Whole Number' : 'Decimal'})</option>`
+        ).join('');
+      }
+      if (nameEl) nameEl.value = '';
+      if (symbolEl) symbolEl.value = '';
+    } catch(e) {
+      App.toast(e.message || 'Failed to add unit', 'error');
+    }
+  },
+
+  async deleteCustomUnit(uid, uname) {
+    App.confirm(`Remove unit "${uname}"?`, 'Delete Unit', async () => {
+      try {
+        await App.api(`/units/${uid}`, 'DELETE');
+        App.toast(`Unit "${uname}" removed.`, 'success');
+        await this.loadUnits();
+
+        const tbody = document.getElementById('manage-units-tbody');
+        if (tbody) {
+          tbody.innerHTML = (this.units || []).map(u => `
+            <tr style="border-bottom:1px solid var(--border)">
+              <td style="padding:8px 12px;font-weight:600">${App.escapeHtml(u.name)}</td>
+              <td style="padding:8px 12px;color:var(--text-muted)">${App.escapeHtml(u.symbol || u.name)}</td>
+              <td style="padding:8px 12px;text-align:center">
+                <span class="badge ${u.is_discrete ? 'badge-gold' : 'badge-secondary'}" style="font-size:10px">
+                  ${u.is_discrete ? 'Whole Number' : 'Decimal'}
+                </span>
+              </td>
+              <td style="padding:8px 12px;text-align:center">
+                <button type="button" class="btn btn-danger btn-sm btn-icon" style="width:22px;height:22px;font-size:10px" onclick="Inventory.deleteCustomUnit(${u.id}, '${App.escapeHtml(u.name)}')" title="Remove Unit">✕</button>
+              </td>
+            </tr>
+          `).join('');
+        }
+
+        const pUnit = document.getElementById('p-unit');
+        if (pUnit) {
+          const curVal = pUnit.value;
+          pUnit.innerHTML = (this.units || []).map(u =>
+            `<option value="${u.name}" ${u.name === curVal ? 'selected' : ''}>${u.name} (${u.is_discrete ? 'Whole Number' : 'Decimal'})</option>`
+          ).join('');
+        }
+      } catch(e) {
+        App.toast(e.message || 'Failed to remove unit', 'error');
+      }
+    });
   },
 };

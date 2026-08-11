@@ -367,7 +367,7 @@
     const isGstGlobal = s.gst_enabled !== 'false' && s.gst_enabled !== false;
     const shop = {
       name:    s.shop_name    || 'Meat Products of India',
-      tagline: s.shop_tagline || 'Fresh. Pure. Delicious.',
+      tagline: (s.shop_tagline !== undefined && s.shop_tagline !== null) ? s.shop_tagline : 'Fresh. Pure. Delicious.',
       address: s.shop_address || '',
       phone:   s.shop_phone   || '',
       email:   s.shop_email   || '',
@@ -402,7 +402,7 @@
       <div class="shop-header">
         ${shop.logo ? `<img src="${shop.logo}" alt="Logo" style="max-height:48px;max-width:90%;object-fit:contain;margin:0 auto 6px auto;display:block;border-radius:4px;">` : ''}
         <div class="shop-name" style="${shop.brand_font ? `font-family: '${shop.brand_font}', sans-serif;` : ''}">${shop.name}</div>
-        <div class="shop-tagline">${shop.tagline}</div>
+        ${shop.tagline ? `<div class="shop-tagline">${shop.tagline}</div>` : ''}
         <div class="shop-info">
           ${shop.address}<br>
           📞 ${shop.phone}${shop.email ? ' | ✉ ' + shop.email : ''}

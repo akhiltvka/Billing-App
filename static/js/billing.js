@@ -1071,6 +1071,23 @@ const Billing = {
     });
   },
 
+  isDiscreteUnit(unit) {
+    if (!unit) return false;
+    const u = String(unit).trim().toLowerCase();
+    const discrete = [
+      'piece', 'pieces', 'pc', 'pcs', 'pack', 'packs', 'packet', 'packets',
+      'pkt', 'pkts', 'dozen', 'doz', 'dz', 'box', 'boxes', 'bottle', 'bottles',
+      'can', 'cans', 'tray', 'trays', 'tin', 'tins', 'strip', 'strips',
+      'bag', 'bags', 'nos', 'no', 'unit', 'units'
+    ];
+    if (discrete.includes(u)) return true;
+    if (typeof Inventory !== 'undefined' && Array.isArray(Inventory.units)) {
+      const match = Inventory.units.find(x => x.name && x.name.toLowerCase() === u);
+      if (match) return Boolean(match.is_discrete);
+    }
+    return false;
+  },
+
   addToCart(productJson) {
     const p = typeof productJson === 'string' ? JSON.parse(productJson) : productJson;
     this.hideProductDropdown();
@@ -1207,6 +1224,10 @@ const Billing = {
             const lineAmt = item.quantity * item.unit_price;
             const isSelected = this._selectedCartIndex === idx || (this._selectedCartIndex === undefined && idx === this.cart.length - 1);
             if (isSelected) this._selectedCartIndex = idx;
+            const isDiscrete = this.isDiscreteUnit(item.unit);
+            const stepVal = isDiscrete ? '1' : '0.05';
+            const minVal = isDiscrete ? '1' : '0.001';
+            const deltaVal = isDiscrete ? 1 : 0.5;
             return `
               <tr class="${isSelected ? 'selected' : ''}" style="border-bottom:1px solid var(--border);cursor:pointer;${isSelected ? 'background:rgba(217,119,6,0.15);' : ''}" onclick="Billing.selectCartRow(${idx})">
                 <td style="padding:10px 14px">
@@ -1215,9 +1236,9 @@ const Billing = {
                 </td>
                 <td style="padding:10px 8px;text-align:center">
                   <div style="display:inline-flex;align-items:center;gap:4px" onclick="event.stopPropagation()">
-                    <button class="btn btn-secondary btn-sm btn-icon" style="width:24px;height:24px;font-size:12px" onclick="Billing.changeQty(${idx}, -0.5)">−</button>
-                    <input type="number" value="${item.quantity}" step="0.05" min="0.001" style="width:65px;text-align:center;padding:2px 4px;font-weight:700" class="form-control" onchange="Billing.setQty(${idx}, this.value)">
-                    <button class="btn btn-secondary btn-sm btn-icon" style="width:24px;height:24px;font-size:12px" onclick="Billing.changeQty(${idx}, 0.5)">+</button>
+                    <button class="btn btn-secondary btn-sm btn-icon" style="width:24px;height:24px;font-size:12px" onclick="Billing.changeQty(${idx}, -${deltaVal})">−</button>
+                    <input type="number" value="${item.quantity}" step="${stepVal}" min="${minVal}" style="width:65px;text-align:center;padding:2px 4px;font-weight:700" class="form-control" onchange="Billing.setQty(${idx}, this.value)">
+                    <button class="btn btn-secondary btn-sm btn-icon" style="width:24px;height:24px;font-size:12px" onclick="Billing.changeQty(${idx}, ${deltaVal})">+</button>
                   </div>
                 </td>
                 <td style="padding:10px 14px;text-align:right" onclick="event.stopPropagation()">
@@ -1248,7 +1269,14 @@ const Billing = {
 
   changeQty(idx, delta) {
     if (!this.cart[idx]) return;
-    const newQty = parseFloat((this.cart[idx].quantity + delta).toFixed(3));
+    const isDiscrete = this.isDiscreteUnit(this.cart[idx].unit);
+    let newQty;
+    if (isDiscrete) {
+      const step = delta < 0 ? -1 : 1;
+      newQty = Math.round(this.cart[idx].quantity + step);
+    } else {
+      newQty = parseFloat((this.cart[idx].quantity + delta).toFixed(3));
+    }
     if (newQty <= 0) { this.removeItem(idx); return; }
     this.cart[idx].quantity = newQty;
     this.renderCart();
@@ -1256,9 +1284,18 @@ const Billing = {
 
   setQty(idx, val) {
     if (!this.cart[idx]) return;
+    const isDiscrete = this.isDiscreteUnit(this.cart[idx].unit);
     const v = parseFloat(val);
     if (!v || v <= 0) { this.removeItem(idx); return; }
-    this.cart[idx].quantity = parseFloat(v.toFixed(3));
+    if (isDiscrete) {
+      const intVal = Math.round(v);
+      if (Math.abs(v - intVal) > 0.001) {
+        App.toast(`Item "${this.cart[idx].product_name}" (${this.cart[idx].unit}) only allows whole numbers. Adjusted to ${intVal}.`, 'warning');
+      }
+      this.cart[idx].quantity = Math.max(1, intVal);
+    } else {
+      this.cart[idx].quantity = parseFloat(v.toFixed(3));
+    }
     this.renderCart();
   },
 
@@ -1714,6 +1751,14 @@ const Billing = {
     if (this.cart.length === 0) {
       App.toast('Cart is empty. Add products first.', 'error');
       return;
+    }
+
+    // Pre-validate discrete unit whole number quantities
+    for (const it of this.cart) {
+      if (this.isDiscreteUnit(it.unit) && Math.abs(it.quantity - Math.round(it.quantity)) > 0.001) {
+        App.toast(`Item "${it.product_name}" has unit "${it.unit}" which can only be billed in whole numbers. Decimals are not allowed.`, 'error');
+        return;
+      }
     }
 
     const btn = document.getElementById('btn-save-bill');

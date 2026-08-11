@@ -129,6 +129,9 @@ const App = {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.id = id;
+    if (id !== 'main-modal') {
+      overlay.style.zIndex = '30000';
+    }
     if (options.closable === false) {
       overlay.dataset.closable = 'false';
     }
@@ -598,7 +601,7 @@ const App = {
     this.settings = { ...this.settings, ...settings };
     this.currency = this.settings.currency_symbol || '₹';
     const shopName    = this.settings.shop_name || this.settings.outlet_name || 'Meat Products of India';
-    const shopTagline = this.settings.shop_tagline || 'Fresh. Pure. Delicious.';
+    const shopTagline = (this.settings.shop_tagline !== undefined && this.settings.shop_tagline !== null) ? this.settings.shop_tagline : 'Fresh. Pure. Delicious.';
     const outletCity  = this.settings.outlet_city  || '';
 
     // 1. Update Login Brand Name & Tagline
@@ -617,7 +620,14 @@ const App = {
     }
 
     const loginTagline = document.getElementById('login-brand-tagline');
-    if (loginTagline) loginTagline.textContent = shopTagline;
+    if (loginTagline) {
+      const taglineText = loginTagline.querySelector('.tagline-text');
+      if (taglineText) {
+        taglineText.textContent = shopTagline;
+      } else {
+        loginTagline.textContent = shopTagline;
+      }
+    }
 
     const loginSubtitle = document.getElementById('login-shop-subtitle');
     if (loginSubtitle) {
@@ -626,9 +636,12 @@ const App = {
         : `Sign in to ${shopName}`;
     }
 
-    // 2. Update Sidebar Header & Footer Shop Names
+    // 2. Update Sidebar Header & Footer Shop Names and Tagline
     const sbName = document.getElementById('sidebar-shop-name');
     if (sbName) sbName.textContent = shopName;
+
+    const sbTagline = document.getElementById('sidebar-shop-tagline') || document.querySelector('.sidebar-brand .brand-tagline');
+    if (sbTagline) sbTagline.textContent = shopTagline;
 
     const sbFooter = document.getElementById('sidebar-footer-shop-name');
     if (sbFooter) sbFooter.textContent = shopName;
@@ -646,6 +659,21 @@ const App = {
     document.documentElement.style.setProperty('--brand-font', fontValue);
     if (document.body) {
       document.body.style.setProperty('--brand-font', fontValue);
+    }
+
+    // 5. Keep Billing module settings in sync if active
+    if (typeof Billing !== 'undefined') {
+      Billing.settings = { ...(Billing.settings || {}), ...this.settings };
+    }
+  },
+
+  async refreshSettings() {
+    try {
+      const settings = await this.api('/settings');
+      this.applySettings(settings);
+      return settings;
+    } catch (e) {
+      console.warn('Could not refresh settings:', e.message);
     }
   },
 
@@ -1246,8 +1274,9 @@ const LoginAnimations = {
     const el = document.querySelector('#login-brand-tagline .tagline-text');
     if (!el) return;
 
+    const customTagline = App.settings?.shop_tagline || 'Fresh. Pure. Delicious.';
     const phrases = [
-      'Fresh. Pure. Delicious.',
+      customTagline,
       'Quality You Can Trust.',
       'Your Trusted Meat Partner.',
       'Farm Fresh. Every Day.',

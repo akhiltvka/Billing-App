@@ -663,6 +663,35 @@ class InsufficientStockError(Exception):
     pass
 
 
+DISCRETE_UNITS = {
+    'piece', 'pieces', 'pc', 'pcs', 'pack', 'packs', 'packet', 'packets',
+    'pkt', 'pkts', 'dozen', 'doz', 'dz', 'box', 'boxes', 'bottle', 'bottles',
+    'can', 'cans', 'tray', 'trays', 'tin', 'tins', 'strip', 'strips',
+    'bag', 'bags', 'nos', 'no', 'unit', 'units'
+}
+
+def is_discrete_unit(unit_str, conn=None):
+    """Return True if unit represents discrete items that can only be counted in whole numbers."""
+    if not unit_str:
+        return False
+    clean = str(unit_str).strip().lower()
+    if clean in DISCRETE_UNITS:
+        return True
+    try:
+        close_conn = False
+        if conn is None:
+            conn = get_db()
+            close_conn = True
+        row = conn.execute("SELECT is_discrete FROM units WHERE LOWER(name)=? AND active=1", (clean,)).fetchone()
+        if close_conn:
+            conn.close()
+        if row is not None:
+            return bool(row['is_discrete'])
+    except Exception:
+        pass
+    return False
+
+
 # Base unit for inventory storage is purchase_unit. Stock-in quantities are recorded internally in purchase_unit terms.
 # Stock-out (billing) quantities are supplied in sale_unit terms and converted to purchase_unit via conversion_factor before updating stock.
 def update_stock(conn, product_id, delta, tx_type, unit_price=0, ref=None,
@@ -1630,6 +1659,80 @@ def get_activity_log():
         'pages': (total + per_page - 1) // per_page,
         'logs': [dict(r) for r in rows]
     })
+
+# ─── Units Management ──────────────────────────────────────────────────────
+
+@app.route('/api/units', methods=['GET'])
+@require_permission('inventory.view')
+def list_units():
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM units WHERE active=1 ORDER BY is_system DESC, name ASC').fetchall()
+    conn.close()
+    return ok({"units": dict_rows(rows)})
+
+@app.route('/api/units', methods=['POST'])
+@require_permission('inventory.create')
+def create_unit():
+    d = request.get_json()
+    if d is None:
+        return err("Invalid or missing JSON payload")
+    raw_name = (d.get('name') or '').strip().lower()
+    if not raw_name:
+        return err("Unit name is required", 400)
+    
+    symbol = (d.get('symbol') or raw_name).strip()
+    is_discrete = 1 if (d.get('is_discrete') in (1, '1', True, 'true')) else 0
+
+    conn = get_db()
+    existing = conn.execute('SELECT * FROM units WHERE LOWER(name)=?', (raw_name,)).fetchone()
+    if existing:
+        if existing['active'] == 1:
+            conn.close()
+            return err(f"Unit '{raw_name}' already exists", 400)
+        else:
+            conn.execute('UPDATE units SET symbol=?, is_discrete=?, active=1 WHERE id=?', (symbol, is_discrete, existing['id']))
+            conn.commit()
+            row = conn.execute('SELECT * FROM units WHERE id=?', (existing['id'],)).fetchone()
+            conn.close()
+            return ok(dict_row(row), "Unit reactivated"), 201
+
+    try:
+        cur = conn.execute(
+            'INSERT INTO units (name, symbol, is_discrete, is_system, active) VALUES (?, ?, ?, 0, 1)',
+            (raw_name, symbol, is_discrete)
+        )
+        conn.commit()
+        row = conn.execute('SELECT * FROM units WHERE id=?', (cur.lastrowid,)).fetchone()
+        conn.close()
+        return ok(dict_row(row), "Unit created"), 201
+    except Exception as e:
+        conn.close()
+        return err(f"Failed to create unit: {str(e)}", 400)
+
+@app.route('/api/units/<int:uid>', methods=['DELETE'])
+@require_permission('inventory.delete')
+def delete_unit(uid):
+    conn = get_db()
+    unit = conn.execute('SELECT * FROM units WHERE id=?', (uid,)).fetchone()
+    if not unit:
+        conn.close()
+        return err("Unit not found", 404)
+
+    uname = unit['name']
+    in_use = conn.execute(
+        '''SELECT COUNT(*) FROM products
+           WHERE active=1 AND (LOWER(unit)=LOWER(?) OR LOWER(purchase_unit)=LOWER(?) OR LOWER(sale_unit)=LOWER(?))''',
+        (uname, uname, uname)
+    ).fetchone()[0]
+
+    if in_use > 0:
+        conn.close()
+        return err(f"Cannot delete unit '{uname}' because it is currently assigned to {in_use} active product(s). Please change the product unit before removing.", 400)
+
+    conn.execute('UPDATE units SET active=0 WHERE id=?', (uid,))
+    conn.commit()
+    conn.close()
+    return ok(None, f"Unit '{uname}' removed successfully")
 
 # ─── Categories ─────────────────────────────────────────────────────────────
 
@@ -3518,9 +3621,12 @@ def stock_adjustment():
 
     conn = get_db()
     try:
-        prod = conn.execute('SELECT current_stock FROM products WHERE id=?', (d['product_id'],)).fetchone()
+        prod = conn.execute('SELECT name, unit, purchase_unit, current_stock FROM products WHERE id=?', (d['product_id'],)).fetchone()
         if not prod:
             return err("Product not found", 404)
+        punit = prod['purchase_unit'] or prod['unit'] or ''
+        if is_discrete_unit(punit) and abs(new_qty - round(new_qty)) > 1e-4:
+            return err(f"Product '{prod['name']}' has unit '{punit}' which requires whole number quantities (decimals not allowed).", 400)
         delta = new_qty - prod['current_stock']
         update_stock(conn, d['product_id'], delta, 'adjustment', notes=d.get('notes', 'Manual adjustment'))
         conn.commit()
@@ -3881,17 +3987,18 @@ def create_bill():
         user_role = session.get('user_role', '')
         can_edit_price = ('*' in user_perms) or ('inventory.edit_price' in user_perms) or (user_role in ('admin', 'md'))
 
-        # Pre-validate stock, product existence, and authoritative prices
+        # Pre-validate stock, product existence, authoritative prices, and discrete unit integer quantities
         for it in items:
             qty = float(it.get('quantity', 0))
             if qty <= 0:
                 conn.close()
                 return err("Item quantity must be greater than zero", 400)
 
+            unit_to_check = it.get('unit') or ''
             client_price = float(it.get('unit_price', 0))
             if it.get('product_id'):
                 prod = conn.execute(
-                    '''SELECT id, name, current_stock, conversion_factor, sale_unit,
+                    '''SELECT id, name, unit, purchase_unit, sale_unit, current_stock, conversion_factor,
                               selling_price, mrp, product_type, is_price_inclusive_of_tax, purchase_price
                        FROM products WHERE id=?''',
                     (it['product_id'],)
@@ -3899,6 +4006,14 @@ def create_bill():
                 if not prod:
                     conn.close()
                     return err(f"Product ID {it['product_id']} not found", 400)
+
+                unit_to_check = prod['sale_unit'] or prod['unit'] or unit_to_check
+                pname = prod['name']
+
+                # Enforce whole numbers for discrete units (pack, dozen, piece, box, etc.)
+                if is_discrete_unit(unit_to_check) and abs(qty - round(qty)) > 1e-4:
+                    conn.close()
+                    return err(f"Item '{pname}' has unit '{unit_to_check}' which requires whole number quantities (decimals not allowed).", 400)
 
                 # Validate stock
                 conv = float(prod['conversion_factor'] or 1.0)
@@ -3931,6 +4046,10 @@ def create_bill():
                 is_inc_tax = (prod['product_type'] == 'general' and int(prod['is_price_inclusive_of_tax'] or 0) == 1)
                 it['_prod_row'] = prod
             else:
+                pname = it.get('product_name') or 'Item'
+                if is_discrete_unit(unit_to_check) and abs(qty - round(qty)) > 1e-4:
+                    conn.close()
+                    return err(f"Item '{pname}' has unit '{unit_to_check}' which requires whole number quantities (decimals not allowed).", 400)
                 validated_price = client_price
                 is_inc_tax = False
                 it['_prod_row'] = None

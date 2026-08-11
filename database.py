@@ -813,6 +813,44 @@ def init_db():
         WHERE purchase_unit IS NULL OR purchase_unit = ''
     ''')
 
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS units (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            name               TEXT UNIQUE NOT NULL,
+            symbol             TEXT,
+            is_discrete        INTEGER DEFAULT 0,
+            is_system          INTEGER DEFAULT 0,
+            active             INTEGER DEFAULT 1,
+            created_at         TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Seed default standard units if none exist
+    default_units = [
+        ('kg', 'kg', 0, 1),
+        ('g', 'g', 0, 1),
+        ('litre', 'l', 0, 1),
+        ('ml', 'ml', 0, 1),
+        ('meter', 'm', 0, 1),
+        ('piece', 'pc', 1, 1),
+        ('pcs', 'pcs', 1, 1),
+        ('pack', 'pkt', 1, 1),
+        ('dozen', 'doz', 1, 1),
+        ('box', 'box', 1, 1),
+        ('bottle', 'btl', 1, 1),
+        ('can', 'can', 1, 1),
+        ('tray', 'tray', 1, 1),
+        ('tin', 'tin', 1, 1),
+        ('strip', 'strip', 1, 1),
+        ('bag', 'bag', 1, 1),
+        ('nos', 'nos', 1, 1),
+    ]
+    for uname, usym, is_disc, is_sys in default_units:
+        c.execute('''
+            INSERT OR IGNORE INTO units (name, symbol, is_discrete, is_system, active)
+            VALUES (?, ?, ?, ?, 1)
+        ''', (uname, usym, is_disc, is_sys))
+
     # Ensure existing products with current_stock > 0 have an initial batch record
     prods_without_batches = c.execute('''
         SELECT p.id, p.current_stock, p.purchase_price

@@ -34,7 +34,9 @@ const Settings = {
     const fontSel = document.getElementById('s-brand-font')?.value || '';
     const customFont = document.getElementById('s-custom-brand-font')?.value || '';
     const previewText = document.getElementById('s-font-preview-text');
+    const previewTagline = document.getElementById('s-font-preview-tagline');
     const shopNameInput = document.getElementById('s-shopname')?.value || 'Meat Products of India';
+    const taglineInput = document.getElementById('s-tagline')?.value || '';
     
     let fontToApply = 'inherit';
     if (fontSel === 'custom' && customFont.trim()) {
@@ -46,6 +48,10 @@ const Settings = {
     if (previewText) {
       previewText.style.fontFamily = fontToApply;
       previewText.textContent = shopNameInput;
+    }
+    if (previewTagline) {
+      previewTagline.textContent = taglineInput;
+      previewTagline.style.display = taglineInput ? 'block' : 'none';
     }
   },
 
@@ -96,7 +102,7 @@ const Settings = {
                 
                 <div class="form-group">
                   <label class="form-label">Tagline</label>
-                  <input class="form-control" id="s-tagline" value="${settings.shop_tagline || ''}" placeholder="e.g. Fresh Quality Meat Daily">
+                  <input class="form-control" id="s-tagline" value="${settings.shop_tagline || ''}" placeholder="e.g. Fresh Quality Meat Daily" oninput="Settings.updateFontPreview()">
                 </div>
                 
                 <div class="form-group">
@@ -147,6 +153,9 @@ const Settings = {
                   <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Brand Font Live Preview</div>
                   <div id="s-font-preview-text" style="font-size:22px;font-weight:800;color:var(--primary);transition:all 0.2s ease">
                     ${settings.shop_name || 'Meat Products of India'}
+                  </div>
+                  <div id="s-font-preview-tagline" style="font-size:12px;color:var(--gold);font-weight:600;margin-top:4px;letter-spacing:0.5px;font-style:italic">
+                    ${settings.shop_tagline || 'Fresh. Pure. Delicious.'}
                   </div>
                 </div>
 
@@ -906,7 +915,7 @@ const Settings = {
     try {
       await App.api('/settings', 'POST', payload);
       App.toast('Outlet profile details saved successfully!', 'success');
-      App.refreshSettings();
+      await App.refreshSettings();
     } catch(e) {
       App.toast('Error saving shop details: ' + e.message, 'error');
     }
@@ -933,7 +942,7 @@ const Settings = {
     try {
       await App.api('/settings', 'POST', payload);
       App.toast('Billing & POS preferences saved successfully!', 'success');
-      App.refreshSettings();
+      await App.refreshSettings();
     } catch(e) {
       App.toast('Error saving preferences: ' + e.message, 'error');
     }
