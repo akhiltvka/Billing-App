@@ -186,22 +186,17 @@ const Settings = {
               <div class="set-card set-section" data-section="backup">
                 <div class="set-card-header">
                   <div class="card-title" style="margin:0"><span class="card-title-icon">💾</span> Backup &amp; Disaster Recovery</div>
-                  <span class="badge badge-success">Automated Active</span>
+                  <span class="badge badge-success">Cloud Sync Active</span>
                 </div>
                 
-                <p class="text-muted text-sm mb-16">Automatic 6-hour cloud DB backups are active online. You can also download manual backups or configure real-time external USB drive mirroring below.</p>
+                <p class="text-muted text-sm mb-16">Continuous row-level sync automatically mirrors your data to Supabase in near-real-time. You can also download a local SQLite database snapshot or configure real-time external USB drive mirroring below.</p>
 
                 <!-- Actions Bar -->
-                <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">
-                  <a href="/api/backup" class="btn btn-secondary w-full" download style="text-align:center">
+                <div style="margin-bottom:20px">
+                  <a href="/api/backup" class="btn btn-secondary w-full" download style="text-align:center;display:block">
                     ⬇️ Download Local Database Snapshot (.db)
                   </a>
-                  <button class="btn btn-primary w-full" onclick="Settings.cloudBackupNow()">
-                    ☁️ Backup to Cloud Server Now
-                  </button>
-                  <div style="padding:10px 12px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:var(--r-md);font-size:11.5px;color:var(--warning)">
-                    ℹ️ <strong>Auto-Cloud Sync:</strong> App uploads encrypted snapshots every 6 hours automatically when connected online.
-                  </div>
+                </div>
                 <!-- Supabase Cloud Sync (PostgreSQL Mirror) Section -->
                 <div style="border-top:1px solid var(--border);padding-top:16px;margin-bottom:20px">
                   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -983,15 +978,6 @@ const Settings = {
   },
 
   // ── Cloud & Drive Mirroring Actions ──
-  async cloudBackupNow() {
-    try {
-      App.toast('Creating cloud backup...', 'info');
-      await App.api('/cloud/backup-now', 'POST');
-      App.toast('Cloud backup created successfully!', 'success');
-    } catch(e) {
-      App.toast('Cloud backup error: ' + e.message, 'error');
-    }
-  },
 
   async loadSyncStatus() {
     const badge = document.getElementById('sync-status-badge');
