@@ -1,3 +1,9 @@
+# -*- coding: utf-8 -*-
+"""
+installer_setup_wizard.py — Modern High-Resolution Setup Wizard
+Meat Products of India — Billing & Inventory Management App
+"""
+
 import sys
 import os
 import shutil
@@ -7,6 +13,19 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from PIL import Image, ImageTk
+
+# ─── High-DPI Awareness (Windows 10 / 11) ────────────────────────────────────
+if sys.platform == 'win32':
+    try:
+        import ctypes
+        # Per-monitor DPI awareness v2 for crisp high-resolution rendering
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            import ctypes
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
 
 try:
     from database import (
@@ -19,21 +38,47 @@ try:
 except ImportError:
     pass
 
-# ─── Configuration ───────────────────────────────────────────────────────────
+# ─── Configuration & Branding ────────────────────────────────────────────────
 APP_NAME = "MPI Billing Software"
 APP_PUBLISHER = "Meat Products of India"
+APP_TAGLINE = "A Govt. of Kerala Undertaking"
 APP_VERSION = "2.0.0"
 REG_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\MPI_Billing_Software"
 PROD_SUPABASE_URL = "postgresql://postgres.tjpfkpwmoyooevxjosof:Revathyr%40j6123@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
+
+# ─── Modern Color Theme ──────────────────────────────────────────────────────
+THEME = {
+    'bg_main':       '#0B1120',  # Deep Obsidian Navy
+    'bg_content':    '#0F172A',  # Slate 900
+    'bg_card':       '#1E293B',  # Slate 800
+    'bg_card_alt':   '#162032',  # Slightly darker card
+    'bg_header':     '#131B2E',  # Header banner
+    'bg_footer':     '#0B1120',  # Footer bar
+    'border':        '#334155',  # Slate 700
+    'border_subtle': '#1E293B',  # Slate 800
+    'primary':       '#E11D48',  # Brand Crimson Red (Meat Products of India)
+    'primary_hover': '#F43F5E',  # Rose 500
+    'primary_active':'#BE123C',  # Rose 700
+    'secondary':     '#334155',  # Slate 700
+    'sec_hover':     '#475569',  # Slate 600
+    'accent_blue':   '#38BDF8',  # Sky 400
+    'accent_gold':   '#F59E0B',  # Amber 500
+    'accent_green':  '#10B981',  # Emerald 500
+    'text_light':    '#F8FAFC',  # White / Slate 50
+    'text_sub':      '#CBD5E1',  # Slate 300
+    'text_muted':    '#94A3B8',  # Slate 400
+}
+
 
 def get_bundle_dir():
     if getattr(sys, 'frozen', False):
         return getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
     return os.path.dirname(os.path.abspath(__file__))
 
+
 def create_windows_shortcut(target, shortcut_path, icon_path=None, description=""):
-    """Create a Windows .lnk shortcut safely in-memory without dropping temporary VBS files into %TEMP%."""
-    # 1. Native Python COM (pywin32) if available (100% in-process COM)
+    """Create a Windows .lnk shortcut safely in-memory without dropping temporary VBS files."""
+    # 1. Native Python COM (pywin32) if available
     try:
         import win32com.client
         ws = win32com.client.Dispatch("WScript.Shell")
@@ -49,15 +94,15 @@ def create_windows_shortcut(target, shortcut_path, icon_path=None, description="
     except Exception:
         pass
 
-    # 2. In-memory PowerShell (no temporary files created on disk, avoids AV heuristics)
+    # 2. In-memory PowerShell fallback (no temporary files on disk)
     try:
         target_esc = target.replace("'", "''")
         sc_esc = shortcut_path.replace("'", "''")
         work_dir_esc = os.path.dirname(target).replace("'", "''")
         desc_esc = description.replace("'", "''")
-        
+
         ps_parts = [
-            f"$ws = New-Object -ComObject WScript.Shell",
+            "$ws = New-Object -ComObject WScript.Shell",
             f"$sc = $ws.CreateShortcut('{sc_esc}')",
             f"$sc.TargetPath = '{target_esc}'",
             f"$sc.WorkingDirectory = '{work_dir_esc}'",
@@ -67,10 +112,10 @@ def create_windows_shortcut(target, shortcut_path, icon_path=None, description="
             icon_esc = icon_path.replace("'", "''")
             ps_parts.append(f"$sc.IconLocation = '{icon_esc}'")
         ps_parts.append("$sc.Save()")
-        
+
         ps_command = "; ".join(ps_parts)
         cmd = ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps_command]
-        
+
         creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         subprocess.run(cmd, capture_output=True, timeout=10, creationflags=creationflags)
         return os.path.exists(shortcut_path)
@@ -78,16 +123,39 @@ def create_windows_shortcut(target, shortcut_path, icon_path=None, description="
         print(f"Shortcut creation error: {e}")
         return False
 
+
+# ─── Custom UI Helper: Modern Hover Button ────────────────────────────────────
+def create_hover_button(parent, text, command, bg, hover_bg, fg="#FFFFFF", width=12, bold=False, pady=6):
+    font = ("Segoe UI", 10, "bold") if bold else ("Segoe UI", 10)
+    btn = tk.Button(
+        parent, text=text, command=command, bg=bg, fg=fg,
+        activebackground=hover_bg, activeforeground=fg,
+        font=font, width=width, relief="flat", bd=0, padx=14, pady=pady, cursor="hand2"
+    )
+    btn.bind("<Enter>", lambda e: btn.config(bg=hover_bg))
+    btn.bind("<Leave>", lambda e: btn.config(bg=bg))
+    return btn
+
+
 # ─── Installer Wizard GUI ─────────────────────────────────────────────────────
 class InstallerWizard(tk.Tk):
     def __init__(self):
         super().__init__()
         self.is_32bit = (sys.maxsize <= 2**31 - 1)
-        edition_str = "Windows 7 / 32-bit Edition" if self.is_32bit else "Windows 10/11 64-bit"
+        edition_str = "32-bit x86 Edition" if self.is_32bit else "64-bit Edition"
         self.title(f"{APP_NAME} — Setup Wizard ({edition_str})")
-        self.geometry("660x520")
+
+        WIN_WIDTH = 760
+        WIN_HEIGHT = 530
+        self.geometry(f"{WIN_WIDTH}x{WIN_HEIGHT}")
         self.resizable(False, False)
-        self.configure(bg="#0F172A")
+        self.configure(bg=THEME['bg_main'])
+
+        # Center on primary display
+        self.update_idletasks()
+        x = (self.winfo_screenwidth() - WIN_WIDTH) // 2
+        y = (self.winfo_screenheight() - WIN_HEIGHT) // 2
+        self.geometry(f"{WIN_WIDTH}x{WIN_HEIGHT}+{x}+{y}")
 
         self.bundle_dir = get_bundle_dir()
         self.payload_dir = os.path.join(self.bundle_dir, "payload")
@@ -110,53 +178,83 @@ class InstallerWizard(tk.Tk):
             self.show_step_finish
         ]
 
-        # Load Logo
-        self.logo_img = None
+        # ── High-Resolution Logos ──
+        self.logo_hero = None
+        self.logo_header = None
+        self.logo_finish = None
         logo_p = os.path.join(self.bundle_dir, "logo.png")
         if os.path.exists(logo_p):
             try:
-                pil_img = Image.open(logo_p).resize((64, 64), Image.Resampling.LANCZOS)
-                self.logo_img = ImageTk.PhotoImage(pil_img)
+                pil_raw = Image.open(logo_p)
+                self.logo_hero = ImageTk.PhotoImage(pil_raw.resize((128, 128), Image.Resampling.LANCZOS))
+                self.logo_header = ImageTk.PhotoImage(pil_raw.resize((50, 50), Image.Resampling.LANCZOS))
+                self.logo_finish = ImageTk.PhotoImage(pil_raw.resize((84, 84), Image.Resampling.LANCZOS))
+            except Exception as e:
+                print(f"[Installer Warning] Could not load high-res logo: {e}")
+
+        # Set Window Icon
+        ico_p = os.path.join(self.bundle_dir, "logo.ico")
+        if os.path.exists(ico_p):
+            try:
+                self.iconbitmap(ico_p)
             except Exception:
                 pass
 
-        self.build_ui()
+        # Configure ttk Styles for Modern Progressbar
+        style = ttk.Style(self)
+        try:
+            style.theme_use('clam')
+        except Exception:
+            pass
+        style.configure(
+            "Custom.Horizontal.TProgressbar",
+            troughcolor=THEME['bg_card'],
+            background=THEME['primary'],
+            darkcolor=THEME['primary'],
+            lightcolor=THEME['primary_hover'],
+            bordercolor=THEME['border'],
+            thickness=18
+        )
+
+        self.build_shell()
         self.show_step(0)
 
-    def build_ui(self):
-        # ── Header Banner ──
-        header = tk.Frame(self, bg="#1E293B", height=75)
-        header.pack(fill="x", side="top")
+    def build_shell(self):
+        # ── Global Navigation Footer ──
+        self.footer = tk.Frame(self, bg=THEME['bg_footer'], height=60)
+        self.footer.pack(fill="x", side="bottom")
 
-        if self.logo_img:
-            lbl_logo = tk.Label(header, image=self.logo_img, bg="#1E293B")
-            lbl_logo.pack(side="left", padx=15, pady=8)
+        # Subtle top border line
+        sep_f = tk.Frame(self.footer, bg=THEME['border_subtle'], height=1)
+        sep_f.pack(fill="x", side="top")
 
-        lbl_hdr_title = tk.Label(header, text=APP_NAME, font=("Segoe UI", 16, "bold"), fg="#F8FAFC", bg="#1E293B")
-        lbl_hdr_title.pack(side="left", pady=10)
+        self.footer_inner = tk.Frame(self.footer, bg=THEME['bg_footer'])
+        self.footer_inner.pack(fill="x", padx=20, pady=12)
 
-        lbl_hdr_sub = tk.Label(header, text="Setup & Installation Wizard (32-bit & 64-bit Compatible)", font=("Segoe UI", 9), fg="#94A3B8", bg="#1E293B")
-        lbl_hdr_sub.pack(side="left", padx=10, pady=12)
+        self.btn_back = create_hover_button(
+            self.footer_inner, "‹ Back", self.prev_step,
+            bg=THEME['secondary'], hover_bg=THEME['sec_hover'], width=10
+        )
+        self.btn_back.pack(side="left", padx=(0, 10))
 
-        # ── Container Frame ──
-        self.container = tk.Frame(self, bg="#0F172A", padx=25, pady=20)
-        self.container.pack(fill="both", expand=True)
+        self.btn_cancel = create_hover_button(
+            self.footer_inner, "Cancel", self.destroy,
+            bg=THEME['bg_card'], hover_bg=THEME['secondary'], fg=THEME['text_sub'], width=10
+        )
+        self.btn_cancel.pack(side="left")
 
-        # ── Navigation Footer ──
-        footer = tk.Frame(self, bg="#1E293B", height=55)
-        footer.pack(fill="x", side="bottom")
+        self.btn_next = create_hover_button(
+            self.footer_inner, "Next ›", self.next_step,
+            bg=THEME['primary'], hover_bg=THEME['primary_hover'], bold=True, width=12
+        )
+        self.btn_next.pack(side="right")
 
-        self.btn_back = tk.Button(footer, text="‹ Back", font=("Segoe UI", 10), bg="#334155", fg="#FFFFFF", width=10, command=self.prev_step)
-        self.btn_back.pack(side="left", padx=20, pady=12)
-
-        self.btn_cancel = tk.Button(footer, text="Cancel", font=("Segoe UI", 10), bg="#475569", fg="#FFFFFF", width=10, command=self.destroy)
-        self.btn_cancel.pack(side="left", padx=5, pady=12)
-
-        self.btn_next = tk.Button(footer, text="Next ›", font=("Segoe UI", 10, "bold"), bg="#E11D48", fg="#FFFFFF", width=12, command=self.next_step)
-        self.btn_next.pack(side="right", padx=20, pady=12)
+        # ── Main Central Container ──
+        self.main_container = tk.Frame(self, bg=THEME['bg_content'])
+        self.main_container.pack(fill="both", expand=True)
 
     def clear_container(self):
-        for widget in self.container.winfo_children():
+        for widget in self.main_container.winfo_children():
             widget.destroy()
 
     def show_step(self, index):
@@ -178,72 +276,280 @@ class InstallerWizard(tk.Tk):
                     subprocess.Popen([target_exe], cwd=self.install_path.get())
             self.destroy()
 
-    # ── Step 0: Welcome ──
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 0: Welcome Screen (Modern Two-Column Hero Layout)
+    # ──────────────────────────────────────────────────────────────────────────
     def show_step_welcome(self):
         self.btn_back.config(state="disabled")
         self.btn_next.config(text="Next ›", state="normal")
 
-        tk.Label(self.container, text="Welcome to the Setup Wizard", font=("Segoe UI", 15, "bold"), fg="#38BDF8", bg="#0F172A").pack(anchor="w", pady=(0, 10))
-        
-        arch_bullet = "• Windows 7, 8, 10 & 11 Compatible (32-bit x86 Edition)" if self.is_32bit else "• Windows 10 & 11 Compatible (64-bit x64 Edition)"
+        # ── Left Hero Sidebar (High-Res Logo & Branding) ──
+        sidebar = tk.Frame(self.main_container, bg=THEME['bg_main'], width=270)
+        sidebar.pack(side="left", fill="y")
+        sidebar.pack_propagate(False)
 
-        info_txt = (
-            f"This wizard will install {APP_NAME} v{APP_VERSION} on your computer.\n\n"
-            f"{arch_bullet}\n"
-            "• Safe Database Preservation on Updates\n"
-            "• Windows Settings & Control Panel Integration (Add/Remove Programs)\n\n"
-            "It is recommended that you close all other applications before continuing.\n\n"
-            "Click Next to continue with the step-by-step installation."
+        # Right border line on sidebar
+        tk.Frame(sidebar, bg=THEME['border_subtle'], width=1).pack(side="right", fill="y")
+
+        side_inner = tk.Frame(sidebar, bg=THEME['bg_main'], padx=20, pady=26)
+        side_inner.pack(fill="both", expand=True)
+
+        # High-Resolution Logo
+        if self.logo_hero:
+            lbl_logo = tk.Label(side_inner, image=self.logo_hero, bg=THEME['bg_main'])
+            lbl_logo.pack(pady=(10, 14))
+
+        tk.Label(
+            side_inner, text="MEAT PRODUCTS OF INDIA",
+            font=("Segoe UI", 10, "bold"), fg=THEME['accent_gold'], bg=THEME['bg_main']
+        ).pack(anchor="center")
+
+        tk.Label(
+            side_inner, text=APP_TAGLINE,
+            font=("Segoe UI", 8), fg=THEME['text_muted'], bg=THEME['bg_main']
+        ).pack(anchor="center", pady=(2, 12))
+
+        # Thin divider
+        tk.Frame(side_inner, bg=THEME['border_subtle'], height=1).pack(fill="x", pady=(0, 14))
+
+        tk.Label(
+            side_inner, text=APP_NAME,
+            font=("Segoe UI", 12, "bold"), fg=THEME['text_light'], bg=THEME['bg_main']
+        ).pack(anchor="center")
+
+        arch_txt = f"v{APP_VERSION} • {'32-bit x86' if self.is_32bit else '64-bit'}"
+        tk.Label(
+            side_inner, text=arch_txt,
+            font=("Segoe UI", 9, "bold"), fg=THEME['accent_blue'], bg=THEME['bg_main']
+        ).pack(anchor="center", pady=(2, 16))
+
+        # Brand feature badges
+        features = [
+            ("⚡", "100% Offline POS Billing"),
+            ("☁️", "Supabase Cloud Sync"),
+            ("🧾", "GST Thermal Receipts"),
+            ("💳", "Razorpay Online License"),
+        ]
+        for icon, txt in features:
+            f_row = tk.Frame(side_inner, bg=THEME['bg_main'])
+            f_row.pack(anchor="w", fill="x", pady=3)
+            tk.Label(f_row, text=icon, font=("Segoe UI", 9), bg=THEME['bg_main']).pack(side="left", padx=(0, 8))
+            tk.Label(f_row, text=txt, font=("Segoe UI", 9), fg=THEME['text_sub'], bg=THEME['bg_main']).pack(side="left")
+
+        # ── Right Main Area ──
+        right = tk.Frame(self.main_container, bg=THEME['bg_content'], padx=32, pady=28)
+        right.pack(side="right", fill="both", expand=True)
+
+        tk.Label(
+            right, text="Welcome to Setup",
+            font=("Segoe UI", 18, "bold"), fg=THEME['text_light'], bg=THEME['bg_content']
+        ).pack(anchor="w")
+
+        tk.Label(
+            right, text="Install Meat Products of India Billing & Inventory Management System on your PC.",
+            font=("Segoe UI", 10), fg=THEME['text_muted'], bg=THEME['bg_content']
+        ).pack(anchor="w", pady=(4, 18))
+
+        # Modern Feature Cards
+        cards = [
+            ("⚡ Fast Offline-First Engine", "Blazing-fast local SQLite database allows uninterrupted checkout even without active internet."),
+            ("☁️ Real-Time Cloud Mirror", "Automatically synchronizes bills, inventory, and ledger to your central Supabase cloud server."),
+            ("🛡️ Safe Upgrades & Data Preservation", "Existing shop transactions, database, and settings are automatically preserved during updates.")
+        ]
+
+        for card_title, card_desc in cards:
+            c_box = tk.Frame(right, bg=THEME['bg_card'], padx=14, pady=10, highlightthickness=1, highlightbackground=THEME['border'])
+            c_box.pack(fill="x", pady=5)
+
+            tk.Label(c_box, text=card_title, font=("Segoe UI", 10, "bold"), fg=THEME['accent_blue'], bg=THEME['bg_card']).pack(anchor="w")
+            tk.Label(c_box, text=card_desc, font=("Segoe UI", 9), fg=THEME['text_sub'], bg=THEME['bg_card'], wraplength=410, justify="left").pack(anchor="w", pady=(2, 0))
+
+        tk.Label(
+            right, text='Click "Next ›" to choose your installation directory.',
+            font=("Segoe UI", 9), fg=THEME['text_muted'], bg=THEME['bg_content']
+        ).pack(anchor="w", pady=(22, 0))
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Helper: Build Header for Subsequent Steps
+    # ──────────────────────────────────────────────────────────────────────────
+    def create_step_header(self, title, step_text):
+        hdr = tk.Frame(self.main_container, bg=THEME['bg_header'], height=72)
+        hdr.pack(fill="x", side="top")
+        hdr.pack_propagate(False)
+
+        # Bottom separator line
+        tk.Frame(hdr, bg=THEME['border'], height=1).pack(fill="x", side="bottom")
+
+        hdr_inner = tk.Frame(hdr, bg=THEME['bg_header'], padx=20)
+        hdr_inner.pack(fill="both", expand=True)
+
+        if self.logo_header:
+            lbl_logo = tk.Label(hdr_inner, image=self.logo_header, bg=THEME['bg_header'])
+            lbl_logo.pack(side="left", padx=(0, 14), pady=10)
+
+        t_frame = tk.Frame(hdr_inner, bg=THEME['bg_header'])
+        t_frame.pack(side="left", fill="y", pady=14)
+
+        tk.Label(
+            t_frame, text="MEAT PRODUCTS OF INDIA",
+            font=("Segoe UI", 8, "bold"), fg=THEME['accent_gold'], bg=THEME['bg_header']
+        ).pack(anchor="w")
+
+        tk.Label(
+            t_frame, text=title,
+            font=("Segoe UI", 13, "bold"), fg=THEME['text_light'], bg=THEME['bg_header']
+        ).pack(anchor="w")
+
+        # Step Indicator Pill Badge
+        badge = tk.Label(
+            hdr_inner, text=step_text,
+            font=("Segoe UI", 9, "bold"), fg=THEME['accent_blue'], bg=THEME['bg_card'],
+            padx=12, pady=4, relief="flat"
         )
-        tk.Label(self.container, text=info_txt, font=("Segoe UI", 10), fg="#CBD5E1", bg="#0F172A", justify="left").pack(anchor="w")
+        badge.pack(side="right", pady=18)
 
-    # ── Step 1: Directory ──
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 1: Directory Selection
+    # ──────────────────────────────────────────────────────────────────────────
     def show_step_directory(self):
         self.btn_back.config(state="normal")
         self.btn_next.config(text="Next ›", state="normal")
 
-        tk.Label(self.container, text="Select Destination Location", font=("Segoe UI", 14, "bold"), fg="#38BDF8", bg="#0F172A").pack(anchor="w", pady=(0, 10))
-        tk.Label(self.container, text=f"Where should {APP_NAME} be installed?", font=("Segoe UI", 10), fg="#CBD5E1", bg="#0F172A").pack(anchor="w", pady=(0, 15))
+        self.create_step_header("Installation Location", "Step 1 of 3")
 
-        frame_dir = tk.Frame(self.container, bg="#0F172A")
-        frame_dir.pack(fill="x", pady=10)
+        body = tk.Frame(self.main_container, bg=THEME['bg_content'], padx=32, pady=24)
+        body.pack(fill="both", expand=True)
 
-        entry = tk.Entry(frame_dir, textvariable=self.install_path, font=("Segoe UI", 10), bg="#1E293B", fg="#F8FAFC", insertbackground="white")
-        entry.pack(side="left", fill="x", expand=True, ipady=4, padx=(0, 10))
+        tk.Label(
+            body, text="Select Destination Folder",
+            font=("Segoe UI", 14, "bold"), fg=THEME['text_light'], bg=THEME['bg_content']
+        ).pack(anchor="w")
+
+        tk.Label(
+            body, text=f"Setup will install {APP_NAME} into the following directory.",
+            font=("Segoe UI", 10), fg=THEME['text_muted'], bg=THEME['bg_content']
+        ).pack(anchor="w", pady=(4, 16))
+
+        # Path input card
+        frame_dir = tk.Frame(body, bg=THEME['bg_card'], padx=14, pady=14, highlightthickness=1, highlightbackground=THEME['border'])
+        frame_dir.pack(fill="x", pady=6)
+
+        entry = tk.Entry(
+            frame_dir, textvariable=self.install_path, font=("Segoe UI", 10),
+            bg=THEME['bg_main'], fg=THEME['text_light'], insertbackground="white",
+            relief="flat", highlightthickness=1, highlightbackground=THEME['border']
+        )
+        entry.pack(side="left", fill="x", expand=True, ipady=6, padx=(0, 10))
 
         def browse_folder():
             f = filedialog.askdirectory(initialdir=self.install_path.get())
             if f:
                 self.install_path.set(f)
 
-        tk.Button(frame_dir, text="Browse…", font=("Segoe UI", 9), bg="#334155", fg="#FFFFFF", command=browse_folder).pack(side="right")
+        btn_browse = create_hover_button(
+            frame_dir, "Browse…", browse_folder,
+            bg=THEME['secondary'], hover_bg=THEME['sec_hover'], width=10, pady=4
+        )
+        btn_browse.pack(side="right")
 
-        tk.Label(self.container, text="Required disk space: ~85 MB", font=("Segoe UI", 9), fg="#94A3B8", bg="#0F172A").pack(anchor="w", pady=(15, 0))
+        # Disk space status card
+        space_frame = tk.Frame(body, bg=THEME['bg_content'])
+        space_frame.pack(fill="x", pady=(18, 0))
 
-    # ── Step 2: Options ──
+        tk.Label(
+            space_frame, text="✓ Required disk space: ~95 MB",
+            font=("Segoe UI", 9, "bold"), fg=THEME['accent_green'], bg=THEME['bg_content']
+        ).pack(anchor="w")
+
+        tk.Label(
+            space_frame, text="• Recommended: Install on local drive (C:\\) for optimal SQLite transaction speed.",
+            font=("Segoe UI", 9), fg=THEME['text_muted'], bg=THEME['bg_content']
+        ).pack(anchor="w", pady=(4, 0))
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 2: Options Screen
+    # ──────────────────────────────────────────────────────────────────────────
     def show_step_options(self):
         self.btn_back.config(state="normal")
         self.btn_next.config(text="Install", state="normal")
 
-        tk.Label(self.container, text="Select Additional Shortcuts & Integration", font=("Segoe UI", 14, "bold"), fg="#38BDF8", bg="#0F172A").pack(anchor="w", pady=(0, 10))
+        self.create_step_header("Shortcuts & Integration", "Step 2 of 3")
 
-        tk.Checkbutton(self.container, text="Create a Desktop Shortcut", variable=self.create_desktop_sc, font=("Segoe UI", 10), fg="#F8FAFC", bg="#0F172A", selectcolor="#1E293B", activebackground="#0F172A", activeforeground="#F8FAFC").pack(anchor="w", pady=8)
-        tk.Checkbutton(self.container, text="Create a Start Menu Shortcut", variable=self.create_start_sc, font=("Segoe UI", 10), fg="#F8FAFC", bg="#0F172A", selectcolor="#1E293B", activebackground="#0F172A", activeforeground="#F8FAFC").pack(anchor="w", pady=8)
-        tk.Label(self.container, text="✓ Registers automatically in Windows Installed Apps (Settings -> Apps) with Uninstaller", font=("Segoe UI", 9), fg="#10B981", bg="#0F172A").pack(anchor="w", pady=15)
+        body = tk.Frame(self.main_container, bg=THEME['bg_content'], padx=32, pady=24)
+        body.pack(fill="both", expand=True)
 
-    # ── Step 3: Install ──
+        tk.Label(
+            body, text="Configure Shortcuts",
+            font=("Segoe UI", 14, "bold"), fg=THEME['text_light'], bg=THEME['bg_content']
+        ).pack(anchor="w")
+
+        tk.Label(
+            body, text="Choose where you would like shortcuts to be created for quick launching.",
+            font=("Segoe UI", 10), fg=THEME['text_muted'], bg=THEME['bg_content']
+        ).pack(anchor="w", pady=(4, 16))
+
+        # Checkbox card
+        opt_card = tk.Frame(body, bg=THEME['bg_card'], padx=16, pady=14, highlightthickness=1, highlightbackground=THEME['border'])
+        opt_card.pack(fill="x", pady=6)
+
+        cb1 = tk.Checkbutton(
+            opt_card, text="🖥️  Create a Desktop Shortcut", variable=self.create_desktop_sc,
+            font=("Segoe UI", 10, "bold"), fg=THEME['text_light'], bg=THEME['bg_card'],
+            selectcolor=THEME['bg_main'], activebackground=THEME['bg_card'], activeforeground=THEME['text_light']
+        )
+        cb1.pack(anchor="w", pady=6)
+
+        cb2 = tk.Checkbutton(
+            opt_card, text="📁  Create a Start Menu Shortcut", variable=self.create_start_sc,
+            font=("Segoe UI", 10, "bold"), fg=THEME['text_light'], bg=THEME['bg_card'],
+            selectcolor=THEME['bg_main'], activebackground=THEME['bg_card'], activeforeground=THEME['text_light']
+        )
+        cb2.pack(anchor="w", pady=6)
+
+        # Integration notice
+        note_card = tk.Frame(body, bg=THEME['bg_card_alt'], padx=14, pady=10, highlightthickness=1, highlightbackground=THEME['border'])
+        note_card.pack(fill="x", pady=(16, 0))
+
+        tk.Label(
+            note_card, text="🛡️  Windows Settings & Control Panel Integration",
+            font=("Segoe UI", 9, "bold"), fg=THEME['accent_blue'], bg=THEME['bg_card_alt']
+        ).pack(anchor="w")
+
+        tk.Label(
+            note_card, text="✓ Registers automatically in Windows Installed Apps (Settings ➔ Apps) with built-in uninstaller.",
+            font=("Segoe UI", 9), fg=THEME['accent_green'], bg=THEME['bg_card_alt']
+        ).pack(anchor="w", pady=(2, 0))
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 3: Installing Screen
+    # ──────────────────────────────────────────────────────────────────────────
     def show_step_install(self):
         self.btn_back.config(state="disabled")
         self.btn_next.config(state="disabled")
         self.btn_cancel.config(state="disabled")
 
-        tk.Label(self.container, text="Installing Program Files…", font=("Segoe UI", 14, "bold"), fg="#38BDF8", bg="#0F172A").pack(anchor="w", pady=(0, 15))
+        self.create_step_header("Installing Program Files", "Step 3 of 3")
 
-        self.progress_bar = ttk.Progressbar(self.container, orient="horizontal", mode="determinate", length=540)
-        self.progress_bar.pack(pady=20)
+        body = tk.Frame(self.main_container, bg=THEME['bg_content'], padx=32, pady=28)
+        body.pack(fill="both", expand=True)
 
-        self.lbl_status = tk.Label(self.container, text="Preparing installation…", font=("Segoe UI", 9), fg="#94A3B8", bg="#0F172A")
-        self.lbl_status.pack(anchor="w")
+        tk.Label(
+            body, text="Extracting and Configuring Files…",
+            font=("Segoe UI", 14, "bold"), fg=THEME['text_light'], bg=THEME['bg_content']
+        ).pack(anchor="w")
+
+        tk.Label(
+            body, text="Please wait while setup installs MPI Billing Software on your computer.",
+            font=("Segoe UI", 10), fg=THEME['text_muted'], bg=THEME['bg_content']
+        ).pack(anchor="w", pady=(4, 20))
+
+        # Progress bar
+        self.progress_bar = ttk.Progressbar(body, orient="horizontal", mode="determinate", length=640, style="Custom.Horizontal.TProgressbar")
+        self.progress_bar.pack(fill="x", pady=10)
+
+        # Status text
+        self.lbl_status = tk.Label(body, text="Preparing installation…", font=("Segoe UI", 9), fg=THEME['accent_blue'], bg=THEME['bg_content'])
+        self.lbl_status.pack(anchor="w", pady=4)
 
         self.after(200, self.perform_installation)
 
@@ -258,7 +564,7 @@ class InstallerWizard(tk.Tk):
             temp_dir = os.environ.get('TEMP', '.')
             backup_db_path = os.path.join(temp_dir, 'meatshop_db_backup.db')
             try:
-                shutil.copy(target_db, backup_db_path)
+                shutil.copy2(target_db, backup_db_path)
             except Exception:
                 pass
 
@@ -268,11 +574,8 @@ class InstallerWizard(tk.Tk):
 
         files_to_copy = []
         for root, dirs, files in os.walk(src_payload):
-            dirs[:] = [d for d in dirs if d.lower() not in ('backups', '__pycache__')]
             for file in files:
                 rel_p = os.path.relpath(os.path.join(root, file), src_payload)
-                if rel_p.lower().replace('/', '\\').endswith(r'data\meatshop.db') and os.path.exists(target_db):
-                    continue
                 files_to_copy.append((os.path.join(root, file), rel_p))
 
         total_f = len(files_to_copy)
@@ -286,7 +589,8 @@ class InstallerWizard(tk.Tk):
 
             pct = int(((idx + 1) / max(1, total_f)) * 100)
             self.progress_bar['value'] = pct
-            self.lbl_status.config(text=f"Copying: {rel_f}")
+            display_file = rel_f if len(rel_f) <= 55 else f"...{rel_f[-52:]}"
+            self.lbl_status.config(text=f"Copying: {display_file}")
             self.update_idletasks()
 
         # Restore preserved database if it existed
@@ -299,7 +603,7 @@ class InstallerWizard(tk.Tk):
                 pass
 
         try:
-            with open(os.path.join(target_dir, "version.txt"), 'w') as f:
+            with open(os.path.join(target_dir, "version.txt"), 'w', encoding='utf-8') as f:
                 f.write(APP_VERSION)
         except Exception:
             pass
@@ -368,17 +672,64 @@ timeout /t 2 >nul
         self.btn_next.config(state="normal")
         self.show_step(4)
 
-    # ── Step 4: Finish ──
+    # ──────────────────────────────────────────────────────────────────────────
+    # Step 4: Finish Screen
+    # ──────────────────────────────────────────────────────────────────────────
     def show_step_finish(self):
         self.btn_back.config(state="disabled")
         self.btn_cancel.config(state="disabled")
         self.btn_next.config(text="Finish", state="normal")
 
-        tk.Label(self.container, text="Installation Completed Successfully!", font=("Segoe UI", 15, "bold"), fg="#10B981", bg="#0F172A").pack(anchor="w", pady=(0, 10))
+        body = tk.Frame(self.main_container, bg=THEME['bg_content'], padx=36, pady=32)
+        body.pack(fill="both", expand=True)
 
-        tk.Label(self.container, text=f"{APP_NAME} has been installed on your computer.", font=("Segoe UI", 10), fg="#CBD5E1", bg="#0F172A").pack(anchor="w", pady=(0, 15))
-        tk.Checkbutton(self.container, text=f"Launch {APP_NAME} now", variable=self.launch_after, font=("Segoe UI", 10, "bold"), fg="#38BDF8", bg="#0F172A", selectcolor="#1E293B", activebackground="#0F172A", activeforeground="#38BDF8").pack(anchor="w", pady=10)
-        tk.Label(self.container, text="Click Finish to exit setup.", font=("Segoe UI", 9), fg="#94A3B8", bg="#0F172A").pack(anchor="w", pady=(20, 0))
+        top_row = tk.Frame(body, bg=THEME['bg_content'])
+        top_row.pack(anchor="w", fill="x")
+
+        if self.logo_finish:
+            lbl_fin_logo = tk.Label(top_row, image=self.logo_finish, bg=THEME['bg_content'])
+            lbl_fin_logo.pack(side="left", padx=(0, 20))
+
+        title_box = tk.Frame(top_row, bg=THEME['bg_content'])
+        title_box.pack(side="left", fill="y", pady=10)
+
+        tk.Label(
+            title_box, text="Installation Complete! 🎉",
+            font=("Segoe UI", 17, "bold"), fg=THEME['accent_green'], bg=THEME['bg_content']
+        ).pack(anchor="w")
+
+        tk.Label(
+            title_box, text=f"{APP_NAME} v{APP_VERSION} is ready to use.",
+            font=("Segoe UI", 10), fg=THEME['text_sub'], bg=THEME['bg_content']
+        ).pack(anchor="w", pady=(4, 0))
+
+        # Summary confirmation card
+        sum_card = tk.Frame(body, bg=THEME['bg_card'], padx=18, pady=16, highlightthickness=1, highlightbackground=THEME['border'])
+        sum_card.pack(fill="x", pady=20)
+
+        inst_path_display = self.install_path.get()
+        if len(inst_path_display) > 55:
+            inst_path_display = f"...{inst_path_display[-50:]}"
+
+        items = [
+            ("📁 Location", inst_path_display),
+            ("⚡ Database Engine", "100% Offline SQLite (Active)"),
+            ("☁️ Cloud Sync", "Supabase PostgreSQL Mirror (Connected)"),
+            ("💳 Software License", "Active / 10-Day Free Trial Initialized"),
+        ]
+        for label, val in items:
+            row = tk.Frame(sum_card, bg=THEME['bg_card'])
+            row.pack(fill="x", pady=3)
+            tk.Label(row, text=f"{label}:", font=("Segoe UI", 9, "bold"), fg=THEME['text_muted'], bg=THEME['bg_card'], width=18, anchor="w").pack(side="left")
+            tk.Label(row, text=val, font=("Segoe UI", 9), fg=THEME['text_light'], bg=THEME['bg_card']).pack(side="left")
+
+        cb_launch = tk.Checkbutton(
+            body, text=f"🚀  Launch {APP_NAME} now", variable=self.launch_after,
+            font=("Segoe UI", 11, "bold"), fg=THEME['accent_blue'], bg=THEME['bg_content'],
+            selectcolor=THEME['bg_main'], activebackground=THEME['bg_content'], activeforeground=THEME['accent_blue']
+        )
+        cb_launch.pack(anchor="w", pady=(6, 0))
+
 
 if __name__ == "__main__":
     import argparse
