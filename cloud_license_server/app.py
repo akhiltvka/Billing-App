@@ -5,16 +5,49 @@ Deployable on Render.com with Supabase PostgreSQL (or SQLite local fallback for 
 
 import os
 import sqlite3
+import re
 import hmac
 import hashlib
 import zipfile
+from functools import wraps
 from io import BytesIO
 from datetime import datetime, date, timedelta
 from flask import Flask, jsonify, request, render_template, redirect, url_for, session, send_file
+from cryptography.fernet import Fernet, InvalidToken
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("ADMIN_SECRET_KEY", "mpi_cloud_admin_secret_key_2025_#99!")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Admin@5000")
+
+ADMIN_SECRET_KEY = os.environ.get('ADMIN_SECRET_KEY', '').strip()
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', '')
+BACKUP_UPLOAD_TOKEN = os.environ.get('BACKUP_UPLOAD_TOKEN', '').strip()
+BACKUP_ENCRYPTION_KEY = os.environ.get('BACKUP_ENCRYPTION_KEY', '').strip()
+OUTLET_API_TOKEN = os.environ.get('OUTLET_API_TOKEN', '').strip()
+if not ADMIN_SECRET_KEY or not ADMIN_PASSWORD:
+    raise RuntimeError(
+        'ADMIN_SECRET_KEY and ADMIN_PASSWORD must be configured before starting the cloud license server.'
+    )
+if len(ADMIN_SECRET_KEY) < 32:
+    raise RuntimeError('ADMIN_SECRET_KEY must contain at least 32 characters.')
+if not BACKUP_UPLOAD_TOKEN or len(BACKUP_UPLOAD_TOKEN) < 32:
+    raise RuntimeError('BACKUP_UPLOAD_TOKEN must contain at least 32 characters.')
+if not OUTLET_API_TOKEN or len(OUTLET_API_TOKEN) < 32:
+    raise RuntimeError('OUTLET_API_TOKEN must contain at least 32 characters.')
+try:
+    Fernet(BACKUP_ENCRYPTION_KEY.encode('ascii'))
+except Exception as exc:
+    raise RuntimeError('BACKUP_ENCRYPTION_KEY must be a valid Fernet key.') from exc
+app.secret_key = ADMIN_SECRET_KEY
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
+
+
+def require_outlet_token(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        supplied = request.headers.get('X-Outlet-Token', '')
+        if not hmac.compare_digest(supplied, OUTLET_API_TOKEN):
+            return jsonify({'status': 'error', 'message': 'Outlet authentication failed'}), 401
+        return f(*args, **kwargs)
+    return decorated
 
 # Database connection string: PostgreSQL (Supabase) if DATABASE_URL set, else SQLite local file
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -248,6 +281,7 @@ def init_db():
 # ─── API Endpoints for Outlet Apps ──────────────────────────────────────────
 
 @app.route('/api/v1/outlet/register', methods=['POST'])
+@require_outlet_token
 def register_outlet():
     """
     Called when an MD registers a new outlet.
@@ -440,6 +474,7 @@ def get_md_outlets():
 
 
 @app.route('/api/v1/outlet/ping', methods=['POST'])
+@require_outlet_token
 def outlet_ping():
     try:
         init_db()
@@ -613,6 +648,7 @@ def outlet_ping():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 @app.route('/api/v1/outlet/notify-payment', methods=['POST'])
+@require_outlet_token
 def notify_payment():
     try:
         init_db()
@@ -640,6 +676,7 @@ def notify_payment():
 LICENSE_SECRET_SALT = "MPI_MEATSHOP_SUB_KEY_SALT_2025_SECRET_#99!"
 
 @app.route('/api/v1/outlet/activate-key', methods=['POST'])
+@require_outlet_token
 def activate_key():
     """
     Online key verification endpoint called by client desktop app.
@@ -837,9 +874,13 @@ def webhook_payment():
 def upload_backup():
     """Receives automated 6-hour compressed database zip file uploads from outlets."""
     try:
+        upload_token = request.headers.get('X-Backup-Token', '')
+        if not hmac.compare_digest(upload_token, BACKUP_UPLOAD_TOKEN):
+            return jsonify({'status': 'error', 'message': 'Backup authentication failed'}), 401
+
         machine_id = (request.form.get('machine_id') or '').strip().upper()
-        if not machine_id:
-            return jsonify({'status': 'error', 'message': 'Machine ID required'}), 400
+        if not machine_id or not re.fullmatch(r'[A-Z0-9]{16}', machine_id):
+            return jsonify({'status': 'error', 'message': 'Valid 16-character machine ID required'}), 400
 
         if 'file' not in request.files:
             return jsonify({'status': 'error', 'message': 'No backup file uploaded'}), 400
@@ -848,13 +889,25 @@ def upload_backup():
         if file.filename == '':
             return jsonify({'status': 'error', 'message': 'Empty filename'}), 400
 
+        backup_data = file.read()
+        if not backup_data or len(backup_data) > app.config['MAX_CONTENT_LENGTH']:
+            return jsonify({'status': 'error', 'message': 'Backup file exceeds the 100 MB limit'}), 413
+        try:
+            decrypted_backup = Fernet(BACKUP_ENCRYPTION_KEY.encode('ascii')).decrypt(backup_data)
+            with zipfile.ZipFile(BytesIO(decrypted_backup)) as archive:
+                if archive.testzip() is not None:
+                    raise ValueError('ZIP integrity check failed')
+        except (InvalidToken, zipfile.BadZipFile, ValueError):
+            return jsonify({'status': 'error', 'message': 'Backup must be a valid encrypted ZIP archive'}), 400
+
         backup_dir = os.path.join(os.path.dirname(__file__), 'cloud_backups', machine_id)
         os.makedirs(backup_dir, exist_ok=True)
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         filename = f"db_backup_{timestamp}.zip"
         save_path = os.path.join(backup_dir, filename)
-        file.save(save_path)
+        with open(save_path, 'wb') as saved_file:
+            saved_file.write(backup_data)
 
         return jsonify({
             'status': 'ok',
@@ -1225,5 +1278,6 @@ def migrate_outlet():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    debug = os.environ.get('FLASK_DEBUG', '').strip().lower() in ('1', 'true', 'yes', 'on')
+    app.run(host='0.0.0.0', port=port, debug=debug)
 

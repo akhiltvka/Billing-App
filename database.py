@@ -6,6 +6,8 @@ from werkzeug.security import generate_password_hash
 
 import sqlite3
 import os
+import uuid
+import json
 from datetime import datetime
 
 import sys
@@ -47,6 +49,7 @@ def init_db():
             hsn_code           TEXT,
             description        TEXT,
             parent_category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
+            client_uuid        TEXT UNIQUE,
             created_at         TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -75,6 +78,7 @@ def init_db():
             reorder_lead_time_days INTEGER DEFAULT 1,
             shelf_life_days    INTEGER DEFAULT NULL,
             active             INTEGER DEFAULT 1,
+            client_uuid        TEXT UNIQUE,
             created_at         TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at         TEXT DEFAULT CURRENT_TIMESTAMP
         );
@@ -91,6 +95,7 @@ def init_db():
             credit_balance REAL DEFAULT 0,
             loyalty_points REAL DEFAULT 0,
             is_active      INTEGER DEFAULT 1,
+            client_uuid    TEXT UNIQUE,
             created_at     TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -101,6 +106,7 @@ def init_db():
             bill_id       INTEGER REFERENCES bills(id) ON DELETE SET NULL,
             points_change REAL NOT NULL,
             reason        TEXT,
+            client_uuid   TEXT UNIQUE,
             created_at    TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -114,6 +120,7 @@ def init_db():
             address        TEXT,
             gstin          TEXT,
             balance        REAL DEFAULT 0,
+            client_uuid    TEXT UNIQUE,
             created_at     TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -128,6 +135,7 @@ def init_db():
             supplier_id  INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
             expiry_date  TEXT,
             notes        TEXT,
+            client_uuid  TEXT UNIQUE,
             date         TEXT DEFAULT CURRENT_TIMESTAMP
         );
 
@@ -155,7 +163,8 @@ def init_db():
             payment_mode     TEXT DEFAULT 'cash',
             notes            TEXT,
             cancel_reason    TEXT,
-            status           TEXT DEFAULT 'paid'
+            status           TEXT DEFAULT 'paid',
+            client_uuid      TEXT UNIQUE
         );
 
         -- Line items in each bill
@@ -175,7 +184,8 @@ def init_db():
             sgst_amt     REAL DEFAULT 0,
             igst_amt     REAL DEFAULT 0,
             amount       REAL NOT NULL,
-            cost_price   REAL DEFAULT NULL
+            cost_price   REAL DEFAULT NULL,
+            client_uuid  TEXT UNIQUE
         );
 
         -- Payment history for credit / partial bills
@@ -186,7 +196,8 @@ def init_db():
             payment_mode TEXT DEFAULT 'cash',
             paid_at      TEXT DEFAULT CURRENT_TIMESTAMP,
             received_by  TEXT,
-            notes        TEXT
+            notes        TEXT,
+            client_uuid  TEXT UNIQUE
         );
 
         -- Purchase / stock-in orders from suppliers
@@ -226,6 +237,29 @@ def init_db():
             paid_at      TEXT DEFAULT CURRENT_TIMESTAMP,
             recorded_by  TEXT,
             notes        TEXT
+        );
+
+        -- Supplier purchase returns / debit notes
+        CREATE TABLE IF NOT EXISTS purchase_returns (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            debit_note_no TEXT UNIQUE NOT NULL,
+            order_id      INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+            supplier_id   INTEGER REFERENCES suppliers(id) ON DELETE SET NULL,
+            reason        TEXT NOT NULL,
+            total         REAL DEFAULT 0,
+            status        TEXT DEFAULT 'issued',
+            created_by    TEXT,
+            created_at    TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS purchase_return_items (
+            id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            return_id              INTEGER NOT NULL REFERENCES purchase_returns(id) ON DELETE CASCADE,
+            purchase_order_item_id INTEGER NOT NULL REFERENCES purchase_order_items(id) ON DELETE RESTRICT,
+            product_id             INTEGER REFERENCES products(id) ON DELETE SET NULL,
+            quantity               REAL NOT NULL,
+            unit_price             REAL NOT NULL,
+            amount                 REAL NOT NULL
         );
 
         -- Miscellaneous expenses & other income
@@ -413,8 +447,37 @@ def init_db():
             reference_table TEXT,
             reference_id    INTEGER,
             created_by      TEXT,
+            client_uuid     TEXT UNIQUE,
             created_at      TEXT DEFAULT CURRENT_TIMESTAMP
         );
+
+        -- One header record per posted voucher, used for idempotency protection
+        CREATE TABLE IF NOT EXISTS ledger_vouchers (
+            voucher_type TEXT NOT NULL,
+            voucher_no   TEXT NOT NULL,
+            voucher_date TEXT,
+            reference_table TEXT,
+            reference_id INTEGER,
+            created_by   TEXT,
+            client_uuid  TEXT UNIQUE,
+            created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (voucher_type, voucher_no)
+        );
+
+        -- Local sync queue for Supabase PostgreSQL synchronization
+        CREATE TABLE IF NOT EXISTS sync_queue (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            table_name      TEXT NOT NULL,
+            operation       TEXT NOT NULL CHECK(operation IN ('insert','update','delete')),
+            row_client_uuid TEXT NOT NULL,
+            payload         TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','synced','failed')),
+            attempts        INTEGER NOT NULL DEFAULT 0,
+            last_error      TEXT,
+            created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+            synced_at       TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_sync_queue_status_id ON sync_queue(status, id);
 
         -- Stock conversion / processing journals (bulk items cut/processed into sellable products)
         CREATE TABLE IF NOT EXISTS stock_conversions (
@@ -961,7 +1024,50 @@ def init_db():
     except Exception:
         pass
 
+    # ── Sync Queue & client_uuid Migrations & Backfill ──────────────────────
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS sync_queue (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            table_name      TEXT NOT NULL,
+            operation       TEXT NOT NULL CHECK(operation IN ('insert','update','delete')),
+            row_client_uuid TEXT NOT NULL,
+            payload         TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','synced','failed')),
+            attempts        INTEGER NOT NULL DEFAULT 0,
+            last_error      TEXT,
+            created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+            synced_at       TEXT
+        )
+    ''')
+    c.execute('CREATE INDEX IF NOT EXISTS idx_sync_queue_status_id ON sync_queue(status, id)')
+
+    sync_tables = [
+        'customers', 'suppliers', 'products', 'categories',
+        'bills', 'bill_items', 'bill_payments', 'stock_transactions',
+        'loyalty_ledger', 'ledger_vouchers', 'ledger_entries'
+    ]
+    for tbl in sync_tables:
+        try:
+            cols = [r[1] for r in c.execute(f"PRAGMA table_info({tbl})").fetchall()]
+            if cols and 'client_uuid' not in cols:
+                try:
+                    c.execute(f"ALTER TABLE {tbl} ADD COLUMN client_uuid TEXT")
+                except Exception:
+                    pass
+
+            # Backfill existing rows missing client_uuid
+            rows_to_backfill = c.execute(f"SELECT rowid FROM {tbl} WHERE client_uuid IS NULL OR client_uuid = ''").fetchall()
+            for r in rows_to_backfill:
+                c.execute(f"UPDATE {tbl} SET client_uuid = ? WHERE rowid = ?", (str(uuid.uuid4()), r[0]))
+
+            c.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{tbl}_client_uuid ON {tbl}(client_uuid)")
+        except Exception:
+            pass
+
+    conn.commit()
+
     # ── Default shop settings ────────────────────────────────────────────────
+
     defaults = {
         'shop_name':        'Meat Products of India',
         'shop_tagline':     'Fresh. Pure. Delicious.',
@@ -976,6 +1082,7 @@ def init_db():
         'next_bill_no':     '1',
         'next_po_no':       '1',
         'next_cn_no':       '1',
+        'next_debit_note_no': '1',
         'next_test_no':     '1',
         'next_conversion_no': '1',
         'gst_enabled':      'true',
@@ -994,6 +1101,7 @@ def init_db():
         'loyalty_enabled': 'true',
         'loyalty_points_per_rupee': '0.01',
         'loyalty_redemption_value': '0.50',
+        'allow_bill_purge': 'false',
     }
     for k, v in defaults.items():
         c.execute('INSERT OR IGNORE INTO shop_settings (key, value) VALUES (?, ?)', (k, v))
@@ -1099,6 +1207,34 @@ def dict_rows(rows):
     return [dict(r) for r in rows]
 
 
+def queue_for_sync(conn, table_name, operation, row_dict):
+    """
+    Queue a record modification (insert/update/delete) for Supabase synchronization.
+    Inserts into sync_queue as part of the caller's transaction on `conn`.
+    """
+    if operation not in ('insert', 'update', 'delete'):
+        raise ValueError(f"Invalid operation '{operation}'. Must be 'insert', 'update', or 'delete'.")
+
+    if isinstance(row_dict, sqlite3.Row):
+        row_dict = dict(row_dict)
+    elif not isinstance(row_dict, dict):
+        row_dict = dict(row_dict)
+    else:
+        row_dict = dict(row_dict)
+
+    row_client_uuid = row_dict.get('client_uuid')
+    if not row_client_uuid:
+        row_client_uuid = str(uuid.uuid4())
+        row_dict['client_uuid'] = row_client_uuid
+
+    payload = json.dumps(row_dict, default=str)
+
+    conn.execute('''
+        INSERT INTO sync_queue (table_name, operation, row_client_uuid, payload, status)
+        VALUES (?, ?, ?, ?, 'pending')
+    ''', (table_name, operation, row_client_uuid, payload))
+
+
 def post_ledger_entry(conn, voucher_type, voucher_no, voucher_date, entries, reference_table=None, reference_id=None, created_by=None):
     """
     Post a double-entry journal voucher to ledger_entries.
@@ -1111,6 +1247,27 @@ def post_ledger_entry(conn, voucher_type, voucher_no, voucher_date, entries, ref
     valid_voucher_types = ('sales', 'credit_note', 'purchase', 'payment_in', 'payment_out', 'expense', 'journal')
     if voucher_type not in valid_voucher_types:
         raise ValueError(f"Invalid voucher_type '{voucher_type}'. Must be one of {valid_voucher_types}")
+
+    # Upgrade databases created before ledger_vouchers was introduced.
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS ledger_vouchers (
+            voucher_type TEXT NOT NULL,
+            voucher_no TEXT NOT NULL,
+            voucher_date TEXT,
+            reference_table TEXT,
+            reference_id INTEGER,
+            created_by TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (voucher_type, voucher_no)
+        )
+    ''')
+    conn.execute('''
+        INSERT OR IGNORE INTO ledger_vouchers (voucher_type, voucher_no, voucher_date, reference_table, reference_id, created_by)
+        SELECT voucher_type, voucher_no, MIN(voucher_date), MIN(reference_table), MIN(reference_id), MIN(created_by)
+        FROM ledger_entries
+        WHERE voucher_no IS NOT NULL AND voucher_no != ''
+        GROUP BY voucher_type, voucher_no
+    ''')
 
     total_debit = 0.0
     total_credit = 0.0
@@ -1160,14 +1317,254 @@ def post_ledger_entry(conn, voucher_type, voucher_no, voucher_date, entries, ref
             f"Total Debit (₹{total_debit:.2f}) != Total Credit (₹{total_credit:.2f})"
         )
 
+    if voucher_no:
+        voucher_uuid = str(uuid.uuid4())
+        try:
+            conn.execute(
+                '''INSERT INTO ledger_vouchers
+                   (voucher_type, voucher_no, voucher_date, reference_table, reference_id, created_by, client_uuid)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)''',
+                (voucher_type, str(voucher_no), str(voucher_date) if voucher_date else None,
+                 reference_table, reference_id, created_by, voucher_uuid)
+            )
+            queue_for_sync(conn, 'ledger_vouchers', 'insert', {
+                'voucher_type': voucher_type,
+                'voucher_no': str(voucher_no),
+                'voucher_date': str(voucher_date) if voucher_date else None,
+                'reference_table': reference_table,
+                'reference_id': reference_id,
+                'created_by': created_by,
+                'client_uuid': voucher_uuid
+            })
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(
+                f"Voucher '{voucher_no}' of type '{voucher_type}' has already been posted. "
+                "Use a reversal voucher to correct it."
+            ) from exc
+
     inserted_ids = []
     for row in processed_rows:
+        entry_uuid = str(uuid.uuid4())
         cur = conn.execute('''
             INSERT INTO ledger_entries
-            (voucher_type, voucher_no, voucher_date, account_id, debit, credit, narration, reference_table, reference_id, created_by)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
-        ''', row)
-        inserted_ids.append(cur.lastrowid)
+            (voucher_type, voucher_no, voucher_date, account_id, debit, credit, narration, reference_table, reference_id, created_by, client_uuid)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        ''', (*row, entry_uuid))
+        entry_id = cur.lastrowid
+        inserted_ids.append(entry_id)
+        queue_for_sync(conn, 'ledger_entries', 'insert', {
+            'id': entry_id,
+            'voucher_type': row[0],
+            'voucher_no': row[1],
+            'voucher_date': row[2],
+            'account_id': row[3],
+            'debit': row[4],
+            'credit': row[5],
+            'narration': row[6],
+            'reference_table': row[7],
+            'reference_id': row[8],
+            'created_by': row[9],
+            'client_uuid': entry_uuid
+        })
 
     return inserted_ids
+
+
+def get_external_config_dir():
+    """
+    Returns the absolute path to the external configuration directory:
+    %PROGRAMDATA%/MPI_Billing_App (or ~/.mpi_billing on non-Windows).
+    """
+    base_dir = os.environ.get('PROGRAMDATA') or os.environ.get('APPDATA') or os.path.expanduser('~/.mpi_billing')
+    return os.path.join(base_dir, 'MPI_Billing_App')
+
+
+def normalize_database_url(url_str: str) -> str:
+    """
+    Normalizes a PostgreSQL / Supabase connection string:
+    - Strips whitespace.
+    - Guarantees 'postgresql://' scheme (converting postgres:// if given).
+    - Percent-encodes any special characters in raw passwords (e.g. '@', '#', ':', '?', '%', '!', '/').
+    - Preserves complex usernames (e.g. 'postgres.ref' in Supabase poolers) and query parameters (e.g. sslmode).
+    """
+    import urllib.parse
+    url_str = (url_str or '').strip()
+    if not url_str:
+        return ''
+
+    scheme = 'postgresql'
+    if '://' in url_str:
+        scheme_part, rest = url_str.split('://', 1)
+        if scheme_part.lower() in ('postgres', 'postgresql'):
+            scheme = 'postgresql'
+        else:
+            scheme = scheme_part
+    else:
+        rest = url_str
+
+    if '@' in rest:
+        credentials, _, host_and_path = rest.rpartition('@')
+        path_and_query = ''
+        if '/' in host_and_path:
+            host_port, _, pq = host_and_path.partition('/')
+            path_and_query = '/' + pq
+        elif '?' in host_and_path:
+            host_port, _, pq = host_and_path.partition('?')
+            path_and_query = '?' + pq
+        else:
+            host_port = host_and_path
+
+        if ':' in credentials:
+            user, _, password = credentials.partition(':')
+            unquoted_pw = urllib.parse.unquote(password)
+            encoded_pw = urllib.parse.quote(unquoted_pw, safe='')
+            unquoted_user = urllib.parse.unquote(user)
+            encoded_user = urllib.parse.quote(unquoted_user, safe='.-_')
+            user_info = f"{encoded_user}:{encoded_pw}"
+        else:
+            unquoted_user = urllib.parse.unquote(credentials)
+            user_info = urllib.parse.quote(unquoted_user, safe='.-_')
+
+        return f"{scheme}://{user_info}@{host_port}{path_and_query}"
+    else:
+        return f"{scheme}://{rest}"
+
+
+def set_restrictive_permissions(file_path: str):
+    """
+    Applies restrictive file permissions to sensitive configuration files:
+    - On POSIX: 0600 (read/write for owner only).
+    - On Windows: Disables inheritance and grants Full Control solely to current user.
+    """
+    import subprocess
+    try:
+        os.chmod(file_path, 0o600)
+    except Exception:
+        pass
+
+    if sys.platform == 'win32':
+        try:
+            domain = os.environ.get('USERDOMAIN')
+            username = os.environ.get('USERNAME')
+            if username:
+                user_spec = f"{domain}\\{username}:(F)" if domain else f"{username}:(F)"
+                creationflags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+                subprocess.run(
+                    ['icacls', file_path, '/inheritance:r', '/grant:r', user_spec],
+                    capture_output=True,
+                    timeout=5,
+                    creationflags=creationflags
+                )
+        except Exception:
+            pass
+
+
+def save_database_url(url_str: str) -> str:
+    """
+    Normalizes, saves DATABASE_URL to %PROGRAMDATA%/MPI_Billing_App/database_url.txt,
+    and applies restrictive permissions. Returns the normalized URL.
+    """
+    normalized = normalize_database_url(url_str)
+    if not normalized:
+        raise ValueError("DATABASE_URL cannot be empty")
+
+    app_dir = get_external_config_dir()
+    os.makedirs(app_dir, exist_ok=True)
+    config_file = os.path.join(app_dir, 'database_url.txt')
+    with open(config_file, 'w', encoding='utf-8') as f:
+        f.write(normalized + '\n')
+
+    set_restrictive_permissions(config_file)
+    return normalized
+
+
+def get_database_url():
+    """
+    Reads the Supabase PostgreSQL connection string.
+    Checks:
+    1. Environment variable DATABASE_URL
+    2. External file %PROGRAMDATA%/MPI_Billing_App/database_url.txt (or ~/.mpi_billing)
+    Never reads from bundled files or hardcoded defaults.
+    In testing mode (pytest), returns a test database URL if unconfigured.
+    """
+    env_url = os.environ.get('DATABASE_URL')
+    if env_url and env_url.strip():
+        return normalize_database_url(env_url.strip())
+
+    try:
+        app_dir = get_external_config_dir()
+        config_file = os.path.join(app_dir, 'database_url.txt')
+        if os.path.exists(config_file):
+            with open(config_file, 'r', encoding='utf-8') as f:
+                val = f.read().strip()
+                if val:
+                    return normalize_database_url(val)
+    except Exception:
+        pass
+
+    # When running under automated test suites (pytest), provide a test fallback if unconfigured
+    if 'pytest' in sys.modules or os.environ.get('PYTEST_CURRENT_TEST') or os.environ.get('TESTING') == '1':
+        return os.environ.get('DATABASE_URL', 'postgresql://test:test@localhost:5432/test_db')
+
+    return None
+
+
+def test_supabase_connection(url_str: str, timeout: int = 10) -> tuple:
+    """
+    Validates a PostgreSQL/Supabase connection string by testing with 'SELECT 1'.
+    Returns (True, "Connection successful") or (False, error_message).
+    """
+    norm_url = normalize_database_url(url_str)
+    if not norm_url:
+        return (False, "Connection string is empty.")
+
+    # Try psycopg2 first
+    try:
+        import psycopg2
+        conn = psycopg2.connect(norm_url, connect_timeout=timeout)
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        res = cur.fetchone()
+        cur.close()
+        conn.close()
+        if res and res[0] == 1:
+            return (True, "Connection successful! Cloud database is verified.")
+    except ImportError:
+        pass
+    except Exception as e:
+        return (False, f"Connection failed: {str(e)}")
+
+    # Fallback to pg8000 (pure-Python)
+    try:
+        import pg8000.native
+        import urllib.parse
+        parsed = urllib.parse.urlsplit(norm_url)
+        user = urllib.parse.unquote(parsed.username or '')
+        password = urllib.parse.unquote(parsed.password or '')
+        host = parsed.hostname or 'localhost'
+        port = parsed.port or 5432
+        database = parsed.path.lstrip('/') or 'postgres'
+
+        ssl_context = True if 'sslmode=require' in norm_url or 'sslmode=prefer' in norm_url or parsed.port == 6543 or 'supabase.co' in host or 'supabase.com' in host else None
+
+        conn = pg8000.native.Connection(
+            user=user,
+            password=password,
+            host=host,
+            port=port,
+            database=database,
+            timeout=timeout,
+            ssl_context=ssl_context
+        )
+        res = conn.run("SELECT 1")
+        conn.close()
+        if res and res[0][0] == 1:
+            return (True, "Connection successful! Cloud database is verified.")
+    except ImportError:
+        pass
+    except Exception as e:
+        return (False, f"Connection failed: {str(e)}")
+
+    return (False, "No suitable PostgreSQL driver (psycopg2 or pg8000) is installed.")
+
 

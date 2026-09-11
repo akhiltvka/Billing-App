@@ -28,3 +28,9 @@ tools/
 *.exe
 *.zip
 scratch/
+
+# IDE & Testing Caches
+.vs/
+.pytest_cache/
+.idea/
+*.log

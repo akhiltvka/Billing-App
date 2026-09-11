@@ -1197,7 +1197,10 @@ const Inventory = {
               <h1>🛒 Purchase Orders</h1>
               <p>Record purchases from suppliers</p>
             </div>
-            <button class="btn btn-primary" onclick="Inventory.showPOModal()">➕ New Purchase Order</button>
+             <div style="display:flex;gap:8px;flex-wrap:wrap">
+               <button class="btn btn-secondary" onclick="Inventory.renderPurchaseReturns()">📄 Debit Notes</button>
+               <button class="btn btn-primary" onclick="Inventory.showPOModal()">➕ New Purchase Order</button>
+             </div>
           </div>
 
           <div class="card">
@@ -1205,7 +1208,7 @@ const Inventory = {
               ? '<div class="empty-state"><div class="empty-state-icon">🛒</div><h3>No purchase orders yet</h3></div>'
               : `<div class="table-wrap">
                   <table>
-                    <thead><tr><th>PO No</th><th>Supplier</th><th>Date</th><th class="text-right">Total</th><th class="text-right">Paid</th><th>Status</th></tr></thead>
+                    <thead><tr><th>PO No</th><th>Supplier</th><th>Date</th><th class="text-right">Total</th><th class="text-right">Paid</th><th>Status</th><th>Actions</th></tr></thead>
                     <tbody>
                       ${pos.map(po => `
                         <tr>
@@ -1214,7 +1217,8 @@ const Inventory = {
                           <td class="td-muted">${App.fmtDateTime(po.date)}</td>
                           <td class="td-number">${App.fmt(po.total)}</td>
                           <td class="td-number ${po.amount_paid >= po.total ? 'text-success' : 'text-warning'}">${App.fmt(po.amount_paid)}</td>
-                          <td><span class="badge badge-success">${po.status}</span></td>
+                           <td><span class="badge badge-success">${po.status}</span></td>
+                           <td>${po.status !== 'cancelled' ? `<button class="btn btn-sm btn-warning" onclick="Inventory.showPurchaseReturnModal(${po.id})">↩️ Return</button>` : '—'}</td>
                         </tr>`).join('')}
                     </tbody>
                   </table>
@@ -1226,6 +1230,106 @@ const Inventory = {
       this._products = products;
     } catch(e) {
       content.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><h3>${e.message}</h3></div>`;
+    }
+  },
+
+  async renderPurchaseReturns() {
+    const content = document.getElementById('page-content');
+    try {
+      const returns = await App.api('/purchase-returns');
+      content.innerHTML = `
+        <div class="page-enter">
+          <div class="page-header">
+            <div class="page-header-left"><h1>📄 Debit Notes</h1><p>Review and reverse supplier purchase returns</p></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-secondary" onclick="window.open('/api/purchase-returns?export=excel', '_blank')">📊 Export Excel</button>
+              <button class="btn btn-secondary" onclick="Inventory.renderPurchaseOrders()">← Purchase Orders</button>
+            </div>
+          </div>
+          <div class="card">
+            ${returns.length ? `<div class="table-wrap"><table>
+              <thead><tr><th>Debit Note</th><th>Purchase Order</th><th>Supplier</th><th>Date</th><th class="text-right">Total</th><th>Status</th><th>Actions</th></tr></thead>
+              <tbody>${returns.map(note => `<tr>
+                <td class="font-bold text-gold">${note.debit_note_no}</td>
+                <td>${note.po_no || '—'}</td><td>${note.supplier_name || '—'}</td>
+                <td class="td-muted">${App.fmtDateTime(note.created_at)}</td>
+                <td class="td-number">${App.fmt(note.total)}</td>
+                <td><span class="badge ${note.status === 'reversed' ? 'badge-secondary' : 'badge-warning'}">${note.status}</span></td>
+                <td><button class="btn btn-sm btn-secondary" onclick="window.open('/debit-note/${note.id}', '_blank')">🖨️ Print</button> ${note.status !== 'reversed' ? `<button class="btn btn-sm btn-warning" onclick="Inventory.showDebitNoteReverseModal(${note.id}, '${note.debit_note_no}')">↩️ Reverse</button>` : ''}</td>
+              </tr>`).join('')}</tbody>
+            </table></div>` : '<div class="empty-state"><div class="empty-state-icon">📄</div><h3>No debit notes yet</h3></div>'}
+          </div>
+        </div>`;
+    } catch (e) {
+      content.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><h3>${e.message}</h3></div>`;
+    }
+  },
+
+  showDebitNoteReverseModal(returnId, debitNoteNo) {
+    App.showModal(`
+      <div class="modal" style="max-width:480px;border-top:5px solid #f59e0b">
+        <div class="modal-header"><div class="modal-title">↩️ Reverse ${debitNoteNo}</div><button class="modal-close" onclick="App.closeModal()">✕</button></div>
+        <p class="text-muted">This restores returned stock, increases the supplier balance, and posts a reversal journal.</p>
+        <div class="form-group"><label class="form-label required">Reversal reason</label><textarea class="form-control" id="debit-reversal-reason" rows="3" placeholder="Required for audit purposes"></textarea></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button><button class="btn btn-warning" onclick="Inventory.reverseDebitNote(${returnId})">↩️ Confirm Reversal</button></div>
+      </div>`);
+  },
+
+  async reverseDebitNote(returnId) {
+    const reason = document.getElementById('debit-reversal-reason')?.value.trim();
+    if (!reason) { App.toast('Reversal reason is required', 'error'); return; }
+    try {
+      await App.api(`/purchase-returns/${returnId}/reverse`, 'POST', { reason });
+      App.closeModal();
+      App.toast('Debit note reversed successfully', 'success');
+      this.renderPurchaseReturns();
+    } catch (e) { App.toast(e.message, 'error'); }
+  },
+
+  async showPurchaseReturnModal(orderId) {
+    try {
+      const po = await App.api(`/purchase-orders/${orderId}`);
+      const rows = (po.items || []).map(item => `
+        <div class="form-row" style="align-items:center;margin-bottom:8px">
+          <div style="flex:2"><strong>${item.product_name}</strong><div class="td-muted">Received: ${App.fmtNum(item.quantity)} × ${App.fmt(item.unit_price)}</div></div>
+          <div style="flex:1"><input class="form-control po-return-qty" data-item-id="${item.id}" type="number" min="0" max="${item.quantity}" step="0.001" value="0" placeholder="Quantity"></div>
+        </div>`).join('');
+      App.showModal(`
+        <div class="modal modal-lg">
+          <div class="modal-header">
+            <div class="modal-title"><span class="modal-title-icon">↩️</span> Purchase Return — ${po.po_no}</div>
+            <button class="modal-close" onclick="App.closeModal()">✕</button>
+          </div>
+          <p class="text-muted">Select the quantities being returned. The system will reduce stock, adjust the supplier balance, and create a debit note.</p>
+          <div class="card" style="padding:14px;max-height:360px;overflow:auto">${rows || '<div class="empty-state"><p>No items found</p></div>'}</div>
+          <div class="form-group mt-16">
+            <label class="form-label required">Return reason</label>
+            <textarea class="form-control" id="po-return-reason" rows="3" placeholder="Required for audit purposes"></textarea>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
+            <button class="btn btn-warning" onclick="Inventory.submitPurchaseReturn(${orderId})">↩️ Create Debit Note</button>
+          </div>
+        </div>`);
+    } catch (e) {
+      App.toast(e.message, 'error');
+    }
+  },
+
+  async submitPurchaseReturn(orderId) {
+    const reason = document.getElementById('po-return-reason')?.value.trim();
+    if (!reason) { App.toast('Return reason is required', 'error'); return; }
+    const items = Array.from(document.querySelectorAll('.po-return-qty'))
+      .map(input => ({ purchase_order_item_id: parseInt(input.dataset.itemId, 10), quantity: parseFloat(input.value) || 0 }))
+      .filter(item => item.quantity > 0);
+    if (!items.length) { App.toast('Enter at least one return quantity', 'error'); return; }
+    try {
+      const result = await App.api(`/purchase-orders/${orderId}/return`, 'POST', { reason, items });
+      App.closeModal();
+      App.toast(`${result.debit_note_no} created successfully`, 'success');
+      this.renderPurchaseOrders();
+    } catch (e) {
+      App.toast(e.message, 'error');
     }
   },
 

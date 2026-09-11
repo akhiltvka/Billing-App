@@ -1,4 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
+#
+# MPI_Billing_App_Updater.spec
+#
+# Builds a SMALL updater executable — the app payload (MPI_Billing_App\)
+# is NOT bundled inside the exe. Instead, place the exe alongside the
+# MPI_Billing_App\ folder when distributing.
+#
+# Distribution package layout:
+#   MPI_Update_v2.0.0\
+#     MPI_Billing_App_Updater.exe   <-- this output (~5-10 MB)
+#     MPI_Billing_App\              <-- copied from dist\MPI_Billing_App\
+#     logo.png
+#
+# Use build_updater.bat to build and package this automatically.
 
 block_cipher = None
 
@@ -7,7 +21,7 @@ a = Analysis(
     pathex=['.'],
     binaries=[],
     datas=[
-        ('dist/MPI_Billing_App', 'payload'),
+        # Only bundle the logo assets — NOT the full app payload
         ('logo.png', '.'),
         ('logo.ico', '.'),
     ],

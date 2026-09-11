@@ -12,7 +12,18 @@ Flask-based Billing and Inventory Management System with role-based access contr
    export DB_PATH="data/meatshop.db"
    ```
 
-2. If `APP_SECRET_KEY` is not configured, the app will display a console warning and fallback to a default secret key for local development.
+2. If `APP_SECRET_KEY` is not configured, the desktop app creates and persists a random local secret under the application data directory. Set `APP_SECRET_KEY` explicitly for managed deployments.
+
+For cloud-backed licensing and encrypted backups, configure these additional variables in the outlet application's environment:
+
+```text
+CLOUD_LICENSE_SERVER_URL=https://your-license-server.example.com
+CLOUD_LICENSE_API_TOKEN=<same 32+ character token configured as OUTLET_API_TOKEN>
+CLOUD_BACKUP_TOKEN=<same 32+ character token configured as BACKUP_UPLOAD_TOKEN>
+CLOUD_BACKUP_ENCRYPTION_KEY=<Fernet key configured as BACKUP_ENCRYPTION_KEY>
+```
+
+Generate a Fernet key with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and store it in a secrets manager. Losing this key prevents recovery of encrypted cloud backups.
 
 ---
 

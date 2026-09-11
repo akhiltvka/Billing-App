@@ -115,6 +115,19 @@ class TestCreditNoteCost(unittest.TestCase):
                                   data=json.dumps(cn_payload),
                                   content_type='application/json')
         self.assertEqual(cn_res.status_code, 201)
+        cn_id = cn_res.get_json()['data']['id']
+
+        ledger_rows = conn.execute('''
+            SELECT debit, credit
+            FROM ledger_entries
+            WHERE reference_table='credit_notes' AND reference_id=?
+        ''', (cn_id,)).fetchall()
+        self.assertGreater(len(ledger_rows), 0, "Credit note should post ledger entries")
+        self.assertAlmostEqual(
+            sum(float(row['debit']) for row in ledger_rows),
+            sum(float(row['credit']) for row in ledger_rows),
+            places=2
+        )
 
         # 3. Verify stock_batches row created for the credit note has unit_cost = 180.0 (NOT 250.0!)
         restored_batch = conn.execute("""

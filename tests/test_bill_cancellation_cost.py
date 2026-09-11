@@ -103,6 +103,21 @@ class TestBillCancellationCost(unittest.TestCase):
                                         content_type='application/json')
         self.assertEqual(cancel_res.status_code, 200)
 
+        reversal = conn.execute('''
+            SELECT le.debit, le.credit, le.narration
+            FROM ledger_entries le
+            JOIN ledger_vouchers lv ON lv.voucher_type = 'journal' AND lv.voucher_no = le.voucher_no
+            WHERE lv.voucher_no = ?
+            ORDER BY le.id
+        ''', (f"REV-{bill1_no}",)).fetchall()
+        self.assertGreater(len(reversal), 0, "Bill cancellation should post a reversal journal")
+        self.assertAlmostEqual(sum(float(row['debit']) for row in reversal), sum(float(row['credit']) for row in reversal), places=2)
+
+        second_cancel = self.client.delete(f'/api/bills/{bill1_id}',
+                                            data=json.dumps({"reason": "Duplicate cancellation"}),
+                                            content_type='application/json')
+        self.assertEqual(second_cancel.status_code, 400)
+
         # 3. Verify the restored batch in stock_batches has unit_cost 180.0 (NOT 0.0!)
         restored_batch = conn.execute("""
             SELECT unit_cost, unit_price, quantity_remaining

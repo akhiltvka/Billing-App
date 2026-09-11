@@ -202,6 +202,38 @@ const Settings = {
                   <div style="padding:10px 12px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);border-radius:var(--r-md);font-size:11.5px;color:var(--warning)">
                     ℹ️ <strong>Auto-Cloud Sync:</strong> App uploads encrypted snapshots every 6 hours automatically when connected online.
                   </div>
+                <!-- Supabase Cloud Sync (PostgreSQL Mirror) Section -->
+                <div style="border-top:1px solid var(--border);padding-top:16px;margin-bottom:20px">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+                    <div style="font-weight:700;font-size:14px">⚡ Supabase Cloud Sync (PostgreSQL Mirror)</div>
+                    <span id="sync-status-badge" class="badge badge-secondary">⚪ Checking...</span>
+                  </div>
+
+                  <p class="text-muted text-sm mb-12">Near-real-time row-level mirror of core transactional tables to Supabase PostgreSQL when internet is available.</p>
+
+                  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px;background:rgba(255,255,255,0.03);padding:10px;border-radius:var(--r-md);border:1px solid var(--border)">
+                    <div>
+                      <div class="text-muted text-xs">Last Synced</div>
+                      <div id="sync-last-synced" style="font-weight:700;font-size:12px">—</div>
+                    </div>
+                    <div>
+                      <div class="text-muted text-xs">Pending Queue</div>
+                      <div id="sync-pending-count" style="font-weight:700;font-size:12px;color:var(--warning)">0</div>
+                    </div>
+                    <div>
+                      <div class="text-muted text-xs">Failed Queue</div>
+                      <div id="sync-failed-count" style="font-weight:700;font-size:12px;color:var(--danger)">0</div>
+                    </div>
+                  </div>
+
+                  <div style="display:flex;gap:10px">
+                    <button class="btn btn-primary btn-sm" style="flex:1" onclick="Settings.syncNow()" id="btn-sync-now">
+                      🔄 Sync Now
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="Settings.retryFailedSync()" id="btn-sync-retry">
+                      🔁 Retry Failed Rows
+                    </button>
+                  </div>
                 </div>
 
                 <!-- Real-Time External Drive Mirroring Section -->
@@ -286,9 +318,10 @@ const Settings = {
                 <div class="form-group" style="margin-top:8px">
                   <label class="form-label">Thermal Receipt Paper Size</label>
                   <select class="form-control" id="s-thermal-width" style="width:100%">
-                    <option value="80" ${settings.thermal_paper_width !== '58' ? 'selected' : ''}>80mm (Standard Thermal Roll)</option>
-                    <option value="58" ${settings.thermal_paper_width === '58' ? 'selected' : ''}>58mm (Small Thermal Roll)</option>
+                    <option value="58" ${settings.thermal_paper_width === '58' ? 'selected' : ''}>58mm (Small 2-Inch Thermal Roll — 58mm)</option>
+                    <option value="80" ${settings.thermal_paper_width !== '58' ? 'selected' : ''}>80mm (Standard 3-Inch Thermal Roll — 80mm)</option>
                   </select>
+                  <div class="form-hint" style="font-size:11px;color:var(--text-muted);margin-top:4px;">Select 58mm for 2-inch mini POS printers, or 80mm for standard wide POS receipt printers.</div>
                 </div>
 
                 <div style="display:flex;flex-direction:column;gap:12px;margin-top:16px">
@@ -539,6 +572,7 @@ const Settings = {
         setTimeout(() => Settings.loadActivityLog(1), 100);
       }
       setTimeout(() => Settings.loadExternalBackupStatus(), 150);
+      setTimeout(() => Settings.loadSyncStatus(), 150);
     } catch(e) {
       console.error(e);
       content.innerHTML = `<div class="empty-state"><div class="empty-state-icon">⚠️</div><h3>${e.message}</h3></div>`;
@@ -956,6 +990,76 @@ const Settings = {
       App.toast('Cloud backup created successfully!', 'success');
     } catch(e) {
       App.toast('Cloud backup error: ' + e.message, 'error');
+    }
+  },
+
+  async loadSyncStatus() {
+    const badge = document.getElementById('sync-status-badge');
+    const lastSynced = document.getElementById('sync-last-synced');
+    const pendingCount = document.getElementById('sync-pending-count');
+    const failedCount = document.getElementById('sync-failed-count');
+
+    if (!badge) return;
+
+    try {
+      const res = await App.api('/sync/status');
+      const data = res.data || res;
+
+      if (lastSynced) lastSynced.textContent = data.last_synced_at || 'Never';
+      if (pendingCount) pendingCount.textContent = data.pending_count ?? 0;
+      if (failedCount) failedCount.textContent = data.failed_count ?? 0;
+
+      if (!data.is_online) {
+        badge.className = 'badge badge-secondary';
+        badge.textContent = '⚪ Offline';
+      } else if (data.is_syncing) {
+        badge.className = 'badge badge-warning';
+        badge.textContent = '🟡 Syncing...';
+      } else if (data.failed_count > 0) {
+        badge.className = 'badge badge-danger';
+        badge.textContent = `🔴 Failed (${data.failed_count})`;
+      } else if (data.pending_count > 0) {
+        badge.className = 'badge badge-warning';
+        badge.textContent = `🟡 Pending (${data.pending_count})`;
+      } else {
+        badge.className = 'badge badge-success';
+        badge.textContent = '🟢 Synced';
+      }
+    } catch(e) {
+      if (badge) {
+        badge.className = 'badge badge-secondary';
+        badge.textContent = '⚪ Unreachable';
+      }
+    }
+  },
+
+  async syncNow() {
+    const btn = document.getElementById('btn-sync-now');
+    if (btn) btn.disabled = true;
+    try {
+      App.toast('Triggering cloud sync pass...', 'info');
+      const res = await App.api('/sync/now', 'POST');
+      App.toast(res.message || 'Sync cycle completed', 'success');
+      await this.loadSyncStatus();
+    } catch(e) {
+      App.toast('Sync error: ' + (e.message || e), 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  },
+
+  async retryFailedSync() {
+    const btn = document.getElementById('btn-sync-retry');
+    if (btn) btn.disabled = true;
+    try {
+      App.toast('Resetting failed queue rows for retry...', 'info');
+      const res = await App.api('/sync/retry-failed', 'POST');
+      App.toast(res.message || 'Failed rows reset for retry', 'success');
+      await this.loadSyncStatus();
+    } catch(e) {
+      App.toast('Retry failed error: ' + (e.message || e), 'error');
+    } finally {
+      if (btn) btn.disabled = false;
     }
   },
 

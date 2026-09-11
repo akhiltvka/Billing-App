@@ -9,6 +9,9 @@ import json
 import shutil
 import sqlite3
 import urllib.parse
+import hmac
+import hashlib
+from decimal import Decimal
 from functools import wraps
 from datetime import datetime, date, timedelta
 from flask import Flask, jsonify, request, render_template, send_file, session, render_template_string, redirect
@@ -17,8 +20,13 @@ from io import BytesIO
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+import uuid
 from werkzeug.security import generate_password_hash, check_password_hash
-from database import get_db, init_db, dict_row, dict_rows, post_ledger_entry
+from database import (
+    get_db, init_db, dict_row, dict_rows, post_ledger_entry, queue_for_sync,
+    get_database_url, get_external_config_dir
+)
+from money import db_money, money, to_decimal
 from license_manager import get_license_info, activate_subscription
 from license_sync import sync_with_cloud_server, notify_cloud_payment, re_register_with_cloud
 from cloud_backup import start_cloud_backup_scheduler, run_cloud_backup_job
@@ -27,6 +35,13 @@ from external_backup import (
     perform_external_backup,
     is_drive_connected,
     trigger_external_backup_async
+)
+from sync_worker import (
+    trigger_sync_async,
+    start_sync_scheduler,
+    get_sync_status,
+    process_sync_queue,
+    retry_failed_sync_queue
 )
 
 import secrets
@@ -38,7 +53,34 @@ else:
     app = Flask(__name__)
 
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
-app.config['APP_VERSION'] = '1.0.0'
+app.config['APP_VERSION'] = '2.0.0'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_SECURE'] = os.environ.get('FLASK_SECURE_COOKIE', '').lower() in ('1', 'true', 'yes', 'on')
+
+
+def _csrf_token():
+    token = session.get('_csrf_token')
+    if not token:
+        token = secrets.token_urlsafe(32)
+        session['_csrf_token'] = token
+    return token
+
+
+@app.before_request
+def validate_csrf_token():
+    if app.config.get('TESTING') or request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        return None
+    if not request.path.startswith('/api/') or request.path in (
+        '/api/auth/login', '/api/auth/register-md', '/api/license/activate',
+        '/api/license/sync-cloud', '/api/license/notify-payment'
+    ):
+        return None
+    expected = session.get('_csrf_token')
+    supplied = request.headers.get('X-CSRF-Token', '')
+    if not expected or not supplied or not hmac.compare_digest(expected, supplied):
+        return jsonify({'status': 'error', 'message': 'CSRF validation failed'}), 403
+    return None
 
 @app.after_request
 def add_header(response):
@@ -46,14 +88,22 @@ def add_header(response):
     response.headers['Pragma'] = 'no-cache'
     response.headers['Expires'] = '0'
 
-    # Auto-trigger real-time external database backup on successful data mutations
+    if 'user_id' in session:
+        response.set_cookie('csrf_token', _csrf_token(), httponly=False, secure=app.config['SESSION_COOKIE_SECURE'], samesite='Lax')
+
+    # Auto-trigger real-time external database backup & Supabase cloud sync on successful data mutations
     if request.method in ('POST', 'PUT', 'DELETE', 'PATCH'):
         if 200 <= response.status_code < 300:
-            if not request.path.startswith('/api/backup/external'):
+            if not request.path.startswith('/api/backup/external') and not request.path.startswith('/api/sync'):
                 try:
                     trigger_external_backup_async()
                 except Exception:
                     pass
+                if not app.config.get('TESTING'):
+                    try:
+                        trigger_sync_async()
+                    except Exception:
+                        pass
 
     return response
 
@@ -79,6 +129,26 @@ def _get_flask_secret_key():
         return os.urandom(32)
 
 app.secret_key = _get_flask_secret_key()
+
+def validate_sync_configuration():
+    """
+    Validates that DATABASE_URL is configured for cloud synchronization.
+    If not configured and not running in test mode, raises RuntimeError with a clear message
+    directing the user to run the setup wizard.
+    """
+    url = get_database_url()
+    if not url:
+        msg = (
+            "CRITICAL STARTUP ERROR: Supabase cloud sync connection string (DATABASE_URL) is not configured!\n\n"
+            "This application requires an external DATABASE_URL to support cloud synchronization.\n"
+            "Please run the Setup Wizard (installer_setup_wizard.py) or set the DATABASE_URL environment "
+            "variable before starting the application.\n"
+            "Expected config file: %PROGRAMDATA%\\MPI_Billing_App\\database_url.txt (or ~/.mpi_billing on non-Windows)."
+        )
+        raise RuntimeError(msg)
+    return url
+
+DATABASE_URL = get_database_url()
 
 # Configure explicit CORS origins allowlist
 allowed_origins = [
@@ -292,9 +362,6 @@ def require_permission(*codes):
     return decorator
 
 
-import hmac
-import hashlib
-
 def generate_bill_token(bill_id):
     secret = app.secret_key
     if isinstance(secret, str):
@@ -306,6 +373,15 @@ def verify_bill_token(bill_id, token):
         return False
     expected = generate_bill_token(bill_id)
     return hmac.compare_digest(expected, token)
+
+
+def require_page_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if 'user_id' not in session:
+            return redirect('/#login')
+        return f(*args, **kwargs)
+    return decorated
 
 def add_print_tokens_to_bills(bills_list):
     res = []
@@ -540,6 +616,22 @@ def next_cn_no(conn, for_date=None):
         return f"CN-{n:05d}"
 
 
+def next_debit_note_no(conn, for_date=None):
+    fy_reset = get_setting('fy_reset_numbering', conn) == '1'
+    if fy_reset:
+        _, fy_label = get_financial_year(for_date)
+        key = f"next_debit_note_no_{fy_label}"
+        row = conn.execute(
+            "INSERT INTO shop_settings (key, value) VALUES (?, '2') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 RETURNING CAST(value AS INTEGER) - 1 AS old_val",
+            (key,)
+        ).fetchone()
+        return f"DN/{fy_label}/{(row[0] if row else 1):05d}"
+    row = conn.execute(
+        "INSERT INTO shop_settings (key, value) VALUES ('next_debit_note_no', '2') ON CONFLICT(key) DO UPDATE SET value = CAST(value AS INTEGER) + 1 RETURNING CAST(value AS INTEGER) - 1 AS old_val"
+    ).fetchone()
+    return f"DN-{(row[0] if row else 1):05d}"
+
+
 # Intentionally atomic SQL read-and-increment to prevent duplicate conversion numbers under concurrent requests
 def next_conversion_no(conn):
     row = conn.execute(
@@ -700,13 +792,17 @@ def update_stock(conn, product_id, delta, tx_type, unit_price=0, ref=None,
                  purchase_date=None):
     delta = float(delta)
     p_date = purchase_date or str(date.today())
+    tx_uuid = str(uuid.uuid4())
     cur = conn.execute(
         '''INSERT INTO stock_transactions
-           (product_id, type, quantity, unit_price, reference_id, supplier_id, expiry_date, notes, status, created_by, approved_by, purchase_date)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
-        (product_id, tx_type, abs(delta), unit_price, ref, supplier_id, expiry_date, notes, status, created_by, approved_by, p_date)
+           (product_id, type, quantity, unit_price, reference_id, supplier_id, expiry_date, notes, status, created_by, approved_by, purchase_date, client_uuid)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (product_id, tx_type, abs(delta), unit_price, ref, supplier_id, expiry_date, notes, status, created_by, approved_by, p_date, tx_uuid)
     )
     tx_id = cur.lastrowid
+    tx_row = conn.execute('SELECT * FROM stock_transactions WHERE id=?', (tx_id,)).fetchone()
+    if tx_row:
+        queue_for_sync(conn, 'stock_transactions', 'insert', tx_row)
     deducted_cost = 0.0
 
     if status == 'approved':
@@ -724,6 +820,9 @@ def update_stock(conn, product_id, delta, tx_type, unit_price=0, ref=None,
                 'UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
                 (delta, product_id)
             )
+        prod_upd = conn.execute('SELECT * FROM products WHERE id=?', (product_id,)).fetchone()
+        if prod_upd:
+            queue_for_sync(conn, 'products', 'update', prod_upd)
         if delta > 0 and tx_type in ('in', 'adjustment', 'conversion_in'):
             b_no = batch_no or (f"RET-{ref}" if ref and "Reversal" in (notes or "") else f"BATCH-{tx_id:05d}")
             b_cost = unit_cost if unit_cost is not None else unit_price
@@ -784,10 +883,12 @@ def index():
     return render_template('index.html', is_desktop=is_desktop, app_version=app.config.get('APP_VERSION', '1.0.0'))
 
 @app.route('/invoice/<int:bill_id>')
+@require_page_auth
 def invoice_page(bill_id):
     return render_template('invoice_print.html', bill_id=bill_id, is_thermal=False, width='210')
 
 @app.route('/invoice/<int:bill_id>/thermal')
+@require_page_auth
 def invoice_thermal_page(bill_id):
     conn = get_db()
     setting_width = get_setting('thermal_paper_width', conn)
@@ -798,6 +899,7 @@ def invoice_thermal_page(bill_id):
     return render_template('invoice_thermal.html', bill_id=bill_id, width=width)
 
 @app.route('/printables/stock-items')
+@require_page_auth
 def printable_stock_items():
     """Printable/PDF reference page for all active stock item names and codes."""
     conn = get_db()
@@ -812,6 +914,7 @@ def printable_stock_items():
     return render_template('stock_items_print.html', items=items, shop_name=shop_name)
 
 @app.route('/printables/shortcuts')
+@require_page_auth
 def printable_shortcuts():
     """Printable/PDF reference page for all keyboard shortcuts."""
     conn = get_db()
@@ -821,6 +924,7 @@ def printable_shortcuts():
     return render_template('shortcuts_print.html', shop_name=shop_name)
 
 @app.route('/printables/barcodes')
+@require_page_auth
 def printable_barcodes():
     """Barcode label print page — A4 11×4 grid (44 labels per page).
     Optional query param: product_ids=1,2,3  and  qty=5 (copies per item, default 1).
@@ -852,6 +956,32 @@ def printable_barcodes():
     conn.close()
     items_json = _json.dumps(items)
     return render_template('barcode_print.html', shop_name=shop_name, items_json=items_json)
+
+
+@app.route('/debit-note/<int:return_id>')
+@require_page_auth
+def debit_note_page(return_id):
+    conn = get_db()
+    note = conn.execute('''
+        SELECT pr.*, po.po_no, s.name AS supplier_name, s.phone AS supplier_phone,
+               s.address AS supplier_address, s.gstin AS supplier_gstin
+        FROM purchase_returns pr
+        LEFT JOIN purchase_orders po ON po.id = pr.order_id
+        LEFT JOIN suppliers s ON s.id = pr.supplier_id
+        WHERE pr.id=?
+    ''', (return_id,)).fetchone()
+    if not note:
+        conn.close()
+        return 'Debit note not found', 404
+    items = conn.execute('''
+        SELECT pri.*, p.name AS product_name, p.code AS product_code
+        FROM purchase_return_items pri
+        LEFT JOIN products p ON p.id = pri.product_id
+        WHERE pri.return_id=?
+    ''', (return_id,)).fetchall()
+    settings = {row['key']: row['value'] for row in conn.execute('SELECT key, value FROM shop_settings').fetchall()}
+    conn.close()
+    return render_template('debit_note_print.html', note=dict_row(note), items=dict_rows(items), settings=settings)
 
 
 
@@ -1193,16 +1323,25 @@ def logout():
     # If logging out from Tester account, clean up all test bills & restore stock
     if session.get('user_role') == 'tester':
         conn = get_db()
-        test_bills = conn.execute('SELECT id, bill_no FROM bills WHERE is_test=1 OR bill_no LIKE "TEST-%"').fetchall()
+        test_bills = conn.execute('SELECT * FROM bills WHERE is_test=1 OR bill_no LIKE "TEST-%"').fetchall()
         for tb in test_bills:
             bid = tb['id']
-            items = conn.execute('SELECT product_id, quantity FROM bill_items WHERE bill_id=?', (bid,)).fetchall()
+            items = conn.execute('SELECT * FROM bill_items WHERE bill_id=?', (bid,)).fetchall()
             for it in items:
                 if it['product_id']:
                     conn.execute('UPDATE products SET current_stock = current_stock + ? WHERE id=?', (it['quantity'], it['product_id']))
+                    prod_upd = conn.execute('SELECT * FROM products WHERE id=?', (it['product_id'],)).fetchone()
+                    if prod_upd:
+                        queue_for_sync(conn, 'products', 'update', prod_upd)
+            old_txs = conn.execute('SELECT * FROM stock_transactions WHERE reference_id=?', (tb['bill_no'],)).fetchall()
             conn.execute('DELETE FROM stock_transactions WHERE reference_id=?', (tb['bill_no'],))
+            for otx in old_txs:
+                queue_for_sync(conn, 'stock_transactions', 'delete', otx)
             conn.execute('DELETE FROM bill_items WHERE bill_id=?', (bid,))
+            for oitem in items:
+                queue_for_sync(conn, 'bill_items', 'delete', oitem)
             conn.execute('DELETE FROM bills WHERE id=?', (bid,))
+            queue_for_sync(conn, 'bills', 'delete', tb)
         conn.commit()
         conn.close()
 
@@ -1767,13 +1906,16 @@ def create_category():
     if not d.get('name'):
         return err("Category name is required")
     conn = get_db()
+    cat_uuid = str(uuid.uuid4())
     try:
         c = conn.execute(
-            'INSERT INTO categories (name, gst_rate, hsn_code, description, parent_category_id) VALUES (?,?,?,?,?)',
-            (d['name'], d.get('gst_rate', 0), d.get('hsn_code', ''), d.get('description', ''), d.get('parent_category_id'))
+            'INSERT INTO categories (name, gst_rate, hsn_code, description, parent_category_id, client_uuid) VALUES (?,?,?,?,?,?)',
+            (d['name'], d.get('gst_rate', 0), d.get('hsn_code', ''), d.get('description', ''), d.get('parent_category_id'), cat_uuid)
         )
-        conn.commit()
         row = conn.execute('SELECT * FROM categories WHERE id=?', (c.lastrowid,)).fetchone()
+        if row:
+            queue_for_sync(conn, 'categories', 'insert', row)
+        conn.commit()
         conn.close()
         return ok(dict_row(row), "Category created"), 201
     except sqlite3.IntegrityError:
@@ -1805,8 +1947,10 @@ def update_category(cat_id):
             'UPDATE categories SET name=?, gst_rate=?, hsn_code=?, description=?, parent_category_id=? WHERE id=?',
             (d['name'], d.get('gst_rate', 0), d.get('hsn_code', ''), d.get('description', ''), p_id, cat_id)
         )
-        conn.commit()
         row = conn.execute('SELECT * FROM categories WHERE id=?', (cat_id,)).fetchone()
+        if row:
+            queue_for_sync(conn, 'categories', 'update', row)
+        conn.commit()
         conn.close()
         return ok(dict_row(row))
     except sqlite3.IntegrityError:
@@ -1817,7 +1961,10 @@ def update_category(cat_id):
 @require_permission('inventory.delete')
 def delete_category(cat_id):
     conn = get_db()
+    cat = conn.execute('SELECT * FROM categories WHERE id=?', (cat_id,)).fetchone()
     conn.execute('DELETE FROM categories WHERE id=?', (cat_id,))
+    if cat:
+        queue_for_sync(conn, 'categories', 'delete', cat)
     conn.commit(); conn.close()
     return ok(message="Category deleted")
 
@@ -1999,18 +2146,19 @@ def create_product():
             return err(f"Product duplication is not allowed. A product named '{dup['name']}' already exists in the catalog.", 409)
 
     try:
+        prod_uuid = str(uuid.uuid4())
         c = conn.execute(
             '''INSERT INTO products
                (category_id, name, code, hsn_code, unit, purchase_unit, sale_unit, conversion_factor,
                 purchase_price, selling_price, gst_rate, min_stock, current_stock, barcode,
-                product_type, mrp, is_price_inclusive_of_tax, brand, pack_size, reorder_lead_time_days, shelf_life_days)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                product_type, mrp, is_price_inclusive_of_tax, brand, pack_size, reorder_lead_time_days, shelf_life_days, client_uuid)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (d.get('category_id'), d['name'], code, d.get('hsn_code', ''),
              s_unit, p_unit, s_unit, conv_factor,
              d.get('purchase_price', 0), d.get('selling_price', 0),
              d.get('gst_rate', 0), d.get('min_stock', 1), 0,
              d.get('barcode') or None,
-             ptype, mrp_val, inc_tax, brand_val, pack_size_val, lead_time, shelf_life)
+             ptype, mrp_val, inc_tax, brand_val, pack_size_val, lead_time, shelf_life, prod_uuid)
         )
         pid = c.lastrowid
         role = session.get('user_role')
@@ -2023,11 +2171,13 @@ def create_product():
                          notes='Opening stock', status=st_status, created_by=username, approved_by=st_approver,
                          purchase_date=d.get('purchase_date'))
 
-        conn.commit()
         row = conn.execute(
             'SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON p.category_id=c.id WHERE p.id=?',
             (pid,)
         ).fetchone()
+        if row:
+            queue_for_sync(conn, 'products', 'insert', row)
+        conn.commit()
         conn.close()
         log_activity('ADD_PRODUCT', f"Added product '{d['name']}' (code: {code})", 'products', pid)
         return ok(dict_row(row), "Product created"), 201
@@ -2137,11 +2287,13 @@ def update_product(pid):
                 conn.close()
                 return err(f"Stock adjustment error: {str(se)}", 400)
 
-        conn.commit()
         row = conn.execute(
             'SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON p.category_id=c.id WHERE p.id=?',
             (pid,)
         ).fetchone()
+        if row:
+            queue_for_sync(conn, 'products', 'update', row)
+        conn.commit()
         conn.close()
         return ok(dict_row(row))
     except sqlite3.IntegrityError as e:
@@ -2172,6 +2324,9 @@ def delete_product(pid):
         return err(f"Cannot delete product '{prod['name']}' because it is billed in {bill_count} active invoice(s). You must delete or cancel the associated bill(s) first before removing this product.", 400)
 
     conn.execute('UPDATE products SET active=0 WHERE id=?', (pid,))
+    del_prod = conn.execute('SELECT * FROM products WHERE id=?', (pid,)).fetchone()
+    if del_prod:
+        queue_for_sync(conn, 'products', 'update', del_prod)
     conn.commit()
     conn.close()
     return ok(message=f"Product '{prod['name']}' deleted successfully")
@@ -2297,11 +2452,15 @@ def create_stock_conversion():
         )
 
         if loss_qty > 0:
-            conn.execute('''
+            loss_tx_uuid = str(uuid.uuid4())
+            cur_loss = conn.execute('''
                 INSERT INTO stock_transactions
-                (product_id, type, quantity, unit_price, reference_id, notes, status, created_by)
-                VALUES (?, 'wastage', ?, ?, ?, ?, 'approved', ?)
-            ''', (input_pid, loss_qty, float(input_prod['purchase_price'] or 0), cnv_no, f"Processing loss for conversion {cnv_no}", session.get('username')))
+                (product_id, type, quantity, unit_price, reference_id, notes, status, created_by, client_uuid)
+                VALUES (?, 'wastage', ?, ?, ?, ?, 'approved', ?, ?)
+            ''', (input_pid, loss_qty, float(input_prod['purchase_price'] or 0), cnv_no, f"Processing loss for conversion {cnv_no}", session.get('username'), loss_tx_uuid))
+            loss_tx_row = conn.execute('SELECT * FROM stock_transactions WHERE id=?', (cur_loss.lastrowid,)).fetchone()
+            if loss_tx_row:
+                queue_for_sync(conn, 'stock_transactions', 'insert', loss_tx_row)
 
         c = conn.execute('''
             INSERT INTO stock_conversions
@@ -2996,12 +3155,15 @@ def create_customer():
             conn.close()
             return ok(dict_row(existing), message="Existing customer matched by phone"), 200
 
+    cust_uuid = str(uuid.uuid4())
     c = conn.execute(
-        'INSERT INTO customers (name, phone, email, address, gstin, state_code) VALUES (?,?,?,?,?,?)',
-        (d['name'], phone, d.get('email',''), d.get('address',''), d.get('gstin',''), d.get('state_code',''))
+        'INSERT INTO customers (name, phone, email, address, gstin, state_code, client_uuid) VALUES (?,?,?,?,?,?,?)',
+        (d['name'], phone, d.get('email',''), d.get('address',''), d.get('gstin',''), d.get('state_code',''), cust_uuid)
     )
-    conn.commit()
     row = conn.execute('SELECT * FROM customers WHERE id=?', (c.lastrowid,)).fetchone()
+    if row:
+        queue_for_sync(conn, 'customers', 'insert', row)
+    conn.commit()
     conn.close()
     return ok(dict_row(row)), 201
 
@@ -3026,8 +3188,10 @@ def update_customer(cid):
         'UPDATE customers SET name=?, phone=?, email=?, address=?, gstin=?, state_code=? WHERE id=?',
         (d['name'], phone, d.get('email',''), d.get('address',''), d.get('gstin',''), d.get('state_code',''), cid)
     )
-    conn.commit()
     row = conn.execute('SELECT * FROM customers WHERE id=?', (cid,)).fetchone()
+    if row:
+        queue_for_sync(conn, 'customers', 'update', row)
+    conn.commit()
     conn.close()
     return ok(dict_row(row))
 
@@ -3044,10 +3208,14 @@ def delete_customer(cid):
 
     if bill_count > 0:
         conn.execute('UPDATE customers SET is_active=0 WHERE id=?', (cid,))
+        upd_cust = conn.execute('SELECT * FROM customers WHERE id=?', (cid,)).fetchone()
+        if upd_cust:
+            queue_for_sync(conn, 'customers', 'update', upd_cust)
         conn.commit(); conn.close()
         return ok(message="Customer archived (had bill history)")
     else:
         conn.execute('DELETE FROM customers WHERE id=?', (cid,))
+        queue_for_sync(conn, 'customers', 'delete', cust)
         conn.commit(); conn.close()
         return ok(message="Customer permanently deleted")
 
@@ -3181,13 +3349,16 @@ def create_supplier():
     if phone and (not phone.isdigit() or len(phone) != 10):
         return err("Phone number must be exactly 10 digits")
     conn = get_db()
+    sup_uuid = str(uuid.uuid4())
     c = conn.execute(
-        'INSERT INTO suppliers (name, contact_person, phone, email, address, gstin) VALUES (?,?,?,?,?,?)',
+        'INSERT INTO suppliers (name, contact_person, phone, email, address, gstin, client_uuid) VALUES (?,?,?,?,?,?,?)',
         (d['name'], d.get('contact_person',''), phone,
-         d.get('email',''), d.get('address',''), d.get('gstin',''))
+         d.get('email',''), d.get('address',''), d.get('gstin',''), sup_uuid)
     )
-    conn.commit()
     row = conn.execute('SELECT * FROM suppliers WHERE id=?', (c.lastrowid,)).fetchone()
+    if row:
+        queue_for_sync(conn, 'suppliers', 'insert', row)
+    conn.commit()
     conn.close()
     return ok(dict_row(row)), 201
 
@@ -3207,8 +3378,10 @@ def update_supplier(sid):
         (d['name'], d.get('contact_person',''), phone,
          d.get('email',''), d.get('address',''), d.get('gstin',''), sid)
     )
-    conn.commit()
     row = conn.execute('SELECT * FROM suppliers WHERE id=?', (sid,)).fetchone()
+    if row:
+        queue_for_sync(conn, 'suppliers', 'update', row)
+    conn.commit()
     conn.close()
     return ok(dict_row(row))
 
@@ -3216,7 +3389,10 @@ def update_supplier(sid):
 @require_permission('suppliers.manage')
 def delete_supplier(sid):
     conn = get_db()
+    sup = conn.execute('SELECT * FROM suppliers WHERE id=?', (sid,)).fetchone()
     conn.execute('DELETE FROM suppliers WHERE id=?', (sid,))
+    if sup:
+        queue_for_sync(conn, 'suppliers', 'delete', sup)
     conn.commit(); conn.close()
     return ok(message="Supplier deleted")
 
@@ -3393,6 +3569,12 @@ def save_missing_purchase_dates():
                    WHERE id = (SELECT stock_transaction_id FROM stock_batches WHERE id = ?)''',
                 (p_date, bid)
             )
+            upd_tx = conn.execute(
+                'SELECT * FROM stock_transactions WHERE id = (SELECT stock_transaction_id FROM stock_batches WHERE id = ?)',
+                (bid,)
+            ).fetchone()
+            if upd_tx:
+                queue_for_sync(conn, 'stock_transactions', 'update', upd_tx)
         conn.commit()
         conn.close()
         return ok(message="Purchase dates saved successfully")
@@ -3548,7 +3730,18 @@ def list_pending_stock():
         ORDER BY st.date DESC
     ''').fetchall()
     conn.close()
-    return ok(dict_rows(rows))
+    result = dict_rows(rows)
+    if wants_excel():
+        excel_rows = [[
+            row['debit_note_no'] or '', row['po_no'] or '', row['supplier_name'] or '',
+            row['created_at'] or '', float(row['total'] or 0), row['status'] or '', row['reason'] or ''
+        ] for row in result]
+        return export_to_excel([{
+            'sheet_name': 'Debit Notes',
+            'headers': ['Debit Note', 'Purchase Order', 'Supplier', 'Date', 'Total (₹)', 'Status', 'Reason'],
+            'rows': excel_rows
+        }], 'debit_notes_list')
+    return ok(result)
 
 @app.route('/api/stock/verify/<int:tx_id>', methods=['POST'])
 @require_permission('stock.verify')
@@ -3572,6 +3765,12 @@ def verify_stock(tx_id):
         conn.execute('UPDATE stock_transactions SET status="approved", approved_by=? WHERE id=?', (approver, tx_id))
         conn.execute('UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id=?',
                      (tx['quantity'], tx['product_id']))
+        upd_tx = conn.execute('SELECT * FROM stock_transactions WHERE id=?', (tx_id,)).fetchone()
+        if upd_tx:
+            queue_for_sync(conn, 'stock_transactions', 'update', upd_tx)
+        upd_prod = conn.execute('SELECT * FROM products WHERE id=?', (tx['product_id'],)).fetchone()
+        if upd_prod:
+            queue_for_sync(conn, 'products', 'update', upd_prod)
         if tx['type'] in ('in', 'adjustment') and tx['quantity'] > 0:
             b_no = f"BATCH-{tx_id:05d}"
             p_date = tx['purchase_date'] if ('purchase_date' in tx.keys() and tx['purchase_date']) else tx['date']
@@ -3584,6 +3783,9 @@ def verify_stock(tx_id):
         msg = f"Stock-In for {pname} ({tx['quantity']} units) approved by @{approver}."
     else:
         conn.execute('UPDATE stock_transactions SET status="rejected", approved_by=? WHERE id=?', (approver, tx_id))
+        upd_tx = conn.execute('SELECT * FROM stock_transactions WHERE id=?', (tx_id,)).fetchone()
+        if upd_tx:
+            queue_for_sync(conn, 'stock_transactions', 'update', upd_tx)
         msg = f"Stock-In for {pname} ({tx['quantity']} units) rejected by @{approver}."
 
     conn.commit(); conn.close()
@@ -4103,11 +4305,11 @@ def create_bill():
         # Loyalty settings & point redemption check
         loyalty_setting = get_setting('loyalty_enabled', conn)
         is_loyalty_enabled = (loyalty_setting != 'false' and loyalty_setting != False)
-        loyalty_pts_per_rupee = float(get_setting('loyalty_points_per_rupee', conn) or 0.01)
-        loyalty_redemption_val = float(get_setting('loyalty_redemption_value', conn) or 0.50)
+        loyalty_pts_per_rupee = to_decimal(get_setting('loyalty_points_per_rupee', conn) or '0.01')
+        loyalty_redemption_val = to_decimal(get_setting('loyalty_redemption_value', conn) or '0.50')
 
         redeem_pts = float(d.get('redeem_points', 0) or 0)
-        pts_discount_rupees = 0.0
+        pts_discount_rupees = money(0)
         if redeem_pts > 0:
             if not is_loyalty_enabled:
                 conn.close()
@@ -4125,186 +4327,215 @@ def create_bill():
                 conn.close()
                 return err(f"Insufficient loyalty points. Customer has {avail_pts:.2f} points available.", 400)
 
-            pts_discount_rupees = round(redeem_pts * loyalty_redemption_val, 2)
+            pts_discount_rupees = money(to_decimal(redeem_pts) * loyalty_redemption_val)
 
-        discount_pct = float(d.get('discount_percent', 0))
-        raw_subtotal = sum(float(it['quantity']) * float(it['_validated_price']) for it in items)
-        base_discount_amt = round(raw_subtotal * discount_pct / 100, 2)
-        total_discount_amt = round(base_discount_amt + pts_discount_rupees, 2)
-        effective_disc_pct = min(100.0, (total_discount_amt / raw_subtotal * 100)) if raw_subtotal > 0 else 0.0
+        discount_pct = to_decimal(d.get('discount_percent', 0))
+        raw_subtotal = sum((to_decimal(it['quantity']) * to_decimal(it['_validated_price']) for it in items), money(0))
+        base_discount_amt = money(raw_subtotal * discount_pct / Decimal('100'))
+        total_discount_amt = money(base_discount_amt + pts_discount_rupees)
+        effective_disc_pct = min(Decimal('100'), (total_discount_amt / raw_subtotal * Decimal('100'))) if raw_subtotal > 0 else Decimal('0')
         gst_setting = get_setting('gst_enabled', conn)
         is_gst_enabled = (gst_setting != 'false' and gst_setting != False)
 
-        subtotal = 0; cgst_total = 0; sgst_total = 0; igst_total = 0
+        subtotal = money(0); cgst_total = money(0); sgst_total = money(0); igst_total = money(0)
         for it in items:
-            qty = float(it['quantity']); price = it['_validated_price']
-            gst_rate = float(it.get('gst_rate', 0)) if is_gst_enabled else 0.0
+            qty = to_decimal(it['quantity']); price = to_decimal(it['_validated_price'])
+            gst_rate = to_decimal(it.get('gst_rate', 0)) if is_gst_enabled else Decimal('0')
             is_inc_tax = it['_is_inc_tax']
 
             if is_inc_tax:
-                item_gross = round(qty * price * (1 - effective_disc_pct / 100), 2)
+                item_gross = money(qty * price * (Decimal('1') - effective_disc_pct / Decimal('100')))
                 if gst_rate > 0:
-                    item_taxable = round(item_gross / (1.0 + gst_rate / 100.0), 2)
-                    total_tax = round(item_gross - item_taxable, 2)
+                    item_taxable = money(item_gross / (Decimal('1') + gst_rate / Decimal('100')))
+                    total_tax = money(item_gross - item_taxable)
                 else:
                     item_taxable = item_gross
                     total_tax = 0.0
 
                 if is_interstate:
-                    cgst_amt = 0.0
-                    sgst_amt = 0.0
+                    cgst_amt = money(0)
+                    sgst_amt = money(0)
                     igst_amt = total_tax
                 else:
-                    cgst_amt = round(total_tax / 2.0, 2)
-                    sgst_amt = round(total_tax - cgst_amt, 2)
-                    igst_amt = 0.0
+                    cgst_amt = money(total_tax / Decimal('2'))
+                    sgst_amt = money(total_tax - cgst_amt)
+                    igst_amt = money(0)
             else:
-                item_taxable = round(qty * price * (1 - effective_disc_pct / 100), 2)
+                item_taxable = money(qty * price * (Decimal('1') - effective_disc_pct / Decimal('100')))
                 if is_interstate:
-                    cgst_amt = 0.0
-                    sgst_amt = 0.0
-                    igst_amt = round(item_taxable * gst_rate / 100, 2)
+                    cgst_amt = money(0)
+                    sgst_amt = money(0)
+                    igst_amt = money(item_taxable * gst_rate / Decimal('100'))
                 else:
-                    cgst_amt = round(item_taxable * gst_rate / 2 / 100, 2)
-                    sgst_amt = round(item_taxable * gst_rate / 2 / 100, 2)
-                    igst_amt = 0.0
+                    cgst_amt = money(item_taxable * gst_rate / Decimal('2') / Decimal('100'))
+                    sgst_amt = money(item_taxable * gst_rate / Decimal('2') / Decimal('100'))
+                    igst_amt = money(0)
 
             cgst_total += cgst_amt
             sgst_total += sgst_amt
             igst_total += igst_amt
             subtotal   += item_taxable
-        subtotal = round(subtotal, 2)
-        cgst_total = round(cgst_total, 2)
-        sgst_total = round(sgst_total, 2)
-        igst_total = round(igst_total, 2)
-        grand_total  = round(subtotal + cgst_total + sgst_total + igst_total, 2)
+        subtotal = money(subtotal)
+        cgst_total = money(cgst_total)
+        sgst_total = money(sgst_total)
+        igst_total = money(igst_total)
+        grand_total = money(subtotal + cgst_total + sgst_total + igst_total)
 
         if 'amount_paid' in d and d['amount_paid'] is not None:
-            raw_paid = float(d['amount_paid'])
+            raw_paid = to_decimal(d['amount_paid'])
         else:
             raw_paid = grand_total
 
         if raw_paid >= grand_total:
             amount_paid = grand_total
-            amount_due = 0.0
-            change_amount = round(raw_paid - grand_total, 2)
+            amount_due = money(0)
+            change_amount = money(raw_paid - grand_total)
             status = 'paid'
         elif raw_paid <= 0:
-            amount_paid = 0.0
+            amount_paid = money(0)
             amount_due = grand_total
-            change_amount = 0.0
+            change_amount = money(0)
             status = 'due'
         else:
-            amount_paid = round(raw_paid, 2)
-            amount_due = round(grand_total - amount_paid, 2)
-            change_amount = 0.0
+            amount_paid = money(raw_paid)
+            amount_due = money(grand_total - amount_paid)
+            change_amount = money(0)
             status = 'partial'
 
+        now_local = datetime.now()
+        bill_timestamp = None
+        if bill_date:
+            bill_timestamp = datetime.combine(bill_date, now_local.time()).strftime('%Y-%m-%d %H:%M:%S')
+        else:
+            bill_timestamp = now_local.strftime('%Y-%m-%d %H:%M:%S')
+
         is_test = 1 if session.get('user_role') == 'tester' else 0
+        bill_client_uuid = str(uuid.uuid4())
         c = conn.execute(
             '''INSERT INTO bills
                (bill_no, customer_id, customer_name, customer_phone, customer_gstin,
                 place_of_supply, is_interstate,
                 subtotal, discount_percent, discount_amount, cgst, sgst, igst, grand_total,
-                amount_paid, amount_due, change_amount, payment_mode, notes, is_test, status, date)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,COALESCE(?, CURRENT_TIMESTAMP))''',
+                amount_paid, amount_due, change_amount, payment_mode, notes, is_test, status, date, client_uuid)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (bill_no, d.get('customer_id'), d.get('customer_name', 'Walk-in Customer'),
              d.get('customer_phone', ''), d.get('customer_gstin', ''),
              place_of_supply, is_interstate,
-             round(subtotal, 2), discount_pct, total_discount_amt,
-             round(cgst_total, 2), round(sgst_total, 2), round(igst_total, 2), grand_total,
-             amount_paid, amount_due, max(change_amount, 0), d.get('payment_mode', 'cash'),
-             d.get('notes', ''), is_test, status, d.get('date'))
+              db_money(raw_subtotal), db_money(discount_pct), db_money(total_discount_amt),
+              db_money(cgst_total), db_money(sgst_total), db_money(igst_total), db_money(grand_total),
+              db_money(amount_paid), db_money(amount_due), db_money(max(change_amount, money(0))), d.get('payment_mode', 'cash'),
+             d.get('notes', ''), is_test, status, bill_timestamp, bill_client_uuid)
         )
         bill_id = c.lastrowid
+        bill_row = conn.execute('SELECT * FROM bills WHERE id=?', (bill_id,)).fetchone()
+        if bill_row:
+            queue_for_sync(conn, 'bills', 'insert', bill_row)
 
         if amount_paid > 0:
-            conn.execute(
-                '''INSERT INTO bill_payments (bill_id, amount, payment_mode, received_by, notes)
-                   VALUES (?,?,?,?,?)''',
-                (bill_id, amount_paid, d.get('payment_mode', 'cash'), session.get('username'), 'Initial payment at billing')
+            bp_uuid = str(uuid.uuid4())
+            cur_bp = conn.execute(
+                '''INSERT INTO bill_payments (bill_id, amount, payment_mode, received_by, notes, client_uuid)
+                   VALUES (?,?,?,?,?,?)''',
+                (bill_id, db_money(amount_paid), d.get('payment_mode', 'cash'), session.get('username'), 'Initial payment at billing', bp_uuid)
             )
+            bp_row = conn.execute('SELECT * FROM bill_payments WHERE id=?', (cur_bp.lastrowid,)).fetchone()
+            if bp_row:
+                queue_for_sync(conn, 'bill_payments', 'insert', bp_row)
 
         for it in items:
-            qty = float(it['quantity']); price = it['_validated_price']
-            gst_rate = float(it.get('gst_rate', 0)) if is_gst_enabled else 0.0
+            qty = to_decimal(it['quantity']); price = to_decimal(it['_validated_price'])
+            gst_rate = to_decimal(it.get('gst_rate', 0)) if is_gst_enabled else Decimal('0')
             is_inc_tax = it['_is_inc_tax']
+            orig_line_amount = money(qty * price)
 
             if is_inc_tax:
-                item_gross = round(qty * price * (1 - effective_disc_pct / 100), 2)
+                item_gross = money(qty * price * (Decimal('1') - effective_disc_pct / Decimal('100')))
                 if gst_rate > 0:
-                    item_taxable = round(item_gross / (1.0 + gst_rate / 100.0), 2)
-                    total_tax = round(item_gross - item_taxable, 2)
+                    item_taxable = money(item_gross / (Decimal('1') + gst_rate / Decimal('100')))
+                    total_tax = money(item_gross - item_taxable)
                 else:
                     item_taxable = item_gross
                     total_tax = 0.0
 
                 if is_interstate:
-                    cgst_amt = 0.0
-                    sgst_amt = 0.0
+                    cgst_amt = money(0)
+                    sgst_amt = money(0)
                     igst_amt = total_tax
                 else:
-                    cgst_amt = round(total_tax / 2.0, 2)
-                    sgst_amt = round(total_tax - cgst_amt, 2)
-                    igst_amt = 0.0
-
-                amount = item_gross
+                    cgst_amt = money(total_tax / Decimal('2'))
+                    sgst_amt = money(total_tax - cgst_amt)
+                    igst_amt = money(0)
             else:
-                item_taxable = round(qty * price * (1 - effective_disc_pct / 100), 2)
+                item_taxable = money(qty * price * (Decimal('1') - effective_disc_pct / Decimal('100')))
                 if is_interstate:
-                    cgst_amt = 0.0
-                    sgst_amt = 0.0
-                    igst_amt = round(item_taxable * gst_rate / 100, 2)
+                    cgst_amt = money(0)
+                    sgst_amt = money(0)
+                    igst_amt = money(item_taxable * gst_rate / Decimal('100'))
                 else:
-                    cgst_amt = round(item_taxable * gst_rate / 2 / 100, 2)
-                    sgst_amt = round(item_taxable * gst_rate / 2 / 100, 2)
-                    igst_amt = 0.0
-
-                amount = round(item_taxable + cgst_amt + sgst_amt + igst_amt, 2)
+                    cgst_amt = money(item_taxable * gst_rate / Decimal('2') / Decimal('100'))
+                    sgst_amt = money(item_taxable * gst_rate / Decimal('2') / Decimal('100'))
+                    igst_amt = money(0)
 
             item_cost_price = None
             prod = it.get('_prod_row')
             if it.get('product_id'):
                 if not prod:
                     prod = conn.execute('SELECT name, conversion_factor, purchase_price FROM products WHERE id=?', (it['product_id'],)).fetchone()
-                conv = float(prod['conversion_factor'] or 1.0) if prod else 1.0
+                conv = to_decimal(prod['conversion_factor'] or 1) if prod else Decimal('1')
                 qty_purchase = round(qty / conv, 4)
-                unit_cost_purchase = update_stock(conn, it['product_id'], -qty_purchase, 'out', price, bill_no)
+                unit_cost_purchase = update_stock(conn, it['product_id'], -float(qty_purchase), 'out', float(price), bill_no)
                 if unit_cost_purchase and float(unit_cost_purchase) > 0:
-                    item_cost_price = round(float(unit_cost_purchase) * conv, 4)
+                    item_cost_price = float((to_decimal(unit_cost_purchase) * conv).quantize(Decimal('0.0001')))
                 else:
-                    item_cost_price = round(float(prod['purchase_price'] or 0) * conv, 4) if prod else None
+                    item_cost_price = float((to_decimal(prod['purchase_price'] or 0) * conv).quantize(Decimal('0.0001'))) if prod else None
 
             prod_name = (it.get('product_name') or (prod['name'] if prod else 'Item')).strip()
-
-            conn.execute(
+            bi_uuid = str(uuid.uuid4())
+            cur_bi = conn.execute(
                 '''INSERT INTO bill_items
                    (bill_id, product_id, product_name, hsn_code, unit, quantity,
-                    unit_price, gst_rate, discount, taxable_amt, cgst_amt, sgst_amt, igst_amt, amount, cost_price)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                    unit_price, gst_rate, discount, taxable_amt, cgst_amt, sgst_amt, igst_amt, amount, cost_price, client_uuid)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                 (bill_id, it.get('product_id'), prod_name, it.get('hsn_code', ''),
-                 it.get('unit', 'kg'), qty, price, gst_rate, effective_disc_pct,
-                 item_taxable, cgst_amt, sgst_amt, igst_amt, amount, item_cost_price)
+                  it.get('unit', 'kg'), float(qty), float(price), float(gst_rate), float(effective_disc_pct),
+                  db_money(item_taxable), db_money(cgst_amt), db_money(sgst_amt), db_money(igst_amt), db_money(orig_line_amount), item_cost_price, bi_uuid)
             )
+            bi_row = conn.execute('SELECT * FROM bill_items WHERE id=?', (cur_bi.lastrowid,)).fetchone()
+            if bi_row:
+                queue_for_sync(conn, 'bill_items', 'insert', bi_row)
 
         # ── Loyalty Ledger & Points Balance Update ──────────────────────────
         cust_id_val = d.get('customer_id')
         if cust_id_val:
             if redeem_pts > 0:
                 conn.execute('UPDATE customers SET loyalty_points = MAX(0.0, loyalty_points - ?) WHERE id=?', (redeem_pts, cust_id_val))
-                conn.execute(
-                    'INSERT INTO loyalty_ledger (customer_id, bill_id, points_change, reason) VALUES (?,?,?,?)',
-                    (cust_id_val, bill_id, -redeem_pts, f"Redeemed on Bill #{bill_no}")
+                c_upd = conn.execute('SELECT * FROM customers WHERE id=?', (cust_id_val,)).fetchone()
+                if c_upd:
+                    queue_for_sync(conn, 'customers', 'update', c_upd)
+                ll_uuid1 = str(uuid.uuid4())
+                cur_ll1 = conn.execute(
+                    'INSERT INTO loyalty_ledger (customer_id, bill_id, points_change, reason, client_uuid) VALUES (?,?,?,?,?)',
+                    (cust_id_val, bill_id, -redeem_pts, f"Redeemed on Bill #{bill_no}", ll_uuid1)
                 )
+                ll_row1 = conn.execute('SELECT * FROM loyalty_ledger WHERE id=?', (cur_ll1.lastrowid,)).fetchone()
+                if ll_row1:
+                    queue_for_sync(conn, 'loyalty_ledger', 'insert', ll_row1)
 
             if is_loyalty_enabled:
-                pts_earned = round(grand_total * loyalty_pts_per_rupee, 2)
+                pts_earned = money(grand_total * loyalty_pts_per_rupee)
                 if pts_earned > 0:
-                    conn.execute('UPDATE customers SET loyalty_points = loyalty_points + ? WHERE id=?', (pts_earned, cust_id_val))
-                    conn.execute(
-                        'INSERT INTO loyalty_ledger (customer_id, bill_id, points_change, reason) VALUES (?,?,?,?)',
-                        (cust_id_val, bill_id, pts_earned, f"Earned from Bill #{bill_no}")
+                    conn.execute('UPDATE customers SET loyalty_points = loyalty_points + ? WHERE id=?', (db_money(pts_earned), cust_id_val))
+                    c_upd = conn.execute('SELECT * FROM customers WHERE id=?', (cust_id_val,)).fetchone()
+                    if c_upd:
+                        queue_for_sync(conn, 'customers', 'update', c_upd)
+                    ll_uuid2 = str(uuid.uuid4())
+                    cur_ll2 = conn.execute(
+                        'INSERT INTO loyalty_ledger (customer_id, bill_id, points_change, reason, client_uuid) VALUES (?,?,?,?,?)',
+                        (cust_id_val, bill_id, db_money(pts_earned), f"Earned from Bill #{bill_no}", ll_uuid2)
                     )
+                    ll_row2 = conn.execute('SELECT * FROM loyalty_ledger WHERE id=?', (cur_ll2.lastrowid,)).fetchone()
+                    if ll_row2:
+                        queue_for_sync(conn, 'loyalty_ledger', 'insert', ll_row2)
 
         # ── Double-Entry Ledger Posting for Sales Bill ───────────────────────────
         pmode = (d.get('payment_mode') or 'cash').strip().lower()
@@ -4451,7 +4682,40 @@ def cancel_bill(bid):
             ref=bill['bill_no'],
             notes=f"Reversal of {bill['bill_no']} (Reason: {reason})"
         )
+
+    # Reverse every accounting line linked to the bill in the same transaction.
+    # This includes the original sale and any payments already recorded against it.
+    source_entries = conn.execute('''
+        SELECT le.debit, le.credit, le.narration, la.name AS account_name
+        FROM ledger_entries le
+        JOIN ledger_accounts la ON la.id = le.account_id
+        WHERE le.reference_table = 'bills' AND le.reference_id = ?
+        ORDER BY le.id
+    ''', (bid,)).fetchall()
+    if source_entries:
+        reversal_entries = [
+            {
+                'account_name': entry['account_name'],
+                'debit': entry['credit'],
+                'credit': entry['debit'],
+                'narration': f"Reversal of {entry['narration'] or bill['bill_no']}: {reason}"
+            }
+            for entry in source_entries
+        ]
+        post_ledger_entry(
+            conn,
+            voucher_type='journal',
+            voucher_no=f"REV-{bill['bill_no']}",
+            voucher_date=str(date.today()),
+            entries=reversal_entries,
+            reference_table='bills',
+            reference_id=bid,
+            created_by=session.get('username')
+        )
     conn.execute("UPDATE bills SET status='cancelled', cancel_reason=? WHERE id=?", (reason, bid))
+    b_upd = conn.execute('SELECT * FROM bills WHERE id=?', (bid,)).fetchone()
+    if b_upd:
+        queue_for_sync(conn, 'bills', 'update', b_upd)
 
     # Audit alert for Managing Director if Manager cancelled a bill
     if session.get('user_role') == 'manager':
@@ -4503,6 +4767,9 @@ def update_bill_date(bid):
 
     # Update bills table
     conn.execute('UPDATE bills SET date=? WHERE id=?', (full_date_str, bid))
+    b_date_upd = conn.execute('SELECT * FROM bills WHERE id=?', (bid,)).fetchone()
+    if b_date_upd:
+        queue_for_sync(conn, 'bills', 'update', b_date_upd)
 
     # Update ledger vouchers & entries
     conn.execute('''
@@ -4510,6 +4777,9 @@ def update_bill_date(bid):
         SET voucher_date = ?
         WHERE reference_table = 'bills' AND reference_id = ?
     ''', (new_date_str, bid))
+    upd_vouchers = conn.execute("SELECT * FROM ledger_vouchers WHERE reference_table = 'bills' AND reference_id = ?", (bid,)).fetchall()
+    for v in upd_vouchers:
+        queue_for_sync(conn, 'ledger_vouchers', 'update', v)
 
     conn.execute('''
         UPDATE ledger_entries
@@ -4518,13 +4788,19 @@ def update_bill_date(bid):
             SELECT id FROM ledger_vouchers WHERE reference_table = 'bills' AND reference_id = ?
         )
     ''', (new_date_str, bid))
+    upd_entries = conn.execute("SELECT * FROM ledger_entries WHERE reference_table = 'bills' AND reference_id = ?", (bid,)).fetchall()
+    for e in upd_entries:
+        queue_for_sync(conn, 'ledger_entries', 'update', e)
 
     # Update stock transaction date if matched by bill reference
     conn.execute('''
         UPDATE stock_transactions
         SET date = ?
-        WHERE ref = ?
+        WHERE reference_id = ?
     ''', (full_date_str, bill['bill_no']))
+    upd_st = conn.execute('SELECT * FROM stock_transactions WHERE reference_id = ?', (bill['bill_no'],)).fetchall()
+    for st in upd_st:
+        queue_for_sync(conn, 'stock_transactions', 'update', st)
 
     conn.commit()
     conn.close()
@@ -4541,6 +4817,30 @@ def purge_bill(bid):
         return err("Only Managing Director (MD) or Admin can permanently delete bills.", 403)
 
     conn = get_db()
+    purge_enabled = str(get_setting('allow_bill_purge', conn) or 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+    if not purge_enabled:
+        conn.close()
+        return err("Permanent bill deletion is disabled. Cancel the bill instead so its financial history remains auditable.", 403)
+
+    d = request.get_json() or {}
+    reason = (d.get('reason') or '').strip()
+    if not reason:
+        conn.close()
+        return err("A permanent deletion reason is required.", 400)
+
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS ledger_vouchers (
+            voucher_type TEXT NOT NULL,
+            voucher_no TEXT NOT NULL,
+            voucher_date TEXT,
+            reference_table TEXT,
+            reference_id INTEGER,
+            created_by TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (voucher_type, voucher_no)
+        )
+    ''')
+
     bill = conn.execute('SELECT * FROM bills WHERE id=?', (bid,)).fetchone()
     if not bill:
         conn.close()
@@ -4550,10 +4850,7 @@ def purge_bill(bid):
 
     try:
         def safe_delete(query, params=()):
-            try:
-                conn.execute(query, params)
-            except Exception:
-                pass
+            conn.execute(query, params)
 
         # If bill was active (not cancelled), restore deducted product stock to inventory
         if bill['status'] != 'cancelled':
@@ -4567,18 +4864,51 @@ def purge_bill(bid):
                         'UPDATE products SET current_stock = current_stock + ?, updated_at = CURRENT_TIMESTAMP WHERE id=?',
                         (qty_purchase, it['product_id'])
                     )
+                    upd_prod = conn.execute('SELECT * FROM products WHERE id=?', (it['product_id'],)).fetchone()
+                    if upd_prod:
+                        queue_for_sync(conn, 'products', 'update', upd_prod)
+
+        # Snapshot rows before deletion for sync tracking
+        del_items = conn.execute('SELECT * FROM bill_items WHERE bill_id=?', (bid,)).fetchall()
+        del_payments = conn.execute('SELECT * FROM bill_payments WHERE bill_id=?', (bid,)).fetchall()
+        del_loyalty = conn.execute('SELECT * FROM loyalty_ledger WHERE bill_id=?', (bid,)).fetchall()
+        del_entries = conn.execute(
+            "SELECT * FROM ledger_entries WHERE (reference_table = 'bills' AND reference_id = ?) OR narration LIKE ?",
+            (bid, f"%{bill_no}%")
+        ).fetchall()
+        del_vouchers = conn.execute("SELECT * FROM ledger_vouchers WHERE reference_table = 'bills' AND reference_id = ?", (bid,)).fetchall()
+        del_stock_tx = conn.execute(
+            "SELECT * FROM stock_transactions WHERE reference_id = ? OR reference_id = ? OR notes LIKE ?",
+            (str(bid), bill_no, f"%{bill_no}%")
+        ).fetchall()
 
         # Delete associated bill items, payments, loyalty logs
         safe_delete('DELETE FROM bill_items WHERE bill_id=?', (bid,))
+        for r in del_items:
+            queue_for_sync(conn, 'bill_items', 'delete', r)
+
         safe_delete('DELETE FROM bill_payments WHERE bill_id=?', (bid,))
+        for r in del_payments:
+            queue_for_sync(conn, 'bill_payments', 'delete', r)
+
         safe_delete('DELETE FROM loyalty_ledger WHERE bill_id=?', (bid,))
+        for r in del_loyalty:
+            queue_for_sync(conn, 'loyalty_ledger', 'delete', r)
 
         # Delete double-entry ledger entries & vouchers if present
         safe_delete("DELETE FROM ledger_entries WHERE reference_table = 'bills' AND reference_id = ?", (bid,))
         safe_delete("DELETE FROM ledger_entries WHERE narration LIKE ?", (f"%{bill_no}%",))
+        for r in del_entries:
+            queue_for_sync(conn, 'ledger_entries', 'delete', r)
+
+        safe_delete("DELETE FROM ledger_vouchers WHERE reference_table = 'bills' AND reference_id = ?", (bid,))
+        for r in del_vouchers:
+            queue_for_sync(conn, 'ledger_vouchers', 'delete', r)
 
         # Delete associated stock transactions matching bill_no or reference_id
-        safe_delete("DELETE FROM stock_transactions WHERE reference_id = ? OR ref = ? OR notes LIKE ?", (str(bid), bill_no, f"%{bill_no}%"))
+        safe_delete("DELETE FROM stock_transactions WHERE reference_id = ? OR reference_id = ? OR notes LIKE ?", (str(bid), bill_no, f"%{bill_no}%"))
+        for r in del_stock_tx:
+            queue_for_sync(conn, 'stock_transactions', 'delete', r)
 
         # Delete credit notes referencing this bill if any
         safe_delete("DELETE FROM credit_note_items WHERE credit_note_id IN (SELECT id FROM credit_notes WHERE bill_id=?)", (bid,))
@@ -4586,11 +4916,12 @@ def purge_bill(bid):
 
         # Delete the bill record
         conn.execute('DELETE FROM bills WHERE id=?', (bid,))
+        queue_for_sync(conn, 'bills', 'delete', bill)
 
         conn.commit()
         conn.close()
 
-        log_activity('PURGE_BILL', f"Permanently deleted Bill {bill_no} (ID: {bid})", 'bills', bid)
+        log_activity('PURGE_BILL', f"Permanently deleted Bill {bill_no} (ID: {bid}). Reason: {reason}", 'bills', bid)
         return ok(message=f"Bill {bill_no} permanently deleted and inventory corrected successfully")
     except Exception as e:
         conn.rollback()
@@ -4642,12 +4973,20 @@ def add_bill_payment(bid):
         'UPDATE bills SET amount_paid=?, amount_due=?, status=? WHERE id=?',
         (new_paid, new_due, new_status, bid)
     )
+    upd_bill = conn.execute('SELECT * FROM bills WHERE id=?', (bid,)).fetchone()
+    if upd_bill:
+        queue_for_sync(conn, 'bills', 'update', upd_bill)
+
+    pmt_uuid = str(uuid.uuid4())
     cur_p = conn.execute(
-        '''INSERT INTO bill_payments (bill_id, amount, payment_mode, received_by, notes)
-           VALUES (?,?,?,?,?)''',
-        (bid, p_amount, payment_mode, session.get('username'), notes)
+        '''INSERT INTO bill_payments (bill_id, amount, payment_mode, received_by, notes, client_uuid)
+           VALUES (?,?,?,?,?,?)''',
+        (bid, p_amount, payment_mode, session.get('username'), notes, pmt_uuid)
     )
     pmt_id = cur_p.lastrowid
+    pmt_row = conn.execute('SELECT * FROM bill_payments WHERE id=?', (pmt_id,)).fetchone()
+    if pmt_row:
+        queue_for_sync(conn, 'bill_payments', 'insert', pmt_row)
 
     # ── Double-Entry Ledger Posting for Bill Payment Received ───────────────
     pmode = payment_mode.strip().lower()
@@ -4741,11 +5080,11 @@ def create_credit_note(bid):
         cn_no = next_cn_no(conn, for_date=cn_date)
 
         computed_items = []
-        subtotal = 0.0
-        cgst_total = 0.0
-        sgst_total = 0.0
-        igst_total = 0.0
-        total = 0.0
+        subtotal = money(0)
+        cgst_total = money(0)
+        sgst_total = money(0)
+        igst_total = money(0)
+        total = money(0)
 
         for item in items:
             b_item_id = item.get('bill_item_id')
@@ -4770,21 +5109,22 @@ def create_credit_note(bid):
                     f"exceeds original billed quantity ({orig_qty}) for item '{orig_item['product_name']}'"
                 )
 
-            unit_price = float(orig_item['unit_price'])
-            gst_rate = float(orig_item['gst_rate'] or 0)
-            item_discount_pct = float(orig_item['discount'] or 0)
+            unit_price = to_decimal(orig_item['unit_price'])
+            gst_rate = to_decimal(orig_item['gst_rate'] or 0)
+            item_discount_pct = to_decimal(orig_item['discount'] or 0)
+            ret_qty_decimal = to_decimal(ret_qty)
 
-            taxable_amt = round(ret_qty * unit_price * (1 - item_discount_pct / 100), 2)
+            taxable_amt = money(ret_qty_decimal * unit_price * (Decimal('1') - item_discount_pct / Decimal('100')))
             if is_interstate:
-                cgst_amt = 0.0
-                sgst_amt = 0.0
-                igst_amt = round(taxable_amt * gst_rate / 100, 2)
+                cgst_amt = money(0)
+                sgst_amt = money(0)
+                igst_amt = money(taxable_amt * gst_rate / Decimal('100'))
             else:
-                cgst_amt = round(taxable_amt * gst_rate / 2 / 100, 2)
-                sgst_amt = round(taxable_amt * gst_rate / 2 / 100, 2)
-                igst_amt = 0.0
+                cgst_amt = money(taxable_amt * gst_rate / Decimal('2') / Decimal('100'))
+                sgst_amt = money(taxable_amt * gst_rate / Decimal('2') / Decimal('100'))
+                igst_amt = money(0)
 
-            item_amount = round(taxable_amt + cgst_amt + sgst_amt + igst_amt, 2)
+            item_amount = money(taxable_amt + cgst_amt + sgst_amt + igst_amt)
 
             subtotal += taxable_amt
             cgst_total += cgst_amt
@@ -4798,7 +5138,7 @@ def create_credit_note(bid):
                     conn, orig_item, ret_qty,
                     ref=bill['bill_no'],
                     notes=f"Credit note {cn_no} against {bill['bill_no']}",
-                    unit_price=unit_price
+                    unit_price=float(unit_price)
                 )
 
             computed_items.append({
@@ -4817,11 +5157,11 @@ def create_credit_note(bid):
                 'amount': item_amount
             })
 
-        subtotal = round(subtotal, 2)
-        cgst_total = round(cgst_total, 2)
-        sgst_total = round(sgst_total, 2)
-        igst_total = round(igst_total, 2)
-        total = round(total, 2)
+        subtotal = money(subtotal)
+        cgst_total = money(cgst_total)
+        sgst_total = money(sgst_total)
+        igst_total = money(igst_total)
+        total = money(total)
 
         cn_insert_date = d.get('date') or d.get('created_at')
         c = conn.execute('''
@@ -4830,7 +5170,7 @@ def create_credit_note(bid):
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,COALESCE(?, CURRENT_TIMESTAMP))
         ''', (
             cn_no, bid, bill['customer_id'], bill['customer_name'], reason,
-            subtotal, cgst_total, sgst_total, igst_total, total, 'issued', session.get('username'), cn_insert_date
+            db_money(subtotal), db_money(cgst_total), db_money(sgst_total), db_money(igst_total), db_money(total), 'issued', session.get('username'), cn_insert_date
         ))
         cn_id = c.lastrowid
 
@@ -4843,8 +5183,8 @@ def create_credit_note(bid):
             ''', (
                 cn_id, item_data['bill_item_id'], item_data['product_id'], item_data['product_name'],
                 item_data['hsn_code'], item_data['unit'], item_data['quantity'],
-                item_data['unit_price'], item_data['gst_rate'], item_data['taxable_amt'],
-                item_data['cgst_amt'], item_data['sgst_amt'], item_data['igst_amt'], item_data['amount']
+                db_money(item_data['unit_price']), db_money(item_data['gst_rate']), db_money(item_data['taxable_amt']),
+                db_money(item_data['cgst_amt']), db_money(item_data['sgst_amt']), db_money(item_data['igst_amt']), db_money(item_data['amount'])
             ))
 
         # ── Double-Entry Ledger Posting for Credit Note ─────────────────────────
@@ -4857,18 +5197,18 @@ def create_credit_note(bid):
             credit_account = 'Sundry Debtors'
 
         cn_entries = [
-            {'account_name': 'Sales Account', 'debit': round(subtotal, 2), 'credit': 0, 'narration': f"Sales return for CN {cn_no}"}
+            {'account_name': 'Sales Account', 'debit': db_money(subtotal), 'credit': 0, 'narration': f"Sales return for CN {cn_no}"}
         ]
         if is_interstate:
             if igst_total > 0:
-                cn_entries.append({'account_name': 'IGST Payable', 'debit': round(igst_total, 2), 'credit': 0, 'narration': f"IGST reversal for CN {cn_no}"})
+                cn_entries.append({'account_name': 'IGST Payable', 'debit': db_money(igst_total), 'credit': 0, 'narration': f"IGST reversal for CN {cn_no}"})
         else:
             if cgst_total > 0:
-                cn_entries.append({'account_name': 'CGST Payable', 'debit': round(cgst_total, 2), 'credit': 0, 'narration': f"CGST reversal for CN {cn_no}"})
+                cn_entries.append({'account_name': 'CGST Payable', 'debit': db_money(cgst_total), 'credit': 0, 'narration': f"CGST reversal for CN {cn_no}"})
             if sgst_total > 0:
-                cn_entries.append({'account_name': 'SGST Payable', 'debit': round(sgst_total, 2), 'credit': 0, 'narration': f"SGST reversal for CN {cn_no}"})
+                cn_entries.append({'account_name': 'SGST Payable', 'debit': db_money(sgst_total), 'credit': 0, 'narration': f"SGST reversal for CN {cn_no}"})
 
-        cn_entries.append({'account_name': credit_account, 'debit': 0, 'credit': round(total, 2), 'narration': f"Credit Note refund/reversal for CN {cn_no}"})
+        cn_entries.append({'account_name': credit_account, 'debit': 0, 'credit': db_money(total), 'narration': f"Credit Note refund/reversal for CN {cn_no}"})
 
         tot_dr = sum(e['debit'] for e in cn_entries)
         tot_cr = sum(e['credit'] for e in cn_entries)
@@ -5141,6 +5481,15 @@ def create_purchase_order():
                 (oid, amount_paid, d.get('payment_mode', 'bank_transfer'), session.get('username'), 'Initial payment at PO creation')
             )
 
+        if supplier and amount_due > 0 and d.get('status', 'received') != 'cancelled':
+            conn.execute(
+                'UPDATE suppliers SET balance = COALESCE(balance, 0) + ? WHERE id=?',
+                (amount_due, d.get('supplier_id'))
+            )
+            upd_sup = conn.execute('SELECT * FROM suppliers WHERE id=?', (d.get('supplier_id'),)).fetchone()
+            if upd_sup:
+                queue_for_sync(conn, 'suppliers', 'update', upd_sup)
+
         for it in items:
             qty = float(it['quantity']); price = float(it['unit_price']); amount = round(qty * price, 2)
             conn.execute(
@@ -5249,6 +5598,14 @@ def add_po_payment(oid):
         'UPDATE purchase_orders SET amount_paid=?, amount_due=? WHERE id=?',
         (new_paid, new_due, oid)
     )
+    if po['supplier_id']:
+        conn.execute(
+            'UPDATE suppliers SET balance = MAX(COALESCE(balance, 0) - ?, 0) WHERE id=?',
+            (p_amount, po['supplier_id'])
+        )
+        upd_sup = conn.execute('SELECT * FROM suppliers WHERE id=?', (po['supplier_id'],)).fetchone()
+        if upd_sup:
+            queue_for_sync(conn, 'suppliers', 'update', upd_sup)
     cur_pop = conn.execute(
         '''INSERT INTO po_payments (order_id, amount, payment_mode, recorded_by, notes)
            VALUES (?,?,?,?,?)''',
@@ -5290,6 +5647,207 @@ def add_po_payment(oid):
     res['items'] = dict_rows(items)
     res['payments'] = dict_rows(payments)
     return ok(res, f"Payment of ₹{p_amount:.2f} recorded for PO {po['po_no']}")
+
+
+@app.route('/api/purchase-orders/<int:oid>/return', methods=['POST'])
+@require_permission('purchase.manage')
+def create_purchase_return(oid):
+    """Issue a debit note for received purchase quantities and remove them from stock."""
+    d = request.get_json()
+    if d is None:
+        return err("Invalid or missing JSON payload")
+    reason = (d.get('reason') or '').strip()
+    items = d.get('items', [])
+    if not reason:
+        return err("Reason for purchase return is required")
+    if not isinstance(items, list) or not items:
+        return err("Purchase return must contain at least one item")
+
+    init_db()
+    conn = get_db()
+    try:
+        po = conn.execute('SELECT * FROM purchase_orders WHERE id=?', (oid,)).fetchone()
+        if not po:
+            return err("Purchase order not found", 404)
+        if po['status'] == 'cancelled':
+            return err("Cannot return a cancelled purchase order")
+
+        po_items = {
+            row['id']: row for row in conn.execute(
+                'SELECT * FROM purchase_order_items WHERE order_id=?', (oid,)
+            ).fetchall()
+        }
+        returned_rows = conn.execute('''
+            SELECT pri.purchase_order_item_id, COALESCE(SUM(pri.quantity), 0) AS returned_qty
+            FROM purchase_return_items pri
+            JOIN purchase_returns pr ON pr.id = pri.return_id
+            WHERE pr.order_id=?
+            GROUP BY pri.purchase_order_item_id
+        ''', (oid,)).fetchall()
+        returned = {row['purchase_order_item_id']: float(row['returned_qty']) for row in returned_rows}
+
+        prepared = []
+        total = money(0)
+        for item in items:
+            item_id = item.get('purchase_order_item_id')
+            if item_id not in po_items:
+                return err(f"Invalid purchase order item ID: {item_id}")
+            try:
+                quantity = to_decimal(item.get('quantity', 0))
+            except ValueError:
+                return err("Return quantity must be numeric")
+            original = po_items[item_id]
+            already_returned = to_decimal(returned.get(item_id, 0))
+            if quantity <= 0:
+                return err("Return quantity must be greater than zero")
+            if already_returned + quantity > to_decimal(original['quantity']):
+                return err(f"Return quantity exceeds received quantity for {original['product_name']}")
+            if not original['product_id']:
+                return err(f"Product is missing for purchase item {item_id}")
+            unit_price = to_decimal(original['unit_price'])
+            amount = money(quantity * unit_price)
+            total += amount
+            prepared.append((original, quantity, unit_price, amount))
+
+        debit_note_no = next_debit_note_no(conn)
+        conn.execute('''
+            INSERT INTO purchase_returns
+            (debit_note_no, order_id, supplier_id, reason, total, status, created_by)
+            VALUES (?,?,?,?,?,?,?)
+        ''', (debit_note_no, oid, po['supplier_id'], reason, db_money(total), 'issued', session.get('username')))
+        return_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+
+        for original, quantity, unit_price, amount in prepared:
+            conn.execute('''
+                INSERT INTO purchase_return_items
+                (return_id, purchase_order_item_id, product_id, quantity, unit_price, amount)
+                VALUES (?,?,?,?,?,?)
+            ''', (return_id, original['id'], original['product_id'], float(quantity), db_money(unit_price), db_money(amount)))
+            update_stock(conn, original['product_id'], -float(quantity), 'out', float(unit_price), debit_note_no,
+                         po['supplier_id'], notes=f"Purchase return {debit_note_no}: {reason}")
+
+        if po['supplier_id'] and total > 0:
+            conn.execute('UPDATE suppliers SET balance = COALESCE(balance, 0) - ? WHERE id=?',
+                         (db_money(total), po['supplier_id']))
+            upd_sup = conn.execute('SELECT * FROM suppliers WHERE id=?', (po['supplier_id'],)).fetchone()
+            if upd_sup:
+                queue_for_sync(conn, 'suppliers', 'update', upd_sup)
+
+        post_ledger_entry(
+            conn,
+            voucher_type='journal',
+            voucher_no=debit_note_no,
+            voucher_date=str(date.today()),
+            entries=[
+                {'account_name': 'Sundry Creditors', 'debit': db_money(total), 'credit': 0,
+                 'narration': f"Purchase return {debit_note_no}: {reason}"},
+                {'account_name': 'Purchase Account', 'debit': 0, 'credit': db_money(total),
+                 'narration': f"Purchase return {debit_note_no}: {reason}"},
+            ],
+            reference_table='purchase_returns', reference_id=return_id,
+            created_by=session.get('username')
+        )
+        conn.commit()
+        result = dict_row(conn.execute('SELECT * FROM purchase_returns WHERE id=?', (return_id,)).fetchone())
+        result['items'] = dict_rows(conn.execute('SELECT * FROM purchase_return_items WHERE return_id=?', (return_id,)).fetchall())
+        return ok(result, f"Purchase return {debit_note_no} created"), 201
+    except Exception as exc:
+        conn.rollback()
+        return err(f"Purchase return creation failed: {exc}", 500)
+    finally:
+        conn.close()
+
+
+@app.route('/api/purchase-returns', methods=['GET'])
+@require_permission('purchase.view')
+def list_purchase_returns():
+    conn = get_db()
+    rows = conn.execute('''
+        SELECT pr.*, po.po_no, s.name AS supplier_name
+        FROM purchase_returns pr
+        LEFT JOIN purchase_orders po ON po.id = pr.order_id
+        LEFT JOIN suppliers s ON s.id = pr.supplier_id
+        ORDER BY pr.created_at DESC, pr.id DESC
+    ''').fetchall()
+    conn.close()
+    return ok(dict_rows(rows))
+
+
+@app.route('/api/purchase-returns/<int:return_id>', methods=['GET'])
+@require_permission('purchase.view')
+def get_purchase_return(return_id):
+    conn = get_db()
+    row = conn.execute('''
+        SELECT pr.*, po.po_no, s.name AS supplier_name
+        FROM purchase_returns pr
+        LEFT JOIN purchase_orders po ON po.id = pr.order_id
+        LEFT JOIN suppliers s ON s.id = pr.supplier_id
+        WHERE pr.id=?
+    ''', (return_id,)).fetchone()
+    if not row:
+        conn.close()
+        return err('Debit note not found', 404)
+    result = dict_row(row)
+    result['items'] = dict_rows(conn.execute(
+        'SELECT * FROM purchase_return_items WHERE return_id=?', (return_id,)
+    ).fetchall())
+    conn.close()
+    return ok(result)
+
+
+@app.route('/api/purchase-returns/<int:return_id>/reverse', methods=['POST'])
+@require_permission('purchase.manage')
+def reverse_purchase_return(return_id):
+    d = request.get_json() or {}
+    reason = (d.get('reason') or '').strip()
+    if not reason:
+        return err('A reversal reason is required')
+
+    init_db()
+    conn = get_db()
+    try:
+        debit_note = conn.execute('SELECT * FROM purchase_returns WHERE id=?', (return_id,)).fetchone()
+        if not debit_note:
+            return err('Debit note not found', 404)
+        if debit_note['status'] == 'reversed':
+            return err('Debit note is already reversed')
+
+        items = conn.execute('SELECT * FROM purchase_return_items WHERE return_id=?', (return_id,)).fetchall()
+        for item in items:
+            update_stock(conn, item['product_id'], float(item['quantity']), 'in', float(item['unit_price']),
+                         f"REV-{debit_note['debit_note_no']}", debit_note['supplier_id'],
+                         notes=f"Reversal of {debit_note['debit_note_no']}: {reason}")
+        if debit_note['supplier_id'] and debit_note['total']:
+            conn.execute('UPDATE suppliers SET balance = COALESCE(balance, 0) + ? WHERE id=?',
+                         (float(debit_note['total']), debit_note['supplier_id']))
+            upd_sup = conn.execute('SELECT * FROM suppliers WHERE id=?', (debit_note['supplier_id'],)).fetchone()
+            if upd_sup:
+                queue_for_sync(conn, 'suppliers', 'update', upd_sup)
+
+        source_entries = conn.execute('''
+            SELECT le.debit, le.credit, le.narration, la.name AS account_name
+            FROM ledger_entries le
+            JOIN ledger_accounts la ON la.id = le.account_id
+            WHERE le.reference_table='purchase_returns' AND le.reference_id=?
+            ORDER BY le.id
+        ''', (return_id,)).fetchall()
+        if source_entries:
+            post_ledger_entry(
+                conn, 'journal', f"REV-{debit_note['debit_note_no']}", str(date.today()),
+                [{'account_name': entry['account_name'], 'debit': entry['credit'], 'credit': entry['debit'],
+                  'narration': f"Reversal of {entry['narration'] or debit_note['debit_note_no']}: {reason}"}
+                 for entry in source_entries],
+                reference_table='purchase_returns', reference_id=return_id,
+                created_by=session.get('username')
+            )
+        conn.execute('UPDATE purchase_returns SET status=? WHERE id=?', ('reversed', return_id))
+        conn.commit()
+        return ok(message=f"Debit note {debit_note['debit_note_no']} reversed")
+    except Exception as exc:
+        conn.rollback()
+        return err(f"Debit note reversal failed: {exc}", 500)
+    finally:
+        conn.close()
 
 # ─── Expenses & Other Income ─────────────────────────────────────────────────
 
@@ -7273,14 +7831,52 @@ def test_external_backup_route():
         return ok(data={'message': msg}, message=f"External Backup Success: {msg}")
     return err(f"External Backup Failed: {msg}", 400)
 
+
+# ─── Supabase Cloud Synchronization Telemetry ───────────────────────────────
+
+@app.route('/api/sync/status', methods=['GET'])
+@require_permission('backup.manage', 'settings.view', 'settings.manage')
+def get_sync_status_route():
+    status = get_sync_status()
+    return ok(data=status)
+
+
+@app.route('/api/sync/now', methods=['POST'])
+@require_permission('backup.manage', 'settings.manage')
+def trigger_sync_now_route():
+    synced, failed = process_sync_queue()
+    status = get_sync_status()
+    return ok(data=status, message=f"Sync cycle executed: {synced} synced, {failed} failed.")
+
+
+@app.route('/api/sync/retry-failed', methods=['POST'])
+@require_permission('backup.manage', 'settings.manage')
+def retry_failed_sync_route():
+    count = retry_failed_sync_queue()
+    status = get_sync_status()
+    return ok(data={'reset_count': count, 'status': status}, message=f"Reset {count} failed queue records for re-synchronization.")
+
+
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
+    try:
+        validate_sync_configuration()
+    except RuntimeError as e:
+        print("\n" + "=" * 75)
+        print(str(e))
+        print("=" * 75 + "\n")
+        sys.exit(1)
+
     init_db()
     try:
         start_cloud_backup_scheduler()
     except Exception as e:
         print(f"Cloud backup scheduler init notice: {e}")
+    try:
+        start_sync_scheduler()
+    except Exception as e:
+        print(f"Sync scheduler init notice: {e}")
 
     print("=" * 60)
     print("  Meat Products of India — Billing & Inventory App")

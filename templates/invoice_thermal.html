@@ -5,25 +5,37 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Thermal Receipt - Bill #{{ bill_id }}</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      font-size: 12px;
-      line-height: 1.4;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, monospace, sans-serif;
+      font-size: {{ '11px' if width == '58' else '12px' }};
+      line-height: 1.35;
       color: #000;
-      background: #e0e0e0;
+      background: #e2e8f0;
       padding: 20px 0;
       -webkit-font-smoothing: antialiased;
     }
 
     .receipt-container {
-      width: {{ '210px' if width == '58' else '280px' }};
+      width: {{ '220px' if width == '58' else '290px' }};
       margin: 0 auto;
       background: #fff;
       padding: 12px 10px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.18);
       border-radius: 4px;
+      box-sizing: border-box;
+    }
+
+    @page {
+      size: {{ '58mm auto' if width == '58' else '80mm auto' }};
+      margin: 0mm !important;
     }
 
     @media print {
@@ -33,45 +45,45 @@
         box-shadow: none !important;
         text-shadow: none !important;
         filter: none !important;
+        box-sizing: border-box !important;
       }
       html, body {
         background: #fff !important;
         margin: 0 !important;
         padding: 0 !important;
         width: 100% !important;
+        min-width: 0 !important;
       }
       .receipt-container {
         width: 100% !important;
-        max-width: 100% !important;
+        max-width: {{ '48mm' if width == '58' else '72mm' }} !important;
         margin: 0 !important;
-        padding: 0 3mm !important;
+        padding: 1mm 2mm 3mm 2mm !important;
         box-sizing: border-box !important;
         box-shadow: none !important;
         border-radius: 0 !important;
+        border: none !important;
         overflow: hidden !important;
+        word-break: break-word !important;
       }
-      .no-print {
+      .no-print, .no-print-toolbar {
         display: none !important;
       }
-      @page {
-        size: {{ width }}mm auto;
-        margin: 0mm;
-      }
       .shop-name {
-        font-size: 13px !important;
+        font-size: {{ '13px' if width == '58' else '14px' }} !important;
         font-weight: 800 !important;
         margin-bottom: 1px !important;
         color: #000 !important;
       }
       .shop-tagline {
-        font-size: 9.5px !important;
+        font-size: {{ '9px' if width == '58' else '10px' }} !important;
         font-style: italic !important;
         color: #000 !important;
         margin-bottom: 2px !important;
       }
       .shop-details {
-        font-size: 9px !important;
-        line-height: 1.15 !important;
+        font-size: {{ '9px' if width == '58' else '10px' }} !important;
+        line-height: 1.2 !important;
         color: #000 !important;
       }
       .divider-dash {
@@ -83,9 +95,9 @@
         margin: 3px 0 !important;
       }
       .receipt-table {
-        font-size: 10px !important;
-        table-layout: fixed !important;
+        font-size: {{ '10px' if width == '58' else '11px' }} !important;
         width: 100% !important;
+        border-collapse: collapse !important;
       }
       .receipt-table th, .receipt-table td {
         padding: 1px 0 !important;
@@ -93,7 +105,9 @@
         word-break: break-word !important;
       }
       .text-right {
+        text-align: right !important;
         white-space: nowrap !important;
+        padding-left: 2px !important;
       }
     }
 
@@ -103,14 +117,15 @@
     .bold { font-weight: 700; }
     
     .shop-name {
-      font-size: 15px;
+      font-size: {{ '14px' if width == '58' else '16px' }};
       font-weight: 800;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.3px;
       margin-bottom: 2px;
+      line-height: 1.2;
     }
 
     .shop-tagline {
-      font-size: 10.5px;
+      font-size: 10px;
       color: #555;
       font-style: italic;
       margin-bottom: 3px;
@@ -119,33 +134,35 @@
     .shop-details {
       font-size: 10px;
       color: #333;
-      line-height: 1.3;
+      line-height: 1.25;
     }
 
     .divider-dash {
-      border-bottom: 1px dashed #666;
-      margin: 8px 0;
+      border-bottom: 1px dashed #444;
+      margin: 5px 0;
+      width: 100%;
     }
     
     .divider-double {
-      border-bottom: 3px double #000;
-      margin: 8px 0;
+      border-bottom: 2px solid #000;
+      margin: 5px 0;
+      width: 100%;
     }
 
     .receipt-table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 11.5px;
+      font-size: {{ '10.5px' if width == '58' else '11.5px' }};
     }
 
     .receipt-table th, .receipt-table td {
-      padding: 3px 0;
+      padding: 2px 0;
       vertical-align: top;
     }
 
     .num-align {
       font-variant-numeric: tabular-nums;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace, sans-serif;
     }
 
     .no-print-toolbar {
@@ -180,7 +197,7 @@
 
 <div class="no-print no-print-toolbar">
   <button class="toolbar-btn" onclick="window.location.href='/invoice/{{ bill_id }}'">📄 Switch to A4 Invoice</button>
-  <button class="toolbar-btn" onclick="toggleWidth()">🔄 Paper: {{ width }}mm</button>
+  <button class="toolbar-btn" onclick="toggleWidth()">🔄 Paper: {{ width }}mm (Click to Toggle)</button>
   <button class="toolbar-btn" onclick="window.print()">🖨️ Print Receipt</button>
   <button class="toolbar-btn" onclick="window.close()">✕ Close</button>
 </div>
@@ -193,8 +210,17 @@
   const billId = {{ bill_id }};
   const paperWidth = "{{ width }}";
 
-  function toggleWidth() {
+  async function toggleWidth() {
     const nextWidth = paperWidth === '80' ? '58' : '80';
+    try {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thermal_paper_width: nextWidth })
+      });
+    } catch(e) {
+      console.warn('Could not persist paper width setting:', e);
+    }
     window.location.href = `/invoice/${billId}/thermal?width=${nextWidth}`;
   }
 
@@ -202,11 +228,43 @@
     return parseFloat(n || 0).toFixed(d);
   }
 
-  function fmtDate(dt) {
-    if (!dt) return '';
+  function parseDate(dt) {
+    if (!dt) return null;
+    if (dt instanceof Date) return dt;
+    if (typeof dt === 'string') {
+      const s = dt.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+        const [y, m, d] = s.split('-').map(Number);
+        return new Date(y, m - 1, d);
+      }
+      const match = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+      if (match) {
+        const [_, y, m, d, hr, min, sec] = match;
+        return new Date(Number(y), Number(m) - 1, Number(d), Number(hr), Number(min), Number(sec || 0));
+      }
+    }
     const d = new Date(dt);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function fmtDate(dt) {
+    const d = parseDate(dt);
+    if (!d) return '';
     return d.toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' +
            d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+  }
+
+  function fmtQty(qty, unit = '') {
+    const n = parseFloat(qty || 0);
+    const formattedNum = (Math.abs(n - Math.round(n)) < 0.0001) ? Math.round(n).toString() : parseFloat(n.toFixed(3)).toString();
+    let u = (unit || '').trim();
+    if (u) {
+      if (u.toLowerCase() === 'pack' && n > 1) {
+        u = 'packs';
+      }
+      return `${formattedNum} ${u}`;
+    }
+    return formattedNum;
   }
 
   async function loadReceipt() {
@@ -229,6 +287,7 @@
 
   function renderReceipt(data) {
     const s = data.settings || {};
+    const curr = s.currency_symbol || '₹';
     const isGstGlobal = s.gst_enabled !== 'false' && s.gst_enabled !== false;
     const shopName = s.shop_name || 'Meat Products of India';
     const shopTagline = (s.shop_tagline !== undefined && s.shop_tagline !== null) ? s.shop_tagline : 'Fresh. Pure. Delicious.';
@@ -245,26 +304,34 @@
 
     let paymentInfo = '';
     if (payments.length > 1) {
-      paymentInfo = payments.map(p => `${(p.payment_mode || 'cash').toUpperCase()}: ₹${fmt(p.amount)}`).join('<br>');
+      paymentInfo = payments.map(p => `${(p.payment_mode || 'cash').toUpperCase()}: ${curr}${fmt(p.amount)}`).join(', ');
     } else {
       paymentInfo = (data.payment_mode || 'cash').toUpperCase();
     }
 
     let itemsHtml = '';
+    let calcSubtotal = 0;
     items.forEach((it) => {
       const name = it.product_name || '';
-      const qtyStr = `${fmt(it.quantity, 3)} ${it.unit || ''} x ₹${fmt(it.unit_price)}`;
-      const amtStr = `₹${fmt(it.amount)}`;
+      const qtyNum = parseFloat(it.quantity || 0);
+      const priceNum = parseFloat(it.unit_price || 0);
+      const lineOrig = qtyNum * priceNum;
+      calcSubtotal += lineOrig;
+
+      const qtyStr = `${fmtQty(it.quantity, it.unit)} x ${curr}${fmt(it.unit_price)}`;
+      const amtStr = `${curr}${fmt(lineOrig)}`;
       itemsHtml += `
         <tr>
-          <td colspan="2" class="bold" style="padding-top: 3px; font-size: 11px;">${name}</td>
+          <td colspan="2" class="bold" style="padding-top: 3px; font-size: 11px; color: #000; word-break: break-word;">${name}</td>
         </tr>
-        <tr style="border-bottom: 1px dashed #ddd;">
-          <td style="padding-bottom: 3px; color: #444; font-size: 10.5px;">${qtyStr}</td>
-          <td class="text-right bold num-align" style="padding-bottom: 3px; font-size: 11px;">${amtStr}</td>
+        <tr style="border-bottom: 1px dotted #ccc;">
+          <td style="padding-bottom: 3px; color: #333; font-size: 10px;">${qtyStr}</td>
+          <td class="text-right bold num-align" style="padding-bottom: 3px; font-size: 10.5px; color: #000; white-space: nowrap;">${amtStr}</td>
         </tr>
       `;
     });
+
+    const displaySubtotal = (data.subtotal && parseFloat(data.subtotal) >= calcSubtotal) ? parseFloat(data.subtotal) : calcSubtotal;
 
     let gstBreakupHtml = '';
     if (isGstGlobal) {
@@ -272,23 +339,23 @@
         if (data.igst > 0) {
           gstBreakupHtml += `
             <tr class="num-align">
-              <td style="color:#555">IGST:</td>
-              <td class="text-right">₹${fmt(data.igst)}</td>
+              <td style="color:#444; padding:1px 0;">IGST:</td>
+              <td class="text-right" style="white-space:nowrap; padding:1px 0;">${curr}${fmt(data.igst)}</td>
             </tr>`;
         }
       } else {
         if (data.cgst > 0) {
           gstBreakupHtml += `
             <tr class="num-align">
-              <td style="color:#555">CGST:</td>
-              <td class="text-right">₹${fmt(data.cgst)}</td>
+              <td style="color:#444; padding:1px 0;">CGST:</td>
+              <td class="text-right" style="white-space:nowrap; padding:1px 0;">${curr}${fmt(data.cgst)}</td>
             </tr>`;
         }
         if (data.sgst > 0) {
           gstBreakupHtml += `
             <tr class="num-align">
-              <td style="color:#555">SGST:</td>
-              <td class="text-right">₹${fmt(data.sgst)}</td>
+              <td style="color:#444; padding:1px 0;">SGST:</td>
+              <td class="text-right" style="white-space:nowrap; padding:1px 0;">${curr}${fmt(data.sgst)}</td>
             </tr>`;
         }
       }
@@ -296,32 +363,38 @@
 
     const html = `
       <div class="text-center">
-        ${shopLogo ? `<img src="${shopLogo}" alt="Logo" style="max-height:48px;max-width:90%;object-fit:contain;margin:0 auto 4px auto;display:block;">` : ''}
+        ${shopLogo ? `<img src="${shopLogo}" alt="Logo" style="max-height:42px;max-width:85%;object-fit:contain;margin:0 auto 4px auto;display:block;">` : ''}
         <div class="shop-name" style="${shopBrandFont ? `font-family: '${shopBrandFont}', sans-serif;` : ''}">${shopName}</div>
         ${shopTagline ? `<div class="shop-tagline">${shopTagline}</div>` : ''}
         <div class="shop-details">
           ${shopAddr ? `<div>${shopAddr}</div>` : ''}
           ${shopPhone ? `<div>Ph: ${shopPhone}</div>` : ''}
-          ${shopGstin ? `<div class="bold" style="margin-top:2px">GSTIN: ${shopGstin}</div>` : ''}
+          ${shopGstin ? `<div class="bold" style="margin-top:1px">GSTIN: ${shopGstin}</div>` : ''}
         </div>
       </div>
 
       <div class="divider-dash"></div>
 
-      <div style="font-size: 11px; line-height: 1.5; color: #333;">
-        <div><span class="bold" style="color:#000">Bill No:</span> <span class="num-align">${data.bill_no}</span></div>
-        <div><span class="bold" style="color:#000">Date:</span> <span class="num-align">${fmtDate(data.date)}</span></div>
-        ${data.customer_name ? `<div><span class="bold" style="color:#000">Cust:</span> ${data.customer_name}</div>` : ''}
-        ${data.customer_phone ? `<div><span class="bold" style="color:#000">Ph:</span> <span class="num-align">${data.customer_phone}</span></div>` : ''}
-      </div>
+      <table style="width:100%; border-collapse:collapse; font-size:10.5px; line-height:1.35; color:#000;">
+        <tr>
+          <td style="text-align:left; vertical-align:top; padding:1px 0;"><span class="bold">Bill No:</span> <span class="num-align">${data.bill_no}</span></td>
+          <td style="text-align:right; vertical-align:top; white-space:nowrap; padding:1px 0;"><span class="num-align">${fmtDate(data.date)}</span></td>
+        </tr>
+        ${data.customer_name ? `
+        <tr>
+          <td colspan="2" style="text-align:left; vertical-align:top; padding:1px 0; word-break:break-word;">
+            <span class="bold">Cust:</span> ${data.customer_name}${data.customer_phone ? ` <span class="num-align">(${data.customer_phone})</span>` : ''}
+          </td>
+        </tr>` : ''}
+      </table>
 
       <div class="divider-dash"></div>
 
       <table class="receipt-table">
         <thead>
           <tr style="border-bottom: 1px dashed #000; font-weight: bold; color: #000;">
-            <th class="text-left" style="padding-bottom: 4px;">Item / Qty</th>
-            <th class="text-right" style="padding-bottom: 4px;">Amt</th>
+            <th class="text-left" style="padding-bottom: 3px; font-size: 10.5px;">Item / Qty</th>
+            <th class="text-right" style="padding-bottom: 3px; font-size: 10.5px; white-space: nowrap;">Amt</th>
           </tr>
         </thead>
         <tbody>
@@ -331,45 +404,45 @@
 
       <div class="divider-dash"></div>
 
-      <table class="receipt-table">
+      <table class="receipt-table" style="width:100%; border-collapse:collapse; font-size:10.5px; line-height:1.35;">
         <tr class="num-align">
-          <td style="color:#555">Subtotal:</td>
-          <td class="text-right">₹${fmt(data.subtotal)}</td>
+          <td style="color:#444; padding:1px 0;">Subtotal:</td>
+          <td class="text-right" style="white-space:nowrap; padding:1px 0;">${curr}${fmt(displaySubtotal)}</td>
         </tr>
         ${data.discount_amount > 0 ? `
           <tr class="num-align">
-            <td style="color:#555">Discount (${fmt(data.discount_percent)}%):</td>
-            <td class="text-right">-₹${fmt(data.discount_amount)}</td>
+            <td style="color:#444; padding:1px 0;">Discount (${fmt(data.discount_percent)}%):</td>
+            <td class="text-right" style="white-space:nowrap; padding:1px 0;">-${curr}${fmt(data.discount_amount)}</td>
           </tr>` : ''}
         ${gstBreakupHtml}
       </table>
 
       <div class="divider-double"></div>
 
-      <table class="receipt-table" style="font-size: 12.5px;">
-        <tr class="bold" style="color: #000;">
-          <td>GRAND TOTAL:</td>
-          <td class="text-right num-align" style="font-size: 14.5px;">₹${fmt(data.grand_total)}</td>
+      <table class="receipt-table" style="width:100%; border-collapse:collapse; font-size:11px; line-height:1.4;">
+        <tr class="bold" style="color: #000; font-size:13px;">
+          <td style="padding:2px 0;">GRAND TOTAL:</td>
+          <td class="text-right num-align" style="font-size:14px; white-space:nowrap; padding:2px 0;">${curr}${fmt(data.grand_total)}</td>
         </tr>
-        <tr class="num-align">
-          <td style="color:#555">Paid (${paymentInfo}):</td>
-          <td class="text-right">₹${fmt(data.amount_paid + (data.change_amount || 0))}</td>
+        <tr class="num-align" style="font-size:10.5px;">
+          <td style="color:#444; padding:1px 0;">Paid (${paymentInfo}):</td>
+          <td class="text-right" style="white-space:nowrap; padding:1px 0;">${curr}${fmt(data.amount_paid + (data.change_amount || 0))}</td>
         </tr>
         ${data.amount_due > 0 ? `
-          <tr class="bold num-align" style="color: #000;">
-            <td>AMOUNT DUE:</td>
-            <td class="text-right">₹${fmt(data.amount_due)}</td>
+          <tr class="bold num-align" style="color: #000; font-size:11px;">
+            <td style="padding:1px 0;">AMOUNT DUE:</td>
+            <td class="text-right" style="white-space:nowrap; padding:1px 0;">${curr}${fmt(data.amount_due)}</td>
           </tr>` : ''}
         ${data.change_amount > 0 ? `
-          <tr class="num-align" style="color: #000; font-weight: bold;">
-            <td>Balance Given:</td>
-            <td class="text-right">₹${fmt(data.change_amount)}</td>
+          <tr class="num-align bold" style="color: #000; font-size:10.5px;">
+            <td style="padding:1px 0;">Balance Given:</td>
+            <td class="text-right" style="white-space:nowrap; padding:1px 0;">${curr}${fmt(data.change_amount)}</td>
           </tr>` : ''}
       </table>
 
       <div class="divider-dash"></div>
 
-      <div class="text-center" style="font-size: 11px; margin-top: 6px; font-style: italic; color: #444;">
+      <div class="text-center" style="font-size: 10.5px; margin-top: 4px; font-style: italic; color: #444;">
         <div>${footerText}</div>
       </div>
     `;

@@ -78,9 +78,13 @@ const App = {
 
   // ── API Helper ──────────────────────────────────────────────────────────
   async api(path, method = 'GET', body = null) {
+    const csrfCookie = document.cookie.split('; ').find(item => item.startsWith('csrf_token='));
     const opts = {
       method,
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(csrfCookie ? { 'X-CSRF-Token': decodeURIComponent(csrfCookie.split('=').slice(1).join('=')) } : {}),
+      },
       credentials: 'include',
     };
     if (body) opts.body = JSON.stringify(body);
@@ -210,15 +214,47 @@ const App = {
     return parseFloat(n || 0).toFixed(decimals);
   },
 
-  fmtDate(dt) {
-    if (!dt) return '—';
+  parseDate(dt) {
+    if (!dt) return null;
+    if (dt instanceof Date) return dt;
+    if (typeof dt === 'string') {
+      const s = dt.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+        const [y, m, d] = s.split('-').map(Number);
+        return new Date(y, m - 1, d);
+      }
+      const match = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+      if (match) {
+        const [_, y, m, d, hr, min, sec] = match;
+        return new Date(Number(y), Number(m) - 1, Number(d), Number(hr), Number(min), Number(sec || 0));
+      }
+    }
     const d = new Date(dt);
+    return isNaN(d.getTime()) ? null : d;
+  },
+
+  fmtQty(qty, unit = '') {
+    const n = parseFloat(qty || 0);
+    const formattedNum = (Math.abs(n - Math.round(n)) < 0.0001) ? Math.round(n).toString() : parseFloat(n.toFixed(3)).toString();
+    let u = (unit || '').trim();
+    if (u) {
+      if (u.toLowerCase() === 'pack' && n > 1) {
+        u = 'packs';
+      }
+      return `${formattedNum} ${u}`;
+    }
+    return formattedNum;
+  },
+
+  fmtDate(dt) {
+    const d = this.parseDate(dt);
+    if (!d) return '—';
     return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   },
 
   fmtDateTime(dt) {
-    if (!dt) return '—';
-    const d = new Date(dt);
+    const d = this.parseDate(dt);
+    if (!d) return '—';
     return d.toLocaleString('en-IN', {
       day: '2-digit', month: 'short', year: 'numeric',
       hour: '2-digit', minute: '2-digit',
@@ -226,8 +262,9 @@ const App = {
   },
 
   fmtTime(dt) {
-    if (!dt) return '';
-    return new Date(dt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    const d = this.parseDate(dt);
+    if (!d) return '';
+    return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
   },
 
   stockBadge(current, min) {

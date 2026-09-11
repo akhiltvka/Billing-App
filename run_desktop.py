@@ -45,6 +45,11 @@ def start_flask():
         init_db()
     except Exception as e:
         print(f"[Desktop DB Init Error] {e}")
+    try:
+        from sync_worker import start_sync_scheduler
+        start_sync_scheduler()
+    except Exception as e:
+        print(f"[Desktop Sync Init Error] {e}")
     from app import app
     app.run(host='127.0.0.1', port=5173, debug=False, use_reloader=False)
 
@@ -126,6 +131,31 @@ class DesktopApi:
 
 # ─── Main Entry Point ────────────────────────────────────────────────────────
 if __name__ == '__main__':
+    from database import get_database_url, get_external_config_dir
+    db_url = get_database_url()
+    if not db_url:
+        config_dir = get_external_config_dir()
+        err_msg = (
+            "Supabase cloud sync connection string (DATABASE_URL) is not configured!\n\n"
+            "This application requires an external DATABASE_URL to support cloud synchronization.\n\n"
+            "Please run the Setup Wizard (installer_setup_wizard.py) or set the DATABASE_URL environment "
+            "variable before starting the application.\n\n"
+            f"Expected configuration file:\n{os.path.join(config_dir, 'database_url.txt')}"
+        )
+        print("\n" + "=" * 70, file=sys.stderr)
+        print(f"[CRITICAL CONFIG ERROR]\n{err_msg}", file=sys.stderr)
+        print("=" * 70 + "\n", file=sys.stderr)
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror("MPI Billing Software — Setup Required", err_msg)
+            root.destroy()
+        except Exception:
+            pass
+        sys.exit(1)
+
     PORT = 5173
     URL  = f'http://127.0.0.1:{PORT}'
 

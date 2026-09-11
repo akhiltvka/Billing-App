@@ -14,6 +14,7 @@ a = Analysis(
     ],
     hiddenimports=[
         'app',
+        'money',
         'database',
         'license_manager',
         'license_sync',
@@ -25,6 +26,8 @@ a = Analysis(
         'openpyxl',
         'werkzeug.security',
         'werkzeug.serving',
+        'psycopg2',
+        'pg8000',
     ],
     hookspath=[],
     hooksconfig={},

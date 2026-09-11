@@ -389,7 +389,11 @@ def activate_subscription(raw_key_str):
         request_obj = _req.Request(
             activate_endpoint,
             data=payload_bytes,
-            headers={'Content-Type': 'application/json', 'User-Agent': 'MPI-Billing-App/1.0'},
+            headers={
+                'Content-Type': 'application/json',
+                'X-Outlet-Token': os.environ.get('CLOUD_LICENSE_API_TOKEN', '').strip(),
+                'User-Agent': 'MPI-Billing-App/1.0'
+            },
             method='POST'
         )
 

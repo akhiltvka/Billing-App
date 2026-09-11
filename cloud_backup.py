@@ -1,9 +1,24 @@
 """
-cloud_backup.py — Automatic 6-Hour Cloud Database Backup Module
+cloud_backup.py — Automatic 6-Hour Cloud Database Disaster Recovery Backup Module
 Meat Products of India — Billing & Inventory Management App
 
 Performs automated compressed SQLite database backups every 6 hours when connected online
 and uploads them securely to the Central License Server.
+
+DISASTER RECOVERY ARCHITECTURE NOTE:
+This module backs up the entire local SQLite database (meatshop.db) as an encrypted,
+point-in-time disaster-recovery snapshot to the Central License Server.
+
+This backup is completely separate from, and operates in addition to, the Supabase PostgreSQL
+sync handled by `sync_worker.py`:
+1. Disaster Recovery Snapshots (`cloud_backup.py`): Creates full binary snapshots of the local
+   SQLite file for point-in-time recovery, whole-database rollbacks, machine migration, and
+   offline operational recovery.
+2. Near-Real-Time Cloud Mirror (`sync_worker.py`): Performs continuous row-level mirroring of
+   transactional tables into Supabase PostgreSQL for live cloud reporting, multi-terminal
+   aggregation, and real-time remote visibility.
+
+Both mechanisms serve distinct, vital purposes and must be maintained concurrently.
 """
 
 import os
@@ -16,6 +31,7 @@ from datetime import datetime
 from database import DB_PATH
 from license_manager import get_machine_id, check_internet_connection
 from license_sync import get_cloud_server_url
+from cryptography.fernet import Fernet
 
 # Backup interval: 6 hours (21,600 seconds)
 BACKUP_INTERVAL_SECONDS = 6 * 3600
@@ -47,6 +63,17 @@ def upload_backup_to_cloud(zip_path):
     server_url = get_cloud_server_url()
     upload_url = f"{server_url}/api/v1/outlet/upload-backup"
     machine_id = get_machine_id()
+    upload_token = os.environ.get('CLOUD_BACKUP_TOKEN', '').strip()
+    if not upload_token:
+        return False, "CLOUD_BACKUP_TOKEN is not configured."
+    encryption_key = os.environ.get('CLOUD_BACKUP_ENCRYPTION_KEY', '').strip()
+    if not encryption_key:
+        return False, "CLOUD_BACKUP_ENCRYPTION_KEY is not configured."
+    try:
+        with open(zip_path, 'rb') as backup_file:
+            encrypted_backup = Fernet(encryption_key.encode('ascii')).encrypt(backup_file.read())
+    except Exception as exc:
+        return False, f"Backup encryption failed: {exc}"
 
     boundary = f"----WebKitFormBoundary{int(time.time()*1000)}"
     body = []
@@ -63,8 +90,7 @@ def upload_backup_to_cloud(zip_path):
     body.append(f'Content-Disposition: form-data; name="file"; filename="{filename}"'.encode('utf-8'))
     body.append(b'Content-Type: application/zip')
     body.append(b'')
-    with open(zip_path, 'rb') as f:
-        body.append(f.read())
+    body.append(encrypted_backup)
 
     body.append(f"--{boundary}--".encode('utf-8'))
     body.append(b'')
@@ -77,6 +103,7 @@ def upload_backup_to_cloud(zip_path):
             data=data_payload,
             headers={
                 'Content-Type': f'multipart/form-data; boundary={boundary}',
+                'X-Backup-Token': upload_token,
                 'User-Agent': 'MPI-Backup-Agent/1.0'
             },
             method='POST'

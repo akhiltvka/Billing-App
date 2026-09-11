@@ -165,10 +165,12 @@
 
     /* Receipt (narrow) mode override */
     body.receipt-mode .page {
-      width: {{ width }}mm;
+      width: {{ '48mm' if width == '58' else '70mm' }};
+      max-width: {{ '48mm' if width == '58' else '70mm' }};
       min-height: auto;
-      padding: 12px 10px;
+      padding: 8px 6px;
       font-size: 12px;
+      box-sizing: border-box;
     }
 
     /* Hide HSN and GST% columns in receipt mode for item table space saving */
@@ -296,10 +298,12 @@
         }
       `;
     } else {
+      const thermalW = "{{ width }}" === '58' ? '48mm' : '72mm';
+      const pageW = "{{ width }}" === '58' ? '58mm' : '80mm';
       styleEl.textContent = `
         @media print {
-          @page { size: {{ width }}mm auto; margin: 0; }
-          .page { width: 100%; min-height: auto !important; padding: 2px 4px; box-shadow: none; margin: 0; }
+          @page { size: ${pageW} auto; margin: 0mm !important; }
+          .page { width: 100% !important; max-width: ${thermalW} !important; min-height: auto !important; padding: 1mm 2mm 3mm 2mm !important; box-shadow: none !important; margin: 0 !important; box-sizing: border-box !important; border: none !important; overflow: hidden !important; }
         }
       `;
     }
@@ -334,14 +338,49 @@
   }
 
   function fmt(n, d=2) { return parseFloat(n||0).toFixed(d); }
-  function fmtDate(dt) {
-    if (!dt) return '';
+
+  function parseDate(dt) {
+    if (!dt) return null;
+    if (dt instanceof Date) return dt;
+    if (typeof dt === 'string') {
+      const s = dt.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+        const [y, m, d] = s.split('-').map(Number);
+        return new Date(y, m - 1, d);
+      }
+      const match = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
+      if (match) {
+        const [_, y, m, d, hr, min, sec] = match;
+        return new Date(Number(y), Number(m) - 1, Number(d), Number(hr), Number(min), Number(sec || 0));
+      }
+    }
     const d = new Date(dt);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  function fmtDate(dt) {
+    const d = parseDate(dt);
+    if (!d) return '';
     return d.toLocaleDateString('en-IN', {day:'2-digit', month:'short', year:'numeric'});
   }
+
   function fmtTime(dt) {
-    if (!dt) return '';
-    return new Date(dt).toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
+    const d = parseDate(dt);
+    if (!d) return '';
+    return d.toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'});
+  }
+
+  function fmtQty(qty, unit = '') {
+    const n = parseFloat(qty || 0);
+    const formattedNum = (Math.abs(n - Math.round(n)) < 0.0001) ? Math.round(n).toString() : parseFloat(n.toFixed(3)).toString();
+    let u = (unit || '').trim();
+    if (u) {
+      if (u.toLowerCase() === 'pack' && n > 1) {
+        u = 'packs';
+      }
+      return `${formattedNum} ${u}`;
+    }
+    return formattedNum;
   }
 
   async function loadInvoice() {
@@ -396,6 +435,9 @@
     const isInterstate = data.is_interstate == 1 || data.is_interstate === true;
 
     const payIcon = {cash:'Cash (₹)', upi:'UPI / Online', card:'Credit/Debit Card'}[data.payment_mode] || data.payment_mode;
+
+    const calcSubtotal = items.reduce((sum, i) => sum + ((parseFloat(i.quantity)||0) * (parseFloat(i.unit_price)||0)), 0);
+    const displaySubtotal = (data.subtotal && parseFloat(data.subtotal) >= calcSubtotal) ? parseFloat(data.subtotal) : calcSubtotal;
 
     document.getElementById('invoice-content').innerHTML = `
       <!-- Shop Header -->
@@ -452,7 +494,9 @@
           </tr>
         </thead>
         <tbody>
-          ${items.map((item, i) => `
+          ${items.map((item, i) => {
+            const lineAmt = (parseFloat(item.quantity)||0) * (parseFloat(item.unit_price)||0);
+            return `
             <tr>
               <td>${i+1}</td>
               <td>
@@ -460,11 +504,12 @@
                 <div class="item-detail">${item.unit || ''}</div>
               </td>
               ${isGstGlobal ? `<td class="col-hsn" style="font-size:10px">${item.hsn_code || '—'}</td>` : ''}
-              <td class="text-right">${fmt(item.quantity, 3)}</td>
+              <td class="text-right">${fmtQty(item.quantity, item.unit)}</td>
               <td class="text-right">₹${fmt(item.unit_price)}</td>
               ${hasGST ? `<td class="text-right col-gst">${item.gst_rate}%</td>` : ''}
-              <td class="text-right font-weight:700">₹${fmt(item.amount)}</td>
-            </tr>`).join('')}
+              <td class="text-right font-weight:700">₹${fmt(lineAmt)}</td>
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>
 
@@ -495,7 +540,7 @@
       <div class="totals-section">
         <div class="total-row">
           <span class="total-label">Subtotal</span>
-          <span class="total-value">₹${fmt(data.subtotal)}</span>
+          <span class="total-value">₹${fmt(displaySubtotal)}</span>
         </div>
         ${data.discount_amount > 0 ? `
           <div class="total-row">

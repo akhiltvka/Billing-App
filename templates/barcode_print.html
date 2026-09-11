@@ -3,241 +3,1115 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Barcode Label Print</title>
+  <title>Barcode Label Print - {{ shop_name }}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
   <style>
     :root {
+      color-scheme: dark;
       --gold: #c9a84c;
-      --bg: #f0f2f5;
-      --border: #d1d9e0;
-      --text: #1a202c;
-      --text-muted: #64748b;
-      --card: #ffffff;
-      --header-bg: #0f172a;
+      --gold-hover: #b8973f;
+      --gold-light: rgba(201, 168, 76, 0.15);
+      --bg: #1e293b;
+      --card-bg: #0f172a;
+      --border: #334155;
+      --border-light: #475569;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --sheet-shadow: 0 10px 35px rgba(0,0,0,0.35);
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: "Inter", sans-serif; background: var(--bg); color: var(--text); font-size: 13px; }
+    body {
+      font-family: "Inter", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      min-height: 100vh;
+    }
 
-    /* ── Toolbar ────────────────────────────────────────────── */
+    /* ── Top Main Toolbar ────────────────────────────────────────── */
     .toolbar {
-      position: fixed; top: 0; left: 0; right: 0;
-      background: var(--header-bg); color: #fff;
-      display: flex; align-items: center; gap: 12px;
-      padding: 10px 20px; z-index: 999;
-      box-shadow: 0 2px 12px rgba(0,0,0,.4);
-    }
-    .toolbar-left { flex: 1; }
-    .toolbar-title { font-weight: 600; font-size: 14px; }
-    .toolbar-sub   { font-size: 11px; color: rgba(255,255,255,.5); margin-top: 2px; }
-    .toolbar-count { background: rgba(201,168,76,.18); color: var(--gold); border: 1px solid rgba(201,168,76,.4); border-radius: 20px; padding: 3px 12px; font-size: 12px; font-weight: 600; }
-    .btn-toolbar   { border: none; border-radius: 7px; padding: 8px 16px; font-weight: 700; font-size: 13px; cursor: pointer; transition: all .15s; }
-    .btn-print     { background: var(--gold); color: #0f172a; }
-    .btn-print:hover { opacity: .85; }
-    .btn-close     { background: rgba(255,255,255,.1); color: #fff; border: 1px solid rgba(255,255,255,.2); }
-    .btn-close:hover { background: rgba(255,255,255,.2); }
-
-    /* ── Controls bar ────────────────────────────────────────── */
-    .controls-bar {
-      position: fixed; top: 50px; left: 0; right: 0;
-      background: #1e2d45; color: #fff;
-      display: flex; align-items: center; gap: 16px;
-      padding: 8px 20px; z-index: 998;
-      border-top: 1px solid rgba(255,255,255,.08);
-    }
-    .controls-bar label { font-size: 12px; color: rgba(255,255,255,.6); white-space: nowrap; }
-    .controls-bar input[type="number"],
-    .controls-bar select {
-      background: rgba(255,255,255,.07); color: #fff;
-      border: 1px solid rgba(255,255,255,.2); border-radius: 6px;
-      padding: 4px 8px; font-size: 12px; width: 70px;
-    }
-    .controls-bar input[type="range"] { width: 100px; accent-color: var(--gold); }
-    .controls-bar .ctrl-group { display: flex; align-items: center; gap: 6px; }
-    .ctrl-sep { height: 24px; width: 1px; background: rgba(255,255,255,.15); }
-
-    /* ── Main content ────────────────────────────────────────── */
-    .main-content { margin-top: 96px; padding: 20px; }
-
-    /* ── Page simulation card ────────────────────────────────── */
-    .a4-page {
-      width: 210mm;
-      min-height: 297mm;
-      background: #fff;
-      margin: 0 auto 24px;
-      box-shadow: 0 4px 32px rgba(0,0,0,.15);
-      border-radius: 4px;
-      padding: 6mm;
-      page-break-after: always;
-    }
-    .a4-header {
+      position: fixed; top: 0; left: 0; right: 0; height: 50px;
+      background: var(--card-bg); color: #fff;
       display: flex; align-items: center; justify-content: space-between;
-      border-bottom: 1.5px solid #1a202c; padding-bottom: 4mm; margin-bottom: 4mm;
+      padding: 0 18px; z-index: 1000;
+      box-shadow: 0 2px 14px rgba(0,0,0,0.45);
+      border-bottom: 1px solid var(--border);
     }
-    .a4-header-title { font-size: 14px; font-weight: 700; color: #1a202c; }
-    .a4-header-sub   { font-size: 10px; color: #64748b; margin-top: 2px; }
-    .a4-header-meta  { text-align: right; font-size: 10px; color: #64748b; }
-
-    /* ── Label Grid — 4 cols × 11 rows ──────────────────────── */
-    .label-grid {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 2mm;
+    .toolbar-left {
+      display: flex; align-items: center; gap: 14px;
+    }
+    .toolbar-brand {
+      display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; letter-spacing: -0.01em;
+    }
+    .toolbar-badge {
+      background: var(--gold-light); color: var(--gold); border: 1px solid rgba(201,168,76,0.35);
+      border-radius: 20px; padding: 2px 10px; font-size: 11px; font-weight: 600;
+    }
+    .toolbar-right {
+      display: flex; align-items: center; gap: 10px;
     }
 
-    /* ── Individual label ────────────────────────────────────── */
-    .label-cell {
-      border: 0.5px solid #c0c8d2;
-      border-radius: 2px;
-      padding: 1.5mm 1.5mm 1mm;
+    .btn-toolbar {
+      border: none; border-radius: 6px; padding: 7px 14px;
+      font-weight: 600; font-size: 12px; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 6px;
+      transition: all .15s ease;
+    }
+    .btn-print {
+      background: var(--gold); color: #0f172a; font-weight: 700;
+      box-shadow: 0 2px 8px rgba(201,168,76,0.3);
+    }
+    .btn-print:hover { background: var(--gold-hover); transform: translateY(-1px); }
+    .btn-settings {
+      background: #3b82f6; color: #fff;
+    }
+    .btn-settings:hover { background: #2563eb; }
+    .btn-secondary {
+      background: rgba(255,255,255,0.08); color: #fff; border: 1px solid var(--border-light);
+    }
+    .btn-secondary:hover { background: rgba(255,255,255,0.15); }
+    .btn-close {
+      background: transparent; color: var(--text-muted); border: 1px solid transparent;
+    }
+    .btn-close:hover { color: #fff; background: rgba(255,255,255,0.08); }
+
+    /* ── Controls Sub-bar ────────────────────────────────────────── */
+    .controls-bar {
+      position: fixed; top: 50px; left: 0; right: 0; height: 44px;
+      background: #111827; color: #fff;
+      display: flex; align-items: center; gap: 14px;
+      padding: 0 18px; z-index: 999;
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto; white-space: nowrap;
+    }
+    .ctrl-group {
+      display: flex; align-items: center; gap: 6px; font-size: 12px;
+    }
+    .ctrl-group label {
+      color: var(--text-muted); font-size: 11.5px; font-weight: 500;
+    }
+    .ctrl-input, .ctrl-select {
+      background: #1e293b; color: #ffffff;
+      border: 1px solid var(--border-light); border-radius: 5px;
+      padding: 5px 8px; font-size: 12px;
+      outline: none; transition: border-color .15s;
+      color-scheme: dark;
+    }
+    .ctrl-input:focus, .ctrl-select:focus {
+      border-color: var(--primary);
+    }
+    select option {
+      background-color: #0f172a !important;
+      color: #ffffff !important;
+      padding: 6px 10px;
+    }
+    select optgroup {
+      background-color: #090d16 !important;
+      color: #38bdf8 !important;
+      font-weight: 700;
+      padding: 4px 6px;
+    }
+    .ctrl-sep {
+      height: 20px; width: 1px; background: var(--border); flex-shrink: 0;
+    }
+
+    /* ── Info summary pill ────────────────────────────────────────── */
+    .info-summary-pill {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 11px; color: #38bdf8;
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 4px; padding: 2px 8px;
+    }
+
+    /* ── Main Content / Sheets Workspace ─────────────────────────── */
+    .main-content {
+      margin-top: 104px;
+      padding: 24px 20px 60px;
       display: flex;
       flex-direction: column;
       align-items: center;
+      min-height: calc(100vh - 104px);
+    }
+
+    /* ── Simulated Physical Sheet Card ───────────────────────────── */
+    .sheet-wrapper {
+      position: relative;
+      margin-bottom: 32px;
+    }
+    .sheet-page-indicator {
+      position: absolute;
+      top: -22px; left: 4px;
+      font-size: 11px; font-weight: 600;
+      color: var(--text-muted);
+      letter-spacing: 0.04em;
+    }
+    .sheet-page {
+      background: #ffffff;
+      color: #000000;
+      box-shadow: var(--sheet-shadow);
+      border-radius: 2px;
+      position: relative;
+      page-break-after: always;
+      break-after: page;
+      box-sizing: border-box;
+      /* Dimensions set by dynamic style */
+    }
+
+    /* ── Label Grid ──────────────────────────────────────────────── */
+    .label-grid {
+      display: grid;
+      box-sizing: border-box;
+      /* Grid template and gap set by dynamic style */
+    }
+
+    /* ── Individual Label Cell ───────────────────────────────────── */
+    .label-cell {
+      box-sizing: border-box;
+      background: #ffffff;
+      color: #0f172a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
       overflow: hidden;
-      background: #fff;
-      min-height: 24mm;
+      position: relative;
+      break-inside: avoid;
+      page-break-inside: avoid;
+      /* Dimensions & border set by dynamic style */
+    }
+    .label-cell.label-empty {
+      background: #fafafa;
+    }
+
+    .label-shop-name {
+      font-size: 5pt;
+      font-weight: 600;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+      margin-bottom: 0.5mm;
     }
     .label-name {
-      font-size: 6.5pt;
       font-weight: 700;
       text-align: center;
-      line-height: 1.2;
-      color: #1a202c;
+      line-height: 1.15;
+      color: #0f172a;
       width: 100%;
       overflow: hidden;
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
       word-break: break-word;
-      margin-bottom: 1mm;
+      margin-bottom: 0.8mm;
     }
-    .label-barcode {
+    .label-barcode-wrap {
       width: 100%;
       display: flex;
       align-items: center;
       justify-content: center;
+      overflow: hidden;
+      flex: 1 1 auto;
+      min-height: 0;
     }
-    .label-barcode svg {
-      width: 100% !important;
+    .label-barcode-wrap svg {
+      max-width: 100% !important;
       height: auto !important;
-      max-height: 14mm;
+      display: block;
     }
     .label-code {
-      font-size: 5.5pt;
       font-family: "JetBrains Mono", monospace;
-      color: #475569;
+      font-weight: 600;
+      color: #334155;
+      text-align: center;
+      letter-spacing: 0.04em;
+      margin-top: 0.5mm;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+    .label-price {
+      font-family: "JetBrains Mono", monospace;
+      font-weight: 700;
+      color: #0f172a;
       text-align: center;
       margin-top: 0.5mm;
-      letter-spacing: 0.02em;
     }
 
-    /* ── Empty label placeholder ─────────────────────────────── */
-    .label-empty {
-      border: 0.5px dashed #d1d5db;
-      background: #fafafa;
+    /* ── Settings Drawer / Panel ─────────────────────────────────── */
+    .drawer-backdrop {
+      position: fixed; inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(3px);
+      z-index: 10000;
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+    .drawer-backdrop.open {
+      opacity: 1; pointer-events: auto;
+    }
+    .settings-drawer {
+      position: fixed; top: 0; right: 0; bottom: 0;
+      width: 460px; max-width: 92vw;
+      background: #0f172a; color: #f8fafc;
+      z-index: 10001;
+      display: flex; flex-direction: column;
+      box-shadow: -8px 0 35px rgba(0,0,0,0.5);
+      border-left: 1px solid var(--border);
+      transform: translateX(100%);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .drawer-backdrop.open .settings-drawer {
+      transform: translateX(0);
+    }
+    .drawer-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+      background: #111c33;
+    }
+    .drawer-title {
+      font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px;
+    }
+    .drawer-body {
+      flex: 1; overflow-y: auto; padding: 20px;
+      display: flex; flex-direction: column; gap: 20px;
+    }
+    .drawer-footer {
+      padding: 14px 20px;
+      border-top: 1px solid var(--border);
+      background: #111c33;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px;
     }
 
-    /* ── Loading / empty state ───────────────────────────────── */
-    .loading-state {
-      text-align: center; padding: 60px 20px; color: var(--text-muted);
+    .section-card {
+      background: #1e293b;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
     }
-    .loading-state .spinner {
-      width: 36px; height: 36px; border: 3px solid #e2e8f0;
-      border-top-color: var(--gold); border-radius: 50%;
-      animation: spin .7s linear infinite;
-      margin: 0 auto 16px;
+    .section-title {
+      font-size: 12.5px; font-weight: 700; color: #38bdf8;
+      margin-bottom: 12px; display: flex; align-items: center; gap: 6px;
+      text-transform: uppercase; letter-spacing: 0.04em;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
+    .form-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+    }
+    .form-grid-3 {
+      display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;
+    }
+    .form-grid-4 {
+      display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px;
+    }
+    .form-group {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+    .form-group.span-full { grid-column: 1 / -1; }
+    .form-group label {
+      font-size: 11px; font-weight: 600; color: var(--text-muted);
+    }
+    .form-control {
+      background: #0b1120; color: #fff;
+      border: 1px solid var(--border-light); border-radius: 6px;
+      padding: 6px 10px; font-size: 12.5px;
+      font-family: inherit; width: 100%;
+      outline: none; transition: border-color .15s;
+    }
+    .form-control:focus {
+      border-color: #38bdf8;
+    }
+    .form-hint {
+      font-size: 10.5px; color: var(--text-muted); margin-top: 3px;
+    }
 
-    /* ── Print styles ────────────────────────────────────────── */
+    .btn-toggle-group {
+      display: inline-flex; border: 1px solid var(--border-light); border-radius: 6px; overflow: hidden;
+    }
+    .btn-toggle-opt {
+      background: #0b1120; color: var(--text-muted); border: none;
+      padding: 6px 12px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+      transition: all .15s;
+    }
+    .btn-toggle-opt.active {
+      background: #2563eb; color: #fff;
+    }
+
+    .btn-sm-action {
+      background: rgba(56, 189, 248, 0.12); color: #38bdf8;
+      border: 1px solid rgba(56, 189, 248, 0.35); border-radius: 5px;
+      padding: 6px 12px; font-size: 11.5px; font-weight: 600; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 5px;
+      transition: all .15s;
+    }
+    .btn-sm-action:hover {
+      background: rgba(56, 189, 248, 0.25);
+    }
+
+    /* ── Loading / Empty State ───────────────────────────────────── */
+    .empty-state {
+      text-align: center; padding: 70px 20px; color: var(--text-muted);
+      background: #111827; border: 1px dashed var(--border); border-radius: 12px;
+      max-width: 500px; margin: 40px auto;
+    }
+    .empty-state h3 { color: #f8fafc; font-size: 16px; margin-bottom: 8px; }
+    .empty-state p { font-size: 13px; line-height: 1.5; margin-bottom: 20px; }
+
+    /* ── Print Media Optimization ────────────────────────────────── */
     @media print {
-      body { background: white !important; }
-      .toolbar, .controls-bar { display: none !important; }
-      .main-content { margin-top: 0 !important; padding: 0 !important; }
-      .a4-page {
-        width: 100% !important;
-        min-height: auto !important;
+      body {
+        background: #ffffff !important;
+        margin: 0 !important; padding: 0 !important;
+        color: #000000 !important;
+      }
+      .toolbar, .controls-bar, .drawer-backdrop, .settings-drawer, .sheet-page-indicator, #qty-modal-backdrop {
+        display: none !important;
+      }
+      .main-content {
+        margin: 0 !important; padding: 0 !important;
+      }
+      .sheet-wrapper {
+        margin: 0 !important; padding: 0 !important;
+      }
+      .sheet-page {
         box-shadow: none !important;
         border-radius: 0 !important;
-        padding: 6mm !important;
         margin: 0 !important;
-        page-break-after: always;
+        page-break-after: always !important;
+        break-after: page !important;
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+        overflow: hidden !important;
       }
-      .a4-page:last-child { page-break-after: avoid; }
-      .label-cell { break-inside: avoid; }
-      @page { size: A4 portrait; margin: 0; }
+      .sheet-wrapper:last-child .sheet-page {
+        page-break-after: avoid !important;
+        break-after: auto !important;
+      }
+      .label-cell {
+        page-break-inside: avoid !important;
+        break-inside: avoid !important;
+      }
     }
   </style>
 </head>
 <body>
 
-<!-- ── Toolbar ──────────────────────────────────────────────────────────── -->
-<div class="toolbar">
+<!-- ── Main Top Toolbar ────────────────────────────────────────────────── -->
+<header class="toolbar">
   <div class="toolbar-left">
-    <div class="toolbar-title">🏷️ Barcode Label Print</div>
-    <div class="toolbar-sub" id="shop-name-sub">{{ shop_name }}</div>
+    <div class="toolbar-brand">
+      <span>🏷️</span>
+      <span>Barcode Print Studio</span>
+      <span class="toolbar-badge" id="shop-name-badge">{{ shop_name }}</span>
+    </div>
+    <span class="info-summary-pill" id="quick-layout-summary">A4 • 4 × 11 • 44 / sheet</span>
   </div>
-  <span class="toolbar-count" id="label-count-badge">Loading…</span>
-  <button class="btn-toolbar btn-print" onclick="window.print()">🖨️ Print / Save PDF</button>
-  <button class="btn-toolbar btn-close" onclick="window.close()">✕ Close</button>
-</div>
 
-<!-- ── Controls bar ─────────────────────────────────────────────────────── -->
-<div class="controls-bar">
-  <div class="ctrl-group">
-    <button type="button" class="btn-toolbar" style="background:rgba(201,168,76,.25);color:var(--gold);font-size:12px;padding:5px 12px;border:1px solid rgba(201,168,76,.5);border-radius:6px;cursor:pointer;font-weight:700" onclick="showQtyEditorModal()">
-      📋 Edit Copy Quantities
+  <div class="toolbar-right">
+    <button type="button" class="btn-toolbar btn-settings" onclick="toggleSettingsDrawer(true)">
+      ⚙️ Sheet &amp; Cell Setup
+    </button>
+    <button type="button" class="btn-toolbar btn-secondary" onclick="showQtyEditorModal()">
+      📋 Edit Copies (<span id="btn-total-items-badge">0</span>)
+    </button>
+    <button type="button" class="btn-toolbar btn-print" onclick="window.print()">
+      🖨️ Print / Save PDF
+    </button>
+    <button type="button" class="btn-toolbar btn-close" onclick="window.close()" title="Close this window">
+      ✕
     </button>
   </div>
-  <div class="ctrl-sep"></div>
+</header>
+
+<!-- ── Controls Sub-bar ────────────────────────────────────────────────── -->
+<div class="controls-bar">
   <div class="ctrl-group">
-    <label>Multiplier:</label>
-    <input type="number" id="ctrl-copies" value="1" min="1" max="100" style="width:50px" onchange="regenerate()" title="Multiply all product copies by this factor (default 1x)">
+    <label for="ctrl-preset-select">Preset:</label>
+    <select id="ctrl-preset-select" class="ctrl-select" onchange="applyPreset(this.value)" style="width: 220px;">
+      <optgroup label="A4 Sheet Standard Labels">
+        <option value="a4_44" selected>A4 - 44 Labels (4 × 11, 48.5 × 25.4mm)</option>
+        <option value="a4_40">A4 - 40 Labels (4 × 10, 48.5 × 27.0mm)</option>
+        <option value="a4_65">A4 - 65 Labels (5 × 13, 38.1 × 21.2mm)</option>
+        <option value="a4_48">A4 - 48 Labels (4 × 12, 45.7 × 21.2mm)</option>
+        <option value="a4_24">A4 - 24 Labels (3 × 8, 70 × 37mm)</option>
+        <option value="a4_21">A4 - 21 Labels (3 × 7, 70 × 42.4mm)</option>
+        <option value="a4_14">A4 - 14 Labels (2 × 7, 105 × 42.4mm)</option>
+        <option value="a4_8">A4 - 8 Labels (2 × 4, 105 × 74mm)</option>
+      </optgroup>
+      <optgroup label="A5 Sheet Labels">
+        <option value="a5_10">A5 - 10 Labels (2 × 5, 65 × 38mm)</option>
+      </optgroup>
+      <optgroup label="Thermal Roll / Continuous">
+        <option value="roll_50_25">Roll - 50 × 25 mm Single Label</option>
+        <option value="roll_50_30">Roll - 50 × 30 mm Single Label</option>
+        <option value="roll_100_50">Roll - 100 × 50 mm Single Label</option>
+      </optgroup>
+      <optgroup label="Custom">
+        <option value="custom">Custom Dimensions (User defined)...</option>
+      </optgroup>
+    </select>
   </div>
+
   <div class="ctrl-sep"></div>
+
   <div class="ctrl-group">
-    <label>Barcode height:</label>
-    <input type="range" id="ctrl-bc-height" min="20" max="60" value="36" oninput="regenerate()">
+    <label for="ctrl-copies-multiplier">Copies ×:</label>
+    <input type="number" id="ctrl-copies-multiplier" class="ctrl-input" value="1" min="1" max="100" style="width:55px" onchange="regenerate()" title="Multiply all product quantities by factor">
   </div>
+
   <div class="ctrl-sep"></div>
+
   <div class="ctrl-group">
-    <label>Show price:</label>
-    <input type="checkbox" id="ctrl-show-price" onchange="regenerate()" style="accent-color:var(--gold)">
+    <label for="ctrl-bc-height">Barcode H:</label>
+    <input type="range" id="ctrl-bc-height" min="6" max="35" step="0.5" value="12" style="width:90px; accent-color:var(--gold)" oninput="onBcHeightInput(this.value)" title="Barcode height in millimeters">
+    <span id="bc-height-display" style="font-family:'JetBrains Mono',monospace;font-size:11px;min-width:32px">12mm</span>
   </div>
+
   <div class="ctrl-sep"></div>
+
   <div class="ctrl-group">
-    <label for="ctrl-filter">Filter:</label>
-    <input type="text" id="ctrl-filter" placeholder="Item name…" oninput="regenerate()"
-      style="background:rgba(255,255,255,.07);color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:4px 10px;font-size:12px;width:150px">
+    <label style="cursor:pointer; display:flex; align-items:center; gap:5px;">
+      <input type="checkbox" id="ctrl-show-price" onchange="toggleConfigFlag('showPrice', this.checked)" style="accent-color:var(--gold)">
+      Price
+    </label>
+  </div>
+
+  <div class="ctrl-group">
+    <label style="cursor:pointer; display:flex; align-items:center; gap:5px;">
+      <input type="checkbox" id="ctrl-show-code" onchange="toggleConfigFlag('showCode', this.checked)" checked style="accent-color:var(--gold)">
+      Code Text
+    </label>
+  </div>
+
+  <div class="ctrl-group">
+    <label style="cursor:pointer; display:flex; align-items:center; gap:5px;">
+      <input type="checkbox" id="ctrl-show-name" onchange="toggleConfigFlag('showName', this.checked)" checked style="accent-color:var(--gold)">
+      Product Name
+    </label>
+  </div>
+
+  <div class="ctrl-sep"></div>
+
+  <div class="ctrl-group">
+    <input type="text" id="ctrl-filter" class="ctrl-input" placeholder="Search product…" oninput="regenerate()" style="width:130px;">
   </div>
 </div>
 
-<!-- ── Main page content ─────────────────────────────────────────────────── -->
-<div class="main-content" id="print-area">
-  <div class="loading-state">
-    <div class="spinner"></div>
-    <p>Generating barcodes…</p>
+<!-- ── Main Sheets Canvas Workspace ────────────────────────────────────── -->
+<main class="main-content" id="print-area">
+  <div class="empty-state">
+    <div style="font-size:44px; margin-bottom:12px">🏷️</div>
+    <h3>Loading Barcode Sheet…</h3>
+    <p>Generating barcodes for printing…</p>
   </div>
+</main>
+
+<!-- ── Settings Drawer Backdrop & Panel ────────────────────────────────── -->
+<div class="drawer-backdrop" id="settings-drawer-backdrop" onclick="onDrawerBackdropClick(event)">
+  <aside class="settings-drawer" id="settings-drawer">
+    <div class="drawer-header">
+      <div class="drawer-title">
+        <span>⚙️</span>
+        <span>Page &amp; Cell Size Setup</span>
+      </div>
+      <button type="button" class="btn-toolbar btn-close" onclick="toggleSettingsDrawer(false)">✕</button>
+    </div>
+
+    <div class="drawer-body">
+      <!-- Section: Presets -->
+      <div class="section-card">
+        <div class="section-title">📦 Layout Presets</div>
+        <div class="form-group">
+          <label>Choose Sticker Sheet Standard</label>
+          <select id="drawer-preset-select" class="form-control" onchange="applyPreset(this.value)">
+            <option value="a4_44">A4 - 44 Labels (4 × 11, 48.5 × 25.4mm)</option>
+            <option value="a4_40">A4 - 40 Labels (4 × 10, 48.5 × 27.0mm)</option>
+            <option value="a4_65">A4 - 65 Labels (5 × 13, 38.1 × 21.2mm)</option>
+            <option value="a4_48">A4 - 48 Labels (4 × 12, 45.7 × 21.2mm)</option>
+            <option value="a4_24">A4 - 24 Labels (3 × 8, 70.0 × 37.0mm)</option>
+            <option value="a4_21">A4 - 21 Labels (3 × 7, 70.0 × 42.4mm)</option>
+            <option value="a4_14">A4 - 14 Labels (2 × 7, 105.0 × 42.4mm)</option>
+            <option value="a4_8">A4 - 8 Labels (2 × 4, 105.0 × 74.0mm)</option>
+            <option value="a5_10">A5 - 10 Labels (2 × 5, 65.0 × 38.0mm)</option>
+            <option value="roll_50_25">Thermal Roll - 50 × 25 mm</option>
+            <option value="roll_50_30">Thermal Roll - 50 × 30 mm</option>
+            <option value="roll_100_50">Thermal Roll - 100 × 50 mm</option>
+            <option value="custom">Custom Dimensions</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Section: Paper Sheet Size -->
+      <div class="section-card">
+        <div class="section-title">📄 Paper Sheet Size</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Paper Standard</label>
+            <select id="cfg-paper-standard" class="form-control" onchange="onPaperStandardSelect(this.value)">
+              <option value="A4">A4 (210 × 297 mm)</option>
+              <option value="A5">A5 (148 × 210 mm)</option>
+              <option value="A3">A3 (297 × 420 mm)</option>
+              <option value="Letter">Letter (215.9 × 279.4 mm)</option>
+              <option value="Legal">Legal (215.9 × 355.6 mm)</option>
+              <option value="Custom">Custom Dimensions</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Orientation</label>
+            <div class="btn-toggle-group">
+              <button type="button" class="btn-toggle-opt active" id="btn-orient-portrait" onclick="setOrientation('portrait')">Portrait</button>
+              <button type="button" class="btn-toggle-opt" id="btn-orient-landscape" onclick="setOrientation('landscape')">Landscape</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Paper Width (mm)</label>
+            <input type="number" id="cfg-paper-width" class="form-control" step="0.5" min="20" max="600" oninput="onCustomDimensionChange()">
+          </div>
+          <div class="form-group">
+            <label>Paper Height (mm)</label>
+            <input type="number" id="cfg-paper-height" class="form-control" step="0.5" min="20" max="600" oninput="onCustomDimensionChange()">
+          </div>
+        </div>
+
+        <div style="margin-top:12px;">
+          <label style="font-size:11px;font-weight:600;color:var(--text-muted);margin-bottom:6px;display:block">Sheet Margins (mm)</label>
+          <div class="form-grid-4">
+            <div class="form-group">
+              <label>Top</label>
+              <input type="number" id="cfg-margin-top" class="form-control" step="0.5" min="0" max="50" oninput="onCustomDimensionChange()">
+            </div>
+            <div class="form-group">
+              <label>Right</label>
+              <input type="number" id="cfg-margin-right" class="form-control" step="0.5" min="0" max="50" oninput="onCustomDimensionChange()">
+            </div>
+            <div class="form-group">
+              <label>Bottom</label>
+              <input type="number" id="cfg-margin-bottom" class="form-control" step="0.5" min="0" max="50" oninput="onCustomDimensionChange()">
+            </div>
+            <div class="form-group">
+              <label>Left</label>
+              <input type="number" id="cfg-margin-left" class="form-control" step="0.5" min="0" max="50" oninput="onCustomDimensionChange()">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Section: Single Cell Dimensions & Grid Setup -->
+      <div class="section-card">
+        <div class="section-title">
+          <span>📐</span>
+          <span>Label Cell Dimensions &amp; Grid</span>
+        </div>
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label style="color:#fcd34d">One Cell Width (mm)</label>
+            <input type="number" id="cfg-cell-width" class="form-control" step="0.1" min="15" max="300" oninput="onCustomDimensionChange()" style="font-weight:700;border-color:rgba(201,168,76,0.5)">
+            <span class="form-hint">Physical width of 1 label</span>
+          </div>
+          <div class="form-group">
+            <label style="color:#fcd34d">One Cell Height (mm)</label>
+            <input type="number" id="cfg-cell-height" class="form-control" step="0.1" min="10" max="300" oninput="onCustomDimensionChange()" style="font-weight:700;border-color:rgba(201,168,76,0.5)">
+            <span class="form-hint">Physical height of 1 label</span>
+          </div>
+        </div>
+
+        <div style="margin:14px 0 6px; display:flex; align-items:center; justify-content:space-between">
+          <span style="font-size:11px;font-weight:700;color:var(--text-muted)">Grid Columns &amp; Rows</span>
+          <button type="button" class="btn-sm-action" onclick="autoCalculateGrid()">
+            ⚡ Auto-Calculate to Fit Page
+          </button>
+        </div>
+
+        <div class="form-grid-3">
+          <div class="form-group">
+            <label>Columns (Across)</label>
+            <input type="number" id="cfg-cols" class="form-control" min="1" max="20" oninput="onCustomDimensionChange()">
+          </div>
+          <div class="form-group">
+            <label>Rows (Down)</label>
+            <input type="number" id="cfg-rows" class="form-control" min="1" max="50" oninput="onCustomDimensionChange()">
+          </div>
+          <div class="form-group">
+            <label>Total per Page</label>
+            <input type="text" id="cfg-total-per-page" class="form-control" readonly style="background:rgba(255,255,255,0.05);color:#38bdf8;font-weight:700;text-align:center">
+          </div>
+        </div>
+
+        <div class="form-grid" style="margin-top:10px">
+          <div class="form-group">
+            <label>Column Gap (Horizontal mm)</label>
+            <input type="number" id="cfg-col-gap" class="form-control" step="0.5" min="0" max="30" oninput="onCustomDimensionChange()">
+          </div>
+          <div class="form-group">
+            <label>Row Gap (Vertical mm)</label>
+            <input type="number" id="cfg-row-gap" class="form-control" step="0.5" min="0" max="30" oninput="onCustomDimensionChange()">
+          </div>
+        </div>
+
+        <div class="form-grid" style="margin-top:10px">
+          <div class="form-group">
+            <label>Cell Outline Border</label>
+            <select id="cfg-border-style" class="form-control" onchange="onCustomDimensionChange()">
+              <option value="solid">Thin Solid Line (for scissor cutting)</option>
+              <option value="dashed">Dashed Line</option>
+              <option value="none">None (for pre-cut sticker sheets)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Inner Padding (mm)</label>
+            <input type="number" id="cfg-cell-padding" class="form-control" step="0.5" min="0" max="10" oninput="onCustomDimensionChange()">
+          </div>
+        </div>
+      </div>
+
+      <!-- Section: Barcode & Font Sizing -->
+      <div class="section-card">
+        <div class="section-title">📊 Barcode &amp; Typography Sizing</div>
+        <div class="form-grid">
+          <div class="form-group">
+            <label>Barcode Height (mm)</label>
+            <input type="number" id="cfg-bc-height-num" class="form-control" step="0.5" min="6" max="50" oninput="onBcHeightDrawerInput(this.value)">
+          </div>
+          <div class="form-group">
+            <label>Barcode Bar Scale</label>
+            <select id="cfg-bc-scale" class="form-control" onchange="onCustomDimensionChange()">
+              <option value="1.0">1.0× (Very Compact)</option>
+              <option value="1.2" selected>1.2× (Standard)</option>
+              <option value="1.4">1.4× (Crisp)</option>
+              <option value="1.6">1.6× (High Density)</option>
+              <option value="2.0">2.0× (Large)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Product Name Font Size</label>
+            <input type="number" id="cfg-name-font" class="form-control" step="0.5" min="4" max="18" oninput="onCustomDimensionChange()">
+          </div>
+          <div class="form-group">
+            <label>Code Text Font Size</label>
+            <input type="number" id="cfg-code-font" class="form-control" step="0.5" min="4" max="16" oninput="onCustomDimensionChange()">
+          </div>
+        </div>
+
+        <div style="margin-top:12px; display:flex; flex-direction:column; gap:8px">
+          <label style="display:flex; align-items:center; gap:8px; font-size:12px; cursor:pointer">
+            <input type="checkbox" id="cfg-show-shop" onchange="onCustomDimensionChange()" style="accent-color:var(--gold)">
+            Show Shop / Company Header in Label
+          </label>
+          <label style="display:flex; align-items:center; gap:8px; font-size:12px; cursor:pointer">
+            <input type="checkbox" id="cfg-center-grid" onchange="onCustomDimensionChange()" checked style="accent-color:var(--gold)">
+            Center Grid on Sheet (Balance leftover margins)
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="drawer-footer">
+      <button type="button" class="btn-toolbar btn-secondary" onclick="resetToFactoryDefaults()">
+        ↺ Reset Defaults
+      </button>
+      <div style="display:flex; gap:8px">
+        <button type="button" class="btn-toolbar" style="background:#059669;color:#fff" onclick="saveAsMyDefault()">
+          💾 Save as My Default
+        </button>
+        <button type="button" class="btn-toolbar btn-settings" onclick="toggleSettingsDrawer(false)">
+          ✓ Apply &amp; Close
+        </button>
+      </div>
+    </div>
+  </aside>
 </div>
 
+<!-- ── Dynamic Stylesheet Injection Point ──────────────────────────────── -->
+<style id="dynamic-sheet-style"></style>
+
+<!-- ── Application Logic ────────────────────────────────────────────────── -->
 <script>
-  // ── Data source ───────────────────────────────────────────────────────────
-  // Items can arrive three ways:
-  //   1. URL param  ?items=base64-encoded-json
-  //   2. Twig/Jinja server render (template var)
-  //   3. window.postMessage from parent SPA
+  // ── Standard Presets Definition ──────────────────────────────────────────
+  const PRESETS = {
+    a4_44: {
+      name: "A4 - 44 Labels (4 × 11, 48.5 × 25.4mm)",
+      paperStandard: "A4",
+      paperWidthMm: 210,
+      paperHeightMm: 297,
+      orientation: "portrait",
+      marginTopMm: 9.0,
+      marginRightMm: 7.0,
+      marginBottomMm: 9.0,
+      marginLeftMm: 7.0,
+      cellWidthMm: 48.5,
+      cellHeightMm: 25.4,
+      cols: 4,
+      rows: 11,
+      colGapMm: 2.0,
+      rowGapMm: 0.0,
+      borderStyle: "solid",
+      cellPaddingMm: 1.2,
+      barcodeHeightMm: 12.0,
+      barcodeBarWidth: 1.2,
+      nameFontSizePt: 6.5,
+      codeFontSizePt: 5.5,
+      priceFontSizePt: 6.0,
+      showName: true,
+      showCode: true,
+      showPrice: false,
+      showShopName: false,
+      centerGrid: true
+    },
+    a4_40: {
+      name: "A4 - 40 Labels (4 × 10, 48.5 × 27.0mm)",
+      paperStandard: "A4",
+      paperWidthMm: 210,
+      paperHeightMm: 297,
+      orientation: "portrait",
+      marginTopMm: 13.5,
+      marginRightMm: 7.0,
+      marginBottomMm: 13.5,
+      marginLeftMm: 7.0,
+      cellWidthMm: 48.5,
+      cellHeightMm: 27.0,
+      cols: 4,
+      rows: 10,
+      colGapMm: 2.0,
+      rowGapMm: 0.0,
+      borderStyle: "solid",
+      cellPaddingMm: 1.5,
+      barcodeHeightMm: 13.0,
+      barcodeBarWidth: 1.2,
+      nameFontSizePt: 6.8,
+      codeFontSizePt: 5.8,
+      priceFontSizePt: 6.5,
+      showName: true,
+      showCode: true,
+      showPrice: false,
+      showShopName: false,
+      centerGrid: true
+    },
+    a4_65: {
+      name: "A4 - 65 Labels (5 × 13, 38.1 × 21.2mm)",
+      paperStandard: "A4",
+      paperWidthMm: 210,
+      paperHeightMm: 297,
+      orientation: "portrait",
+      marginTopMm: 10.7,
+      marginRightMm: 4.7,
+      marginBottomMm: 10.7,
+      marginLeftMm: 4.7,
+      cellWidthMm: 38.1,
+      cellHeightMm: 21.2,
+      cols: 5,
+      rows: 13,
+      colGapMm: 2.5,
+      rowGapMm: 0.0,
+      borderStyle: "solid",
+      cellPaddingMm: 1.0,
+      barcodeHeightMm: 9.5,
+      barcodeBarWidth: 1.0,
+      nameFontSizePt: 5.5,
+      codeFontSizePt: 4.5,
+      priceFontSizePt: 5.0,
+      showName: true,
+      showCode: true,
+      showPrice: false,
+      showShopName: false,
+      centerGrid: true
+    },
+    a4_48: {
+      name: "A4 - 48 Labels (4 × 12, 45.7 × 21.2mm)",
+      paperStandard: "A4",
+      paperWidthMm: 210,
+      paperHeightMm: 297,
+      orientation: "portrait",
+      marginTopMm: 10.7,
+      marginRightMm: 6.5,
+      marginBottomMm: 10.7,
+      marginLeftMm: 6.5,
+      cellWidthMm: 45.7,
+      cellHeightMm: 21.2,
+      cols: 4,
+      rows: 12,
+      colGapMm: 2.5,
+      rowGapMm: 0.0,
+      borderStyle: "solid",
+      cellPaddingMm: 1.0,
+      barcodeHeightMm: 9.5,
+      barcodeBarWidth: 1.1,
+      nameFontSizePt: 5.8,
+      codeFontSizePt: 5.0,
+      priceFontSizePt: 5.5,
+      showName: true,
+      showCode: true,
+      showPrice: false,
+      showShopName: false,
+      centerGrid: true
+    },
+    a4_24: {
+      name: "A4 - 24 Labels (3 × 8, 70.0 × 37.0mm)",
+      paperStandard: "A4",
+      paperWidthMm: 210,
+      paperHeightMm: 297,
+      orientation: "portrait",
+      marginTopMm: 13.0,
+      marginRightMm: 7.0,
+      marginBottomMm: 13.0,
+      marginLeftMm: 7.0,
+      cellWidthMm: 70.0,
+      cellHeightMm: 37.0,
+      cols: 3,
+      rows: 8,
+      colGapMm: 2.0,
+      rowGapMm: 0.0,
+      borderStyle: "solid",
+      cellPaddingMm: 2.0,
+      barcodeHeightMm: 16.0,
+      barcodeBarWidth: 1.4,
+      nameFontSizePt: 8.0,
+      codeFontSizePt: 7.0,
+      priceFontSizePt: 7.5,
+      showName: true,
+      showCode: true,
+      showPrice: false,
+      showShopName: false,
+      centerGrid: true
+    },
+    a4_21: {
+      name: "A4 - 21 Labels (3 × 7, 70.0 × 42.4mm)",
+      paperStandard: "A4",
+      paperWidthMm: 210,
+      paperHeightMm: 297,
+      orientation: "portrait",
+      marginTopMm: 15.0,
+      marginRightMm: 7.0,
+      marginBottomMm: 15.0,
+      marginLeftMm: 7.0,
+      cellWidthMm: 70.0,
+      cellHeightMm: 42.4,
+      cols: 3,
+      rows: 7,
+      colGapMm: 2.0,
+      rowGapMm: 0.0,
+      borderStyle: "solid",
+      cellPaddingMm: 2.0,
+      barcodeHeightMm: 18.0,
+      barcodeBarWidth: 1.4,
+      nameFontSizePt: 8.5,
+      codeFontSizePt: 7.5,
+      priceFontSizePt: 8.0,
+      showName: true,
+      showCode: true,
+      showPrice: false,
+      showShopName: false,
+      centerGrid: true
+    },
+    a4_14: {
+      name: "A4 - 14 Labels (2 × 7, 105.0 × 42.4mm)",
+      paperStandard: "A4",
+      paperWidthMm: 210,
+      paperHeightMm: 297,
+      orientation: "portrait",
+      marginTopMm: 15.0,
+      marginRightMm: 7.0,
+      marginBottomMm: 15.0,
+      marginLeftMm: 7.0,
+      cellWidthMm: 105.0,
+      cellHeightMm: 42.4,
+      cols: 2,
+      rows: 7,
+      colGapMm: 0.0,
+      rowGapMm: 0.0,
+      borderStyle: "solid",
+      cellPaddingMm: 2.0,
+      barcodeHeightMm: 20.0,
+      barcodeBarWidth: 1.8,
+      nameFontSizePt: 9.0,
+      codeFontSizePt: 8.0,
+      priceFontSizePt: 8.5,
+      showName: true,
+      showCode: true,
+      showPrice: false,
+      showShopName: false,
+      centerGrid: true
+    },
+    a4_8: {
+      name: "A4 - 8 Labels (2 × 4, 105.0 × 74.0mm)",
+      paperStandard: "A4",
+      paperWidthMm: 210,
+      paperHeightMm: 297,
+      orientation: "portrait",
+      marginTopMm: 15.0,
+      marginRightMm: 7.0,
+      marginBottomMm: 15.0,
+      marginLeftMm: 7.0,
+      cellWidthMm: 105.0,
+      cellHeightMm: 74.0,
+      cols: 2,
+      rows: 4,
+      colGapMm: 0.0,
+      rowGapMm: 0.0,
+      borderStyle: "solid",
+      cellPaddingMm: 3.0,
+      barcodeHeightMm: 28.0,
+      barcodeBarWidth: 2.0,
+      nameFontSizePt: 11.0,
+      codeFontSizePt: 9.0,
+      priceFontSizePt: 10.0,
+      showName: true,
+      showCode: true,
+      showPrice: false,
+      showShopName: false,
+      centerGrid: true
+    },
+    a5_10: {
+      name: "A5 - 10 Labels (2 × 5, 65.0 × 38.0mm)",
+      paperStandard: "A5",
+      paperWidthMm: 148,
+      paperHeightMm: 210,
+      orientation: "portrait",
+      marginTopMm: 10.0,
+      marginRightMm: 9.0,
+      marginBottomMm: 10.0,
+      marginLeftMm: 9.0,
+      cellWidthMm: 65.0,
+      cellHeightMm: 38.0,
+      cols: 2,
+      rows: 5,
+      colGapMm: 0.0,
+      rowGapMm: 0.0,
+      borderStyle: "solid",
+      cellPaddingMm: 2.0,
+      barcodeHeightMm: 16.0,
+      barcodeBarWidth: 1.3,
+      nameFontSizePt: 8.0,
+      codeFontSizePt: 7.0,
+      priceFontSizePt: 7.5,
+      showName: true,
+      showCode: true,
+      showPrice: false,
+      showShopName: false,
+      centerGrid: true
+    },
+    roll_50_25: {
+      name: "Thermal Roll - 50 × 25 mm",
+      paperStandard: "Custom",
+      paperWidthMm: 50,
+      paperHeightMm: 25,
+      orientation: "portrait",
+      marginTopMm: 1.5,
+      marginRightMm: 1.5,
+      marginBottomMm: 1.5,
+      marginLeftMm: 1.5,
+      cellWidthMm: 47.0,
+      cellHeightMm: 22.0,
+      cols: 1,
+      rows: 1,
+      colGapMm: 0.0,
+      rowGapMm: 0.0,
+      borderStyle: "none",
+      cellPaddingMm: 1.0,
+      barcodeHeightMm: 11.0,
+      barcodeBarWidth: 1.2,
+      nameFontSizePt: 6.5,
+      codeFontSizePt: 5.5,
+      priceFontSizePt: 6.0,
+      showName: true,
+      showCode: true,
+      showPrice: false,
+      showShopName: false,
+      centerGrid: true
+    },
+    roll_50_30: {
+      name: "Thermal Roll - 50 × 30 mm",
+      paperStandard: "Custom",
+      paperWidthMm: 50,
+      paperHeightMm: 30,
+      orientation: "portrait",
+      marginTopMm: 2.0,
+      marginRightMm: 2.0,
+      marginBottomMm: 2.0,
+      marginLeftMm: 2.0,
+      cellWidthMm: 46.0,
+      cellHeightMm: 26.0,
+      cols: 1,
+      rows: 1,
+      colGapMm: 0.0,
+      rowGapMm: 0.0,
+      borderStyle: "none",
+      cellPaddingMm: 1.2,
+      barcodeHeightMm: 13.0,
+      barcodeBarWidth: 1.2,
+      nameFontSizePt: 7.0,
+      codeFontSizePt: 6.0,
+      priceFontSizePt: 6.5,
+      showName: true,
+      showCode: true,
+      showPrice: false,
+      showShopName: false,
+      centerGrid: true
+    },
+    roll_100_50: {
+      name: "Thermal Roll - 100 × 50 mm",
+      paperStandard: "Custom",
+      paperWidthMm: 100,
+      paperHeightMm: 50,
+      orientation: "portrait",
+      marginTopMm: 3.0,
+      marginRightMm: 3.0,
+      marginBottomMm: 3.0,
+      marginLeftMm: 3.0,
+      cellWidthMm: 94.0,
+      cellHeightMm: 44.0,
+      cols: 1,
+      rows: 1,
+      colGapMm: 0.0,
+      rowGapMm: 0.0,
+      borderStyle: "none",
+      cellPaddingMm: 2.0,
+      barcodeHeightMm: 22.0,
+      barcodeBarWidth: 1.8,
+      nameFontSizePt: 9.5,
+      codeFontSizePt: 8.0,
+      priceFontSizePt: 8.5,
+      showName: true,
+      showCode: true,
+      showPrice: false,
+      showShopName: false,
+      centerGrid: true
+    }
+  };
+
+  const PAPER_STANDARDS = {
+    A4: { width: 210, height: 297 },
+    A5: { width: 148, height: 210 },
+    A3: { width: 297, height: 420 },
+    Letter: { width: 215.9, height: 279.4 },
+    Legal: { width: 215.9, height: 355.6 }
+  };
+
+  const STORAGE_KEY = 'billing_app_barcode_sheet_config_v2';
+
+  // Current active configuration
+  let CFG = JSON.parse(JSON.stringify(PRESETS.a4_44));
+  CFG.currentPresetKey = 'a4_44';
 
   let ALL_ITEMS = [];   // [{id, name, code, barcode, selling_price, unit, qty}]
-  const LABELS_PER_PAGE = 44;  // 11 rows × 4 cols
 
-  // Try server-injected data first (Jinja2 sets window._barcodeItems)
+  // Try server-injected data first
   const _serverItems = {{ items_json | default('null') | safe }};
   if (_serverItems && Array.isArray(_serverItems)) {
     ALL_ITEMS = _serverItems;
   }
 
-  // Try URL param
+  // Try URL param (?items=...)
   (function tryUrlParam() {
     try {
       const params = new URLSearchParams(location.search);
@@ -259,154 +1133,541 @@
     }
   });
 
-  // ── Barcode value resolution ──────────────────────────────────────────────
+  // ── Config Persistence ────────────────────────────────────────────────────
+  function loadSavedConfig() {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        CFG = { ...CFG, ...parsed };
+      }
+    } catch(e) {
+      console.warn('Could not load saved config:', e);
+    }
+  }
+
+  function saveConfigToStorage() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(CFG));
+    } catch(e) {
+      console.warn('Could not save config:', e);
+    }
+  }
+
+  function saveAsMyDefault() {
+    saveConfigToStorage();
+    const btn = event.target;
+    const oldTxt = btn.textContent;
+    btn.textContent = "✓ Saved!";
+    setTimeout(() => { btn.textContent = oldTxt; }, 1500);
+  }
+
+  function resetToFactoryDefaults() {
+    if (confirm("Reset layout to default A4 44-label standard?")) {
+      CFG = JSON.parse(JSON.stringify(PRESETS.a4_44));
+      CFG.currentPresetKey = 'a4_44';
+      saveConfigToStorage();
+      syncFormInputsFromConfig();
+      applyDynamicStyles();
+      regenerate();
+    }
+  }
+
+  // ── Form Syncing ──────────────────────────────────────────────────────────
+  function syncFormInputsFromConfig() {
+    // Toolbar selects & inputs
+    const topPreset = document.getElementById('ctrl-preset-select');
+    if (topPreset) topPreset.value = CFG.currentPresetKey || 'custom';
+
+    const drawerPreset = document.getElementById('drawer-preset-select');
+    if (drawerPreset) drawerPreset.value = CFG.currentPresetKey || 'custom';
+
+    document.getElementById('ctrl-bc-height').value = CFG.barcodeHeightMm;
+    document.getElementById('bc-height-display').textContent = CFG.barcodeHeightMm + 'mm';
+    document.getElementById('ctrl-show-price').checked = !!CFG.showPrice;
+    document.getElementById('ctrl-show-code').checked = !!CFG.showCode;
+    document.getElementById('ctrl-show-name').checked = !!CFG.showName;
+
+    // Drawer inputs
+    document.getElementById('cfg-paper-standard').value = CFG.paperStandard || 'Custom';
+    document.getElementById('cfg-paper-width').value = CFG.paperWidthMm;
+    document.getElementById('cfg-paper-height').value = CFG.paperHeightMm;
+
+    // Orientation buttons
+    const btnPort = document.getElementById('btn-orient-portrait');
+    const btnLand = document.getElementById('btn-orient-landscape');
+    if (CFG.orientation === 'landscape') {
+      btnLand.classList.add('active');
+      btnPort.classList.remove('active');
+    } else {
+      btnPort.classList.add('active');
+      btnLand.classList.remove('active');
+    }
+
+    // Margins
+    document.getElementById('cfg-margin-top').value = CFG.marginTopMm;
+    document.getElementById('cfg-margin-right').value = CFG.marginRightMm;
+    document.getElementById('cfg-margin-bottom').value = CFG.marginBottomMm;
+    document.getElementById('cfg-margin-left').value = CFG.marginLeftMm;
+
+    // Cell dimensions (the key feature!)
+    document.getElementById('cfg-cell-width').value = CFG.cellWidthMm;
+    document.getElementById('cfg-cell-height').value = CFG.cellHeightMm;
+
+    // Grid cols & rows
+    document.getElementById('cfg-cols').value = CFG.cols;
+    document.getElementById('cfg-rows').value = CFG.rows;
+    document.getElementById('cfg-total-per-page').value = (CFG.cols * CFG.rows) + ' labels';
+
+    // Gaps & border
+    document.getElementById('cfg-col-gap').value = CFG.colGapMm;
+    document.getElementById('cfg-row-gap').value = CFG.rowGapMm;
+    document.getElementById('cfg-border-style').value = CFG.borderStyle || 'solid';
+    document.getElementById('cfg-cell-padding').value = CFG.cellPaddingMm != null ? CFG.cellPaddingMm : 1.5;
+
+    // Barcode & text
+    document.getElementById('cfg-bc-height-num').value = CFG.barcodeHeightMm;
+    document.getElementById('cfg-bc-scale').value = String(CFG.barcodeBarWidth || '1.2');
+    document.getElementById('cfg-name-font').value = CFG.nameFontSizePt;
+    document.getElementById('cfg-code-font').value = CFG.codeFontSizePt;
+    document.getElementById('cfg-show-shop').checked = !!CFG.showShopName;
+    document.getElementById('cfg-center-grid').checked = !!CFG.centerGrid;
+
+    // Update quick summary in top toolbar
+    updateSummaryPill();
+  }
+
+  function updateSummaryPill() {
+    const totalPerPage = CFG.cols * CFG.rows;
+    const summary = `${CFG.paperStandard || 'Sheet'} (${CFG.paperWidthMm}×${CFG.paperHeightMm}mm) • Cell: ${CFG.cellWidthMm}×${CFG.cellHeightMm}mm • ${CFG.cols}×${CFG.rows} (${totalPerPage}/pg)`;
+    document.getElementById('quick-layout-summary').textContent = summary;
+  }
+
+  // ── Auto-Calculate Grid from Cell & Paper Dimensions ───────────────────────
+  function autoCalculateGrid() {
+    const availW = CFG.paperWidthMm - CFG.marginLeftMm - CFG.marginRightMm;
+    const availH = CFG.paperHeightMm - CFG.marginTopMm - CFG.marginBottomMm;
+
+    const cellW = Math.max(5, CFG.cellWidthMm);
+    const cellH = Math.max(5, CFG.cellHeightMm);
+    const colGap = Math.max(0, CFG.colGapMm);
+    const rowGap = Math.max(0, CFG.rowGapMm);
+
+    // Formula: N * Cell + (N-1) * Gap <= Avail  ==>  N * (Cell + Gap) <= Avail + Gap
+    const maxCols = Math.max(1, Math.floor((availW + colGap) / (cellW + colGap)));
+    const maxRows = Math.max(1, Math.floor((availH + rowGap) / (cellH + rowGap)));
+
+    CFG.cols = maxCols;
+    CFG.rows = maxRows;
+    document.getElementById('cfg-cols').value = maxCols;
+    document.getElementById('cfg-rows').value = maxRows;
+    document.getElementById('cfg-total-per-page').value = (maxCols * maxRows) + ' labels';
+
+    saveConfigToStorage();
+    applyDynamicStyles();
+    regenerate();
+  }
+
+  // ── Preset Selection ──────────────────────────────────────────────────────
+  function applyPreset(presetKey) {
+    if (!PRESETS[presetKey]) {
+      CFG.currentPresetKey = 'custom';
+      syncFormInputsFromConfig();
+      return;
+    }
+    const preset = JSON.parse(JSON.stringify(PRESETS[presetKey]));
+    // Retain toggles if already set by user
+    const showPrice = CFG.showPrice;
+    CFG = { ...preset, showPrice, currentPresetKey: presetKey };
+
+    saveConfigToStorage();
+    syncFormInputsFromConfig();
+    applyDynamicStyles();
+    regenerate();
+  }
+
+  // ── Orientation ───────────────────────────────────────────────────────────
+  function setOrientation(orient) {
+    if (CFG.orientation === orient) return;
+    CFG.orientation = orient;
+
+    // Swap paper dimensions if needed
+    if ((orient === 'landscape' && CFG.paperWidthMm < CFG.paperHeightMm) ||
+        (orient === 'portrait' && CFG.paperWidthMm > CFG.paperHeightMm)) {
+      const tmp = CFG.paperWidthMm;
+      CFG.paperWidthMm = CFG.paperHeightMm;
+      CFG.paperHeightMm = tmp;
+    }
+
+    CFG.currentPresetKey = 'custom';
+    saveConfigToStorage();
+    syncFormInputsFromConfig();
+    autoCalculateGrid();
+  }
+
+  function onPaperStandardSelect(standard) {
+    CFG.paperStandard = standard;
+    if (PAPER_STANDARDS[standard]) {
+      let w = PAPER_STANDARDS[standard].width;
+      let h = PAPER_STANDARDS[standard].height;
+      if (CFG.orientation === 'landscape') {
+        const tmp = w; w = h; h = tmp;
+      }
+      CFG.paperWidthMm = w;
+      CFG.paperHeightMm = h;
+    }
+    CFG.currentPresetKey = 'custom';
+    saveConfigToStorage();
+    syncFormInputsFromConfig();
+    autoCalculateGrid();
+  }
+
+  function onCustomDimensionChange() {
+    CFG.currentPresetKey = 'custom';
+    CFG.paperWidthMm = parseFloat(document.getElementById('cfg-paper-width').value) || CFG.paperWidthMm;
+    CFG.paperHeightMm = parseFloat(document.getElementById('cfg-paper-height').value) || CFG.paperHeightMm;
+
+    CFG.marginTopMm = parseFloat(document.getElementById('cfg-margin-top').value) || 0;
+    CFG.marginRightMm = parseFloat(document.getElementById('cfg-margin-right').value) || 0;
+    CFG.marginBottomMm = parseFloat(document.getElementById('cfg-margin-bottom').value) || 0;
+    CFG.marginLeftMm = parseFloat(document.getElementById('cfg-margin-left').value) || 0;
+
+    // Single cell width & height
+    CFG.cellWidthMm = parseFloat(document.getElementById('cfg-cell-width').value) || CFG.cellWidthMm;
+    CFG.cellHeightMm = parseFloat(document.getElementById('cfg-cell-height').value) || CFG.cellHeightMm;
+
+    CFG.cols = Math.max(1, parseInt(document.getElementById('cfg-cols').value) || 1);
+    CFG.rows = Math.max(1, parseInt(document.getElementById('cfg-rows').value) || 1);
+    document.getElementById('cfg-total-per-page').value = (CFG.cols * CFG.rows) + ' labels';
+
+    CFG.colGapMm = parseFloat(document.getElementById('cfg-col-gap').value) || 0;
+    CFG.rowGapMm = parseFloat(document.getElementById('cfg-row-gap').value) || 0;
+    CFG.borderStyle = document.getElementById('cfg-border-style').value;
+    CFG.cellPaddingMm = parseFloat(document.getElementById('cfg-cell-padding').value) || 0;
+
+    CFG.barcodeHeightMm = parseFloat(document.getElementById('cfg-bc-height-num').value) || CFG.barcodeHeightMm;
+    CFG.barcodeBarWidth = parseFloat(document.getElementById('cfg-bc-scale').value) || 1.2;
+    CFG.nameFontSizePt = parseFloat(document.getElementById('cfg-name-font').value) || 6.5;
+    CFG.codeFontSizePt = parseFloat(document.getElementById('cfg-code-font').value) || 5.5;
+    CFG.showShopName = document.getElementById('cfg-show-shop').checked;
+    CFG.centerGrid = document.getElementById('cfg-center-grid').checked;
+
+    // Keep toolbar quick slider in sync
+    document.getElementById('ctrl-bc-height').value = CFG.barcodeHeightMm;
+    document.getElementById('bc-height-display').textContent = CFG.barcodeHeightMm + 'mm';
+
+    saveConfigToStorage();
+    updateSummaryPill();
+    applyDynamicStyles();
+    regenerate();
+  }
+
+  function onBcHeightInput(val) {
+    CFG.barcodeHeightMm = parseFloat(val) || 12;
+    document.getElementById('bc-height-display').textContent = CFG.barcodeHeightMm + 'mm';
+    document.getElementById('cfg-bc-height-num').value = CFG.barcodeHeightMm;
+    saveConfigToStorage();
+    applyDynamicStyles();
+    regenerate();
+  }
+
+  function onBcHeightDrawerInput(val) {
+    CFG.barcodeHeightMm = parseFloat(val) || 12;
+    document.getElementById('ctrl-bc-height').value = CFG.barcodeHeightMm;
+    document.getElementById('bc-height-display').textContent = CFG.barcodeHeightMm + 'mm';
+    saveConfigToStorage();
+    applyDynamicStyles();
+    regenerate();
+  }
+
+  function toggleConfigFlag(flagName, value) {
+    CFG[flagName] = value;
+    saveConfigToStorage();
+    regenerate();
+  }
+
+  // ── Drawer Open/Close ─────────────────────────────────────────────────────
+  function toggleSettingsDrawer(show) {
+    const backdrop = document.getElementById('settings-drawer-backdrop');
+    if (show) {
+      syncFormInputsFromConfig();
+      backdrop.classList.add('open');
+    } else {
+      backdrop.classList.remove('open');
+    }
+  }
+
+  function onDrawerBackdropClick(e) {
+    if (e.target.id === 'settings-drawer-backdrop') {
+      toggleSettingsDrawer(false);
+    }
+  }
+
+  // ── Dynamic CSS Injection for Sheet, Page, and Print ──────────────────────
+  function applyDynamicStyles() {
+    let styleEl = document.getElementById('dynamic-sheet-style');
+    if (!styleEl) {
+      styleEl = document.createElement('style');
+      styleEl.id = 'dynamic-sheet-style';
+      document.head.appendChild(styleEl);
+    }
+
+    const pw = CFG.paperWidthMm;
+    const ph = CFG.paperHeightMm;
+    const cw = CFG.cellWidthMm;
+    const ch = CFG.cellHeightMm;
+    const cols = CFG.cols;
+    const rows = CFG.rows;
+    const mt = CFG.marginTopMm;
+    const mr = CFG.marginRightMm;
+    const mb = CFG.marginBottomMm;
+    const ml = CFG.marginLeftMm;
+    const cgap = CFG.colGapMm;
+    const rgap = CFG.rowGapMm;
+
+    let borderCSS = '0.5px solid #cbd5e1';
+    if (CFG.borderStyle === 'dashed') borderCSS = '0.5px dashed #cbd5e1';
+    else if (CFG.borderStyle === 'none') borderCSS = '0.5px solid transparent';
+
+    const justifyGrid = CFG.centerGrid ? 'center' : 'start';
+    const alignGrid = CFG.centerGrid ? 'center' : 'start';
+
+    styleEl.innerHTML = `
+      @page {
+        size: ${pw}mm ${ph}mm;
+        margin: 0;
+      }
+      .sheet-page {
+        width: ${pw}mm;
+        min-height: ${ph}mm;
+        max-height: ${ph}mm;
+        padding: ${mt}mm ${mr}mm ${mb}mm ${ml}mm;
+        box-sizing: border-box;
+      }
+      .label-grid {
+        grid-template-columns: repeat(${cols}, ${cw}mm);
+        grid-auto-rows: ${ch}mm;
+        column-gap: ${cgap}mm;
+        row-gap: ${rgap}mm;
+        justify-content: ${justifyGrid};
+        align-content: ${alignGrid};
+      }
+      .label-cell {
+        width: ${cw}mm;
+        height: ${ch}mm;
+        max-width: ${cw}mm;
+        max-height: ${ch}mm;
+        border: ${borderCSS};
+        padding: ${CFG.cellPaddingMm}mm;
+      }
+      .label-name {
+        font-size: ${CFG.nameFontSizePt}pt;
+      }
+      .label-code {
+        font-size: ${CFG.codeFontSizePt}pt;
+      }
+      .label-price {
+        font-size: ${CFG.priceFontSizePt || 6}pt;
+      }
+    `;
+  }
+
+  // ── Barcode Value & Text Utilities ────────────────────────────────────────
   function getBarcodeValue(item) {
-    if (item.barcode && item.barcode.trim()) return item.barcode.trim();
-    if (item.code   && item.code.trim())   return item.code.trim();
+    if (item.barcode && String(item.barcode).trim()) return String(item.barcode).trim();
+    if (item.code && String(item.code).trim()) return String(item.code).trim();
     return String(item.id || Math.random().toString(36).slice(2, 10));
   }
 
-  // ── Truncate text to fit single line ─────────────────────────────────────
   function smartName(item) {
-    const maxChars = 22;
     const name = item.name || '';
-    if (name.length <= maxChars) return name;
-    const code = item.code ? ` [${item.code}]` : '';
-    const truncated = name.slice(0, maxChars - code.length - 1) + '…';
-    return truncated + code;
+    const approxMaxChars = Math.max(12, Math.floor(CFG.cellWidthMm * 0.55));
+    if (name.length <= approxMaxChars) return name;
+    return name.slice(0, approxMaxChars - 1) + '…';
   }
 
-  // ── Build labels array (expanded by copies) ───────────────────────────────
+  // ── Build Labels Array (Filtered & Multiplied) ────────────────────────────
   function buildLabels() {
-    const copies       = Math.max(1, parseInt(document.getElementById('ctrl-copies').value) || 1);
-    const filterText   = (document.getElementById('ctrl-filter').value || '').toLowerCase();
-    const showPrice    = document.getElementById('ctrl-show-price').checked;
+    const multiplier = Math.max(1, parseInt(document.getElementById('ctrl-copies-multiplier').value) || 1);
+    const filterText = (document.getElementById('ctrl-filter').value || '').toLowerCase().trim();
 
     let labels = [];
     ALL_ITEMS.forEach(item => {
-      if (filterText && !item.name.toLowerCase().includes(filterText)) return;
-      const qty = item.qty != null ? Math.max(1, parseInt(item.qty)) : 1;
-      const totalCopies = qty * copies;
+      if (filterText && !item.name.toLowerCase().includes(filterText) && !getBarcodeValue(item).toLowerCase().includes(filterText)) {
+        return;
+      }
+      const qty = item.qty != null ? Math.max(0, parseInt(item.qty)) : 1;
+      const totalCopies = qty * multiplier;
       for (let c = 0; c < totalCopies; c++) {
-        labels.push({ ...item, showPrice });
+        labels.push(item);
       }
     });
     return labels;
   }
 
-  // ── Render pages ─────────────────────────────────────────────────────────
+  // ── Render Full Sheet Pages ───────────────────────────────────────────────
   function regenerate() {
-    const area       = document.getElementById('print-area');
-    const bcHeight   = parseInt(document.getElementById('ctrl-bc-height').value) || 36;
-    const labels     = buildLabels();
-    const shopName   = '{{ shop_name }}';
-    const now        = new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
+    const area = document.getElementById('print-area');
+    const labels = buildLabels();
+    const labelsPerPage = Math.max(1, CFG.cols * CFG.rows);
 
-    document.getElementById('label-count-badge').textContent =
-      labels.length + ' label' + (labels.length !== 1 ? 's' : '');
+    document.getElementById('btn-total-items-badge').textContent = ALL_ITEMS.length;
 
-    if (labels.length === 0) {
+    if (ALL_ITEMS.length === 0) {
       area.innerHTML = `
-        <div class="loading-state">
+        <div class="empty-state">
           <div style="font-size:48px;margin-bottom:12px">🏷️</div>
-          <h3 style="font-size:16px;font-weight:700;margin-bottom:8px">No labels to print</h3>
-          <p>No items found. Close this window and generate barcodes from Stock-In or Product list.</p>
+          <h3>No Items to Print</h3>
+          <p>You can select products from Stock-In or Products list to print barcodes, or load sample items below to test your sheet layout.</p>
+          <button type="button" class="btn-toolbar btn-print" onclick="loadSampleItems()" style="margin:0 auto">
+            ➕ Load 10 Sample Items for Testing
+          </button>
         </div>`;
       return;
     }
 
-    // Pad to full page
-    const pages = Math.ceil(labels.length / LABELS_PER_PAGE);
+    if (labels.length === 0) {
+      area.innerHTML = `
+        <div class="empty-state">
+          <div style="font-size:44px;margin-bottom:12px">🔍</div>
+          <h3>No Matching Labels</h3>
+          <p>No products match your current search filter or all copy quantities are set to 0.</p>
+          <button type="button" class="btn-toolbar btn-secondary" onclick="document.getElementById('ctrl-filter').value=''; regenerate();" style="margin:0 auto">
+            Clear Filter
+          </button>
+        </div>`;
+      return;
+    }
+
+    const totalPages = Math.ceil(labels.length / labelsPerPage);
     const padded = [...labels];
-    while (padded.length < pages * LABELS_PER_PAGE) padded.push(null);
+    // Pad to full page so layout grid does not collapse on last sheet
+    while (padded.length < totalPages * labelsPerPage) {
+      padded.push(null);
+    }
 
     let html = '';
-    for (let pg = 0; pg < pages; pg++) {
-      const slice = padded.slice(pg * LABELS_PER_PAGE, (pg + 1) * LABELS_PER_PAGE);
+    for (let pg = 0; pg < totalPages; pg++) {
+      const slice = padded.slice(pg * labelsPerPage, (pg + 1) * labelsPerPage);
       html += `
-        <div class="a4-page">
-          <div class="a4-header">
-            <div>
-              <div class="a4-header-title">🏷️ Barcode Labels — ${shopName}</div>
-              <div class="a4-header-sub">Page ${pg + 1} of ${pages} · Generated: ${now}</div>
+        <div class="sheet-wrapper">
+          <div class="sheet-page-indicator">Sheet ${pg + 1} of ${totalPages} • (${labels.length} total labels)</div>
+          <div class="sheet-page">
+            <div class="label-grid">
+              ${slice.map((item, idx) => {
+                if (!item) {
+                  return `<div class="label-cell label-empty"></div>`;
+                }
+                const bv = getBarcodeValue(item);
+                const svgId = `bc-${pg}-${idx}`;
+                const shopHeaderHtml = CFG.showShopName
+                  ? `<div class="label-shop-name">{{ shop_name }}</div>`
+                  : '';
+                const nameHtml = CFG.showName
+                  ? `<div class="label-name" title="${item.name}">${smartName(item)}</div>`
+                  : '';
+                const codeHtml = CFG.showCode
+                  ? `<div class="label-code">${bv}</div>`
+                  : '';
+                const priceHtml = (CFG.showPrice && item.selling_price)
+                  ? `<div class="label-price">₹${parseFloat(item.selling_price).toFixed(2)}${item.unit ? '/' + item.unit : ''}</div>`
+                  : '';
+
+                return `
+                  <div class="label-cell">
+                    ${shopHeaderHtml}
+                    ${nameHtml}
+                    <div class="label-barcode-wrap">
+                      <svg id="${svgId}"></svg>
+                    </div>
+                    ${codeHtml}
+                    ${priceHtml}
+                  </div>`;
+              }).join('')}
             </div>
-            <div class="a4-header-meta">
-              Labels ${pg * LABELS_PER_PAGE + 1}–${Math.min((pg + 1) * LABELS_PER_PAGE, labels.length)} of ${labels.length}
-            </div>
-          </div>
-          <div class="label-grid">
-            ${slice.map((item, idx) => {
-              if (!item) return `<div class="label-cell label-empty"></div>`;
-              const bv = getBarcodeValue(item);
-              const svgId = `bc-${pg}-${idx}`;
-              const priceHtml = item.showPrice && item.selling_price
-                ? `<div class="label-code">₹${parseFloat(item.selling_price).toFixed(2)}/${item.unit || ''}</div>`
-                : '';
-              return `
-                <div class="label-cell">
-                  <div class="label-name">${smartName(item)}</div>
-                  <div class="label-barcode">
-                    <svg id="${svgId}"></svg>
-                  </div>
-                  <div class="label-code">${bv}</div>
-                  ${priceHtml}
-                </div>`;
-            }).join('')}
           </div>
         </div>`;
     }
 
     area.innerHTML = html;
 
-    // Render barcodes
-    for (let pg = 0; pg < pages; pg++) {
-      const slice = padded.slice(pg * LABELS_PER_PAGE, (pg + 1) * LABELS_PER_PAGE);
+    // Render Barcode SVGs with JsBarcode
+    // Convert mm to screen pixels (approx 1mm ~ 3.78px)
+    const bcHeightPx = Math.max(15, Math.round((CFG.barcodeHeightMm || 12) * 3.78));
+    const bcBarWidth = parseFloat(CFG.barcodeBarWidth) || 1.2;
+
+    for (let pg = 0; pg < totalPages; pg++) {
+      const slice = padded.slice(pg * labelsPerPage, (pg + 1) * labelsPerPage);
       slice.forEach((item, idx) => {
         if (!item) return;
         const svgId = `bc-${pg}-${idx}`;
         const el = document.getElementById(svgId);
         if (!el) return;
+        const bv = getBarcodeValue(item);
+
         try {
-          JsBarcode(el, getBarcodeValue(item), {
-            format:      'CODE128',
-            width:       1.4,
-            height:      bcHeight,
+          JsBarcode(el, bv, {
+            format: 'CODE128',
+            width: bcBarWidth,
+            height: bcHeightPx,
             displayValue: false,
-            margin:      0,
-            lineColor:   '#1a202c',
-            background:  '#ffffff',
+            margin: 0,
+            lineColor: '#0f172a',
+            background: 'transparent'
           });
         } catch(e) {
-          // Fallback: try CODE39 for non-standard chars
+          // Fallback to CODE39 for special characters
           try {
-            JsBarcode(el, getBarcodeValue(item).replace(/[^A-Z0-9\-\.\ \$\/\+\%]/gi, '?'), {
-              format: 'CODE39', width: 1.2, height: bcHeight,
-              displayValue: false, margin: 0,
+            JsBarcode(el, bv.replace(/[^A-Z0-9\-\.\ \$\/\+\%]/gi, '-'), {
+              format: 'CODE39',
+              width: Math.max(1, bcBarWidth - 0.2),
+              height: bcHeightPx,
+              displayValue: false,
+              margin: 0,
+              lineColor: '#0f172a',
+              background: 'transparent'
             });
           } catch(e2) {
-            el.outerHTML = `<div style="font-size:8px;color:red;padding:4px">Error: ${e2.message}</div>`;
+            el.outerHTML = `<div style="font-size:7pt;color:red;padding:2px">Invalid Barcode: ${bv}</div>`;
           }
         }
       });
     }
   }
 
-  // ── Edit Quantity Modal on Print Page ──────────────────────────────────
+  // ── Sample Items for Testing / Previews ───────────────────────────────────
+  function loadSampleItems() {
+    ALL_ITEMS = [
+      { id: 1, name: "Premium Chicken Breast (Boneless)", code: "CHIC-001", barcode: "8901234567890", selling_price: 320.00, unit: "kg", qty: 4 },
+      { id: 2, name: "Fresh Mutton Curry Cut", code: "MUT-002", barcode: "8901234567891", selling_price: 780.00, unit: "kg", qty: 4 },
+      { id: 3, name: "Farm Fresh Eggs (Pack of 12)", code: "EGG-012", barcode: "8901234567892", selling_price: 95.00, unit: "box", qty: 6 },
+      { id: 4, name: "Beef Tenderloin Steak", code: "BEEF-004", barcode: "8901234567893", selling_price: 450.00, unit: "kg", qty: 4 },
+      { id: 5, name: "Chicken Drumsticks (Skinless)", code: "CHIC-005", barcode: "8901234567894", selling_price: 290.00, unit: "kg", qty: 4 },
+      { id: 6, name: "Smoked Chicken Sausage 250g", code: "SAUS-006", barcode: "8901234567895", selling_price: 180.00, unit: "pkt", qty: 6 },
+      { id: 7, name: "Fresh Salmon Fillet", code: "FISH-007", barcode: "8901234567896", selling_price: 1200.00, unit: "kg", qty: 2 },
+      { id: 8, name: "Chicken Keema Mince", code: "CHIC-008", barcode: "8901234567897", selling_price: 340.00, unit: "kg", qty: 4 },
+      { id: 9, name: "Pork Belly Slices", code: "PORK-009", barcode: "8901234567898", selling_price: 520.00, unit: "kg", qty: 4 },
+      { id: 10, name: "Tandoori Chicken Marinade 500g", code: "MAR-010", barcode: "8901234567899", selling_price: 220.00, unit: "pkt", qty: 6 }
+    ];
+    regenerate();
+  }
+
+  // ── Edit Quantity Modal ──────────────────────────────────────────────────
   function showQtyEditorModal() {
     const existing = document.getElementById('qty-modal-backdrop');
     if (existing) existing.remove();
 
     let html = `
       <div id="qty-modal-backdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.7);backdrop-filter:blur(3px);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px">
-        <div style="background:#fff;border-radius:12px;width:100%;max-width:620px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.4);overflow:hidden;font-family:'Inter',sans-serif">
-          <div style="background:#0f172a;color:#fff;padding:14px 20px;display:flex;justify-content:space-between;align-items:center">
+        <div style="background:#0f172a;border:1px solid #334155;border-radius:12px;width:100%;max-width:640px;max-height:85vh;display:flex;flex-direction:column;box-shadow:0 24px 64px rgba(0,0,0,0.6);overflow:hidden;font-family:'Inter',sans-serif;color:#f8fafc">
+          <div style="background:#111c33;padding:14px 20px;border-bottom:1px solid #334155;display:flex;justify-content:space-between;align-items:center">
             <div style="font-weight:700;font-size:14px">📋 Edit Barcode Copies per Product</div>
-            <button type="button" onclick="document.getElementById('qty-modal-backdrop').remove()" style="background:none;border:none;color:#fff;font-size:18px;cursor:pointer">✕</button>
+            <button type="button" onclick="document.getElementById('qty-modal-backdrop').remove()" style="background:none;border:none;color:#94a3b8;font-size:18px;cursor:pointer">✕</button>
           </div>
           <div style="padding:16px 20px;overflow-y:auto;flex:1">
             <table style="width:100%;border-collapse:collapse;font-size:13px">
               <thead>
-                <tr style="border-bottom:2px solid #e2e8f0;text-align:left;color:#64748b">
+                <tr style="border-bottom:2px solid #334155;text-align:left;color:#94a3b8">
                   <th style="padding:8px">Product Name</th>
                   <th style="padding:8px">Code / Barcode</th>
                   <th style="padding:8px;text-align:center">Copies to Print</th>
@@ -414,21 +1675,21 @@
               </thead>
               <tbody>
                 ${ALL_ITEMS.map((item, idx) => `
-                  <tr style="border-bottom:1px solid #f1f5f9">
+                  <tr style="border-bottom:1px solid #1e293b">
                     <td style="padding:8px;font-weight:600">${item.name}</td>
                     <td style="padding:8px;font-family:'JetBrains Mono',monospace;color:#c9a84c">${getBarcodeValue(item)}</td>
                     <td style="padding:8px;text-align:center">
-                      <input type="number" min="0" max="500" value="${item.qty || 1}"
-                        style="width:75px;text-align:center;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-weight:700"
+                      <input type="number" min="0" max="500" value="${item.qty != null ? item.qty : 1}"
+                        style="width:75px;text-align:center;padding:5px 8px;background:#0b1120;color:#fff;border:1px solid #475569;border-radius:6px;font-weight:700"
                         id="print-item-qty-${idx}">
                     </td>
                   </tr>`).join('')}
               </tbody>
             </table>
           </div>
-          <div style="padding:12px 20px;background:#f8f9fb;border-top:1px solid #e2e8f0;display:flex;justify-content:flex-end;gap:10px">
-            <button type="button" onclick="document.getElementById('qty-modal-backdrop').remove()" style="padding:8px 16px;border:1px solid #cbd5e1;background:#fff;border-radius:6px;cursor:pointer;font-weight:600">Cancel</button>
-            <button type="button" onclick="applyQtyEdits()" style="padding:8px 20px;border:none;background:#c9a84c;color:#0f172a;font-weight:700;border-radius:6px;cursor:pointer">Update &amp; Regenerate Sheet</button>
+          <div style="padding:12px 20px;background:#111c33;border-top:1px solid #334155;display:flex;justify-content:flex-end;gap:10px">
+            <button type="button" onclick="document.getElementById('qty-modal-backdrop').remove()" class="btn-toolbar btn-secondary">Cancel</button>
+            <button type="button" onclick="applyQtyEdits()" class="btn-toolbar btn-print">Update &amp; Regenerate Sheet</button>
           </div>
         </div>
       </div>`;
@@ -445,10 +1706,14 @@
     regenerate();
   }
 
-  // ── Init ──────────────────────────────────────────────────────────────────
+  // ── Initialization ────────────────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', function() {
+    loadSavedConfig();
+    syncFormInputsFromConfig();
+    applyDynamicStyles();
     regenerate();
-    // Auto-print if ?autoprint=1
+
+    // Auto-print if ?autoprint=1 in URL
     if (new URLSearchParams(location.search).get('autoprint') === '1') {
       setTimeout(window.print, 1200);
     }

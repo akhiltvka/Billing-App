@@ -16,6 +16,15 @@ from license_manager import get_machine_id, SUBSCRIPTION_DAYS, GRACE_PERIOD_DAYS
 # Default Central License Server URL (Configurable in shop_settings or env)
 DEFAULT_CLOUD_SERVER_URL = os.environ.get('CLOUD_LICENSE_SERVER_URL', 'https://mpi-license-server.onrender.com')
 
+
+def get_cloud_api_headers():
+    token = os.environ.get('CLOUD_LICENSE_API_TOKEN', '').strip()
+    return {
+        'Content-Type': 'application/json',
+        'X-Outlet-Token': token,
+        'User-Agent': 'MPI-Outlet-App/1.0'
+    }
+
 def get_cloud_server_url():
     conn = get_db()
     row = conn.execute("SELECT value FROM shop_settings WHERE key = 'cloud_license_server_url'").fetchone()
@@ -89,7 +98,7 @@ def sync_with_cloud_server():
         req = urllib.request.Request(
             ping_endpoint,
             data=data_bytes,
-            headers={'Content-Type': 'application/json', 'User-Agent': 'MPI-Outlet-App/1.0'},
+            headers=get_cloud_api_headers(),
             method='POST'
         )
 
@@ -247,7 +256,7 @@ def re_register_with_cloud():
         req = urllib.request.Request(
             reg_endpoint,
             data=data_bytes,
-            headers={'Content-Type': 'application/json', 'User-Agent': 'MPI-Outlet-App/1.0'},
+            headers=get_cloud_api_headers(),
             method='POST'
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
@@ -283,7 +292,7 @@ def notify_cloud_payment(utr_number):
         req = urllib.request.Request(
             notify_endpoint,
             data=data_bytes,
-            headers={'Content-Type': 'application/json', 'User-Agent': 'MPI-Outlet-App/1.0'},
+            headers=get_cloud_api_headers(),
             method='POST'
         )
         with urllib.request.urlopen(req, timeout=5) as resp:

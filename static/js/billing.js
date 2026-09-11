@@ -14,6 +14,8 @@ const Billing = {
   customer: null,
   paymentMode: 'cash',
   discountPct: 0,
+  discountRupees: 0,
+  discountMode: 'pct',  // 'pct' or 'rupees'
   products: [],
   _heldBills: JSON.parse(localStorage.getItem('mpi_held_bills') || '[]'),
 
@@ -97,17 +99,59 @@ const Billing = {
             </div>` : ''}
 
             <div class="customer-panel" style="padding:6px 16px">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-                <span class="form-label">Discount % ${!Auth.can('billing.give_discount') ? '<span class="text-muted" style="font-size:10px">(Staff Cap: 10%)</span>' : ''}</span>
-                <span id="discount-display" class="text-gold font-bold">0%</span>
+              <!-- Discount Section Header -->
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+                <span class="form-label" style="margin:0">Discount ${!Auth.can('billing.give_discount') ? '<span class="text-muted" style="font-size:10px">(Cap: 10%)</span>' : ''}</span>
+                <span id="discount-display" class="text-gold font-bold" style="font-size:13px">0%</span>
               </div>
-              <input type="range" id="discount-slider" min="0" max="${Auth.can('billing.give_discount') ? 50 : 10}" value="0" step="0.5"
-                style="width:100%;accent-color:var(--crimson);cursor:pointer"
-                oninput="Billing.setDiscount(this.value)">
-              <div style="display:flex;gap:6px;margin-top:8px">
-                ${(Auth.can('billing.give_discount') ? [0,5,10,15,20] : [0,2.5,5,7.5,10]).map(d =>
-                  `<button class="btn btn-secondary btn-sm" style="flex:1;padding:4px" onclick="Billing.setDiscount(${d})">${d}%</button>`
-                ).join('')}
+
+              <!-- Mode Toggle: % vs ₹ -->
+              <div style="display:flex;border:1.5px solid var(--border);border-radius:var(--r-sm);overflow:hidden;margin-bottom:8px">
+                <button id="disc-mode-pct" onclick="Billing.setDiscountMode('pct')"
+                  style="flex:1;padding:5px 0;font-size:12px;font-weight:700;border:none;cursor:pointer;background:var(--crimson);color:#fff;transition:all .15s">% Percent</button>
+                <button id="disc-mode-rupees" onclick="Billing.setDiscountMode('rupees')"
+                  style="flex:1;padding:5px 0;font-size:12px;font-weight:700;border:none;cursor:pointer;background:var(--bg-input);color:var(--text-muted);transition:all .15s">₹ Cash</button>
+              </div>
+
+              <!-- Percentage Controls (shown when mode=pct) -->
+              <div id="disc-pct-controls">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                  <input type="range" id="discount-slider" min="0" max="${Auth.can('billing.give_discount') ? 50 : 10}" value="0" step="0.5"
+                    style="flex:1;accent-color:var(--crimson);cursor:pointer"
+                    oninput="Billing.setDiscount(this.value)">
+                  <div style="display:flex;align-items:center;background:var(--bg-input);border:1.5px solid var(--border);border-radius:var(--r-sm);overflow:hidden;width:72px">
+                    <input type="number" id="discount-pct-input" min="0" max="${Auth.can('billing.give_discount') ? 50 : 10}" step="0.5" value="0"
+                      style="width:52px;border:none;background:transparent;color:var(--text-primary);font-size:13px;font-weight:700;padding:4px 4px;text-align:right;outline:none"
+                      oninput="Billing.setDiscount(this.value)" onfocus="this.select()"
+                      onkeydown="if(event.key==='Enter'){event.target.blur();document.getElementById('product-search')?.focus();}">
+                    <span style="font-size:12px;font-weight:700;color:var(--text-muted);padding-right:5px">%</span>
+                  </div>
+                </div>
+                <div style="display:flex;gap:5px">
+                  ${(Auth.can('billing.give_discount') ? [0,5,10,15,20] : [0,2.5,5,7.5,10]).map(d =>
+                    `<button class="btn btn-secondary btn-sm" style="flex:1;padding:3px 0;font-size:11px" onclick="Billing.setDiscount(${d})">${d}%</button>`
+                  ).join('')}
+                </div>
+              </div>
+
+              <!-- Rupee (Cash) Discount Controls (shown when mode=rupees) -->
+              <div id="disc-rupees-controls" style="display:none">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                  <div class="input-group" style="flex:1">
+                    <div class="input-group-prefix" style="font-weight:700">₹</div>
+                    <input type="number" id="discount-rupees-input" min="0" step="1" value="0" placeholder="0"
+                      style="font-size:16px;font-weight:700"
+                      oninput="Billing.setDiscountRupees(this.value)"
+                      onfocus="this.select()"
+                      onkeydown="if(event.key==='Enter'){event.target.blur();document.getElementById('product-search')?.focus();}">
+                  </div>
+                  <button class="btn btn-secondary btn-sm" style="padding:4px 8px;font-size:11px;white-space:nowrap" onclick="Billing.setDiscountRupees(0)">Clear</button>
+                </div>
+                <div style="display:flex;gap:5px">
+                  ${[10,20,50,100,200].map(r =>
+                    `<button class="btn btn-secondary btn-sm" style="flex:1;padding:3px 0;font-size:11px" onclick="Billing.setDiscountRupees(${r})">₹${r}</button>`
+                  ).join('')}
+                </div>
               </div>
 
               <!-- Redeem Points Input Container -->
@@ -261,7 +305,10 @@ const Billing = {
     if (this.paymentMode) {
       this.setPayment(this.paymentMode);
     }
-    if (this.discountPct) {
+    if (this.discountMode === 'rupees' && this.discountRupees) {
+      this.setDiscountMode('rupees');
+      this.setDiscountRupees(this.discountRupees);
+    } else if (this.discountPct) {
       this.setDiscount(this.discountPct);
     }
     this.calcChange();
@@ -295,6 +342,8 @@ const Billing = {
     this.cart = [];
     this.customer = null;
     this.discountPct = 0;
+    this.discountRupees = 0;
+    this.discountMode = 'pct';
     this.redeemPoints = 0;
     this.amountPaid = '';
     this.notes = '';
@@ -345,7 +394,7 @@ const Billing = {
     const cartRows = (this.cart || []).map(i => `
       <tr>
         <td style="padding:6px 8px;border-bottom:1px solid var(--border)">${App.escapeHtml(i.product_name)}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:center">${i.quantity} ${i.unit || ''}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:center">${App.fmtQty(i.quantity, i.unit)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">${App.fmt(i.unit_price)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;font-weight:700">${App.fmt(i.quantity * i.unit_price)}</td>
       </tr>`).join('');
@@ -646,6 +695,7 @@ const Billing = {
     this.settings.thermal_paper_width = nextWidth;
     try {
       await App.api('/settings', 'POST', { thermal_paper_width: nextWidth });
+      App.toast(`Thermal roll size set to ${nextWidth}mm (${nextWidth === '58' ? '2-Inch Small POS' : '3-Inch Standard POS'})`, 'info');
     } catch(e) {}
     this.showPrintPreviewModal(billId, 'thermal', token);
   },
@@ -736,12 +786,15 @@ const Billing = {
     const totalEl = document.getElementById('sum-total');
     const total = parseFloat(totalEl?.textContent?.replace(/[₹,]/g,'') || 0);
 
+    const effectiveDiscPct = this._getEffectiveDiscountPct();
     const payload = {
       terminal_id: 'POS-1',
       customer_id: this.customer?.id || null,
       customer_name: this.customer?.name || null,
       items: this.cart,
-      discount_percent: this.discountPct,
+      discount_percent: effectiveDiscPct,
+      discount_mode: this.discountMode,
+      discount_rupees: this.discountMode === 'rupees' ? this.discountRupees : 0,
       payment_mode: this.paymentMode,
       total: total,
       notes: document.getElementById('bill-notes')?.value || ''
@@ -756,6 +809,8 @@ const Billing = {
       this.cart = [];
       this.customer = null;
       this.discountPct = 0;
+      this.discountRupees = 0;
+      this.discountMode = 'pct';
       this._selectedCartIndex = undefined;
       this.render();
     } catch(e) {
@@ -871,6 +926,8 @@ const Billing = {
       const data = res.data || res;
       this.cart = data.cart || data.items || [];
       this.customer = data.customer_id ? { id: data.customer_id, name: data.customer_name } : null;
+      this.discountMode = data.discount_mode || 'pct';
+      this.discountRupees = data.discount_rupees || 0;
       this.discountPct = data.discount_percent || 0;
       this.paymentMode = data.payment_mode || 'cash';
       this._selectedCartIndex = undefined;
@@ -1317,6 +1374,8 @@ const Billing = {
         this.cart = [];
         this.customer = null;
         this.discountPct = 0;
+        this.discountRupees = 0;
+        this.discountMode = 'pct';
         this.amountPaid = '';
         this.notes = '';
         this._selectedCartIndex = undefined;
@@ -1328,6 +1387,8 @@ const Billing = {
     this.cart = [];
     this.customer = null;
     this.discountPct = 0;
+    this.discountRupees = 0;
+    this.discountMode = 'pct';
     this.amountPaid = '';
     this.notes = '';
     this._selectedCartIndex = undefined;
@@ -1340,6 +1401,8 @@ const Billing = {
     App.confirm('Clear all items from the current cart?', 'Clear Cart', () => {
       this.cart = [];
       this.discountPct = 0;
+      this.discountRupees = 0;
+      this.discountMode = 'pct';
       const dSlider = document.getElementById('discount-slider');
       if (dSlider) dSlider.value = 0;
       this.renderCart();
@@ -1618,13 +1681,64 @@ const Billing = {
   },
 
   // ─── Discount & Totals Calculations ─────────────────────────────────────
+
+  /** Switch between percentage and rupee discount modes */
+  setDiscountMode(mode) {
+    this.discountMode = mode;
+    const btnPct    = document.getElementById('disc-mode-pct');
+    const btnRupees = document.getElementById('disc-mode-rupees');
+    const ctrlPct    = document.getElementById('disc-pct-controls');
+    const ctrlRupees = document.getElementById('disc-rupees-controls');
+    if (mode === 'rupees') {
+      if (btnPct)    { btnPct.style.background = 'var(--bg-input)'; btnPct.style.color = 'var(--text-muted)'; }
+      if (btnRupees) { btnRupees.style.background = 'var(--crimson)'; btnRupees.style.color = '#fff'; }
+      if (ctrlPct)    ctrlPct.style.display    = 'none';
+      if (ctrlRupees) ctrlRupees.style.display = 'block';
+      // Keep existing rupee value displayed
+      this.setDiscountRupees(this.discountRupees || 0);
+    } else {
+      if (btnPct)    { btnPct.style.background = 'var(--crimson)'; btnPct.style.color = '#fff'; }
+      if (btnRupees) { btnRupees.style.background = 'var(--bg-input)'; btnRupees.style.color = 'var(--text-muted)'; }
+      if (ctrlPct)    ctrlPct.style.display    = 'block';
+      if (ctrlRupees) ctrlRupees.style.display = 'none';
+      // Keep existing pct value displayed
+      this.setDiscount(this.discountPct || 0);
+    }
+  },
+
+  /** Set discount by percentage (updates slider + text input + display) */
   setDiscount(pct) {
-    this.discountPct = parseFloat(pct) || 0;
+    const maxPct = Auth.can('billing.give_discount') ? 50 : 10;
+    this.discountPct = Math.min(parseFloat(pct) || 0, maxPct);
+    this.discountMode = 'pct';
     const dDisplay = document.getElementById('discount-display');
     if (dDisplay) dDisplay.textContent = `${this.discountPct}%`;
     const dSlider = document.getElementById('discount-slider');
     if (dSlider) dSlider.value = this.discountPct;
+    const dPctInput = document.getElementById('discount-pct-input');
+    if (dPctInput && document.activeElement !== dPctInput) dPctInput.value = this.discountPct;
     this.updateTotals();
+  },
+
+  /** Set discount by flat rupee amount */
+  setDiscountRupees(amt) {
+    this.discountRupees = Math.max(0, parseFloat(amt) || 0);
+    this.discountMode = 'rupees';
+    const dDisplay = document.getElementById('discount-display');
+    if (dDisplay) dDisplay.textContent = `₹${this.discountRupees.toFixed(2)}`;
+    const dRupeesInput = document.getElementById('discount-rupees-input');
+    if (dRupeesInput && document.activeElement !== dRupeesInput) dRupeesInput.value = this.discountRupees || '';
+    this.updateTotals();
+  },
+
+  /** Returns the effective discount % to send to the backend */
+  _getEffectiveDiscountPct() {
+    if (this.discountMode === 'rupees') {
+      const rawSubtotal = this.cart.reduce((s, i) => s + i.quantity * i.unit_price, 0);
+      if (rawSubtotal <= 0) return 0;
+      return Math.min(100, (this.discountRupees / rawSubtotal) * 100);
+    }
+    return this.discountPct;
   },
 
   setPayment(mode) {
@@ -1661,9 +1775,21 @@ const Billing = {
     let sgstTotal = 0;
     const gstEnabled = App.isGstEnabled();
 
+    // Determine effective discount percentage from current mode
+    const cartRaw = this.cart.reduce((s, i) => s + i.quantity * i.unit_price, 0);
+    let effectiveDiscPct = 0;
+    let discountAmt = 0;
+    if (this.discountMode === 'rupees') {
+      discountAmt = Math.min(this.discountRupees || 0, cartRaw);
+      effectiveDiscPct = cartRaw > 0 ? (discountAmt / cartRaw) * 100 : 0;
+    } else {
+      effectiveDiscPct = this.discountPct || 0;
+      discountAmt = cartRaw * (effectiveDiscPct / 100);
+    }
+
     this.cart.forEach(i => {
       const lineRaw = i.quantity * i.unit_price;
-      const lineTaxable = lineRaw * (1 - this.discountPct / 100);
+      const lineTaxable = lineRaw * (1 - effectiveDiscPct / 100);
       rawSubtotal += lineTaxable;
       if (gstEnabled) {
         cgstTotal += lineTaxable * (i.gst_rate / 2) / 100;
@@ -1673,7 +1799,6 @@ const Billing = {
 
     const ptsVal = parseFloat(this.settings?.loyalty_redemption_value || 0.50);
     const ptsDiscountAmt = (this.redeemPoints || 0) * ptsVal;
-    const discountAmt = (this.cart.reduce((s, i) => s + i.quantity * i.unit_price, 0)) * (this.discountPct / 100);
     const totalDiscountAmt = discountAmt + ptsDiscountAmt;
     const grandTotal = Math.max(0, rawSubtotal + (gstEnabled ? (cgstTotal + sgstTotal) : 0) - ptsDiscountAmt);
 
@@ -1684,11 +1809,22 @@ const Billing = {
     const elTot = document.getElementById('sum-total');
     const elPaid = document.getElementById('amount-paid');
 
-    if (elSub) elSub.textContent = App.fmt(this.cart.reduce((s, i) => s + i.quantity * i.unit_price, 0));
+    if (elSub) elSub.textContent = App.fmt(cartRaw);
     if (elDisc) elDisc.textContent = totalDiscountAmt > 0 ? `− ${App.fmt(totalDiscountAmt)}` : '— ₹0.00';
     if (elCgst) elCgst.textContent = App.fmt(cgstTotal);
     if (elSgst) elSgst.textContent = App.fmt(sgstTotal);
     if (elTot) elTot.textContent = App.fmt(grandTotal);
+
+    // Update the discount display badge
+    const dDisplay = document.getElementById('discount-display');
+    if (dDisplay) {
+      if (this.discountMode === 'rupees') {
+        const equiv = cartRaw > 0 ? ` (${effectiveDiscPct.toFixed(1)}%)` : '';
+        dDisplay.textContent = `₹${(this.discountRupees || 0).toFixed(2)}${equiv}`;
+      } else {
+        dDisplay.textContent = `${this.discountPct || 0}%`;
+      }
+    }
 
     const valDisp = document.getElementById('points-discount-val-display');
     if (valDisp) {
@@ -1782,7 +1918,7 @@ const Billing = {
         customer_name:   this.customer?.name || document.getElementById('customer-search')?.value || 'Walk-in Customer',
         customer_phone:  this.customer?.phone || '',
         customer_gstin:  this.customer?.gstin || '',
-        discount_percent: this.discountPct,
+        discount_percent: this._getEffectiveDiscountPct(),
         redeem_points:   this.redeemPoints || 0,
         amount_paid:     paid,
         payment_mode:    this.paymentMode,
@@ -1804,6 +1940,8 @@ const Billing = {
       this.cart = [];
       this.customer = null;
       this.discountPct = 0;
+      this.discountRupees = 0;
+      this.discountMode = 'pct';
       this.redeemPoints = 0;
       this.amountPaid = '';
       this.notes = '';
@@ -2068,6 +2206,8 @@ const Billing = {
             </div>
           </div>
           <p style="font-size:13px;color:#475569;margin:0">Confirming will erase Bill ${billNo} from history and free all linked item records.</p>
+          <label class="form-label required" style="display:block;margin-top:14px">Permanent deletion reason</label>
+          <textarea class="form-control" id="purge-reason" rows="2" placeholder="Required for audit purposes"></textarea>
         </div>
         <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:10px;padding:12px 20px;background:#f8fafc;border-top:1px solid #e2e8f0">
           <button class="btn btn-secondary" onclick="App.closeModal()">Cancel</button>
@@ -2081,7 +2221,12 @@ const Billing = {
 
   async confirmPurgeBill(id, billNo) {
     try {
-      await App.api(`/bills/${id}/purge`, 'DELETE');
+      const reason = document.getElementById('purge-reason')?.value.trim();
+      if (!reason) {
+        App.toast('Permanent deletion reason is required', 'error');
+        return;
+      }
+      await App.api(`/bills/${id}/purge`, 'DELETE', { reason });
       App.toast(`Bill ${billNo} permanently deleted successfully!`, 'warning');
       App.closeModal();
       this.loadHistory();
