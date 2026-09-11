@@ -36,8 +36,6 @@ CREATE TABLE IF NOT EXISTS tenants (
     last_synced_at  TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_tenants_last_synced ON tenants(last_synced_at);
-
 -- =============================================================================
 -- 1. CATEGORIES (Self-referencing hierarchy)
 -- =============================================================================
@@ -50,12 +48,8 @@ CREATE TABLE IF NOT EXISTS categories (
     description        TEXT,
     parent_category_id UUID REFERENCES categories(client_uuid) ON DELETE SET NULL,
     created_at         TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    synced_at          TIMESTAMPTZ DEFAULT now(),
-    CONSTRAINT uq_categories_tenant_name UNIQUE (tenant_id, name)
+    synced_at          TIMESTAMPTZ DEFAULT now()
 );
-
-CREATE INDEX IF NOT EXISTS idx_categories_tenant_id ON categories(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_categories_parent_id ON categories(parent_category_id);
 
 -- =============================================================================
 -- 2. PRODUCTS (Product catalog and inventory master)
@@ -87,14 +81,8 @@ CREATE TABLE IF NOT EXISTS products (
     active                    BOOLEAN DEFAULT TRUE,
     created_at                TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at                TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    synced_at                 TIMESTAMPTZ DEFAULT now(),
-    CONSTRAINT uq_products_tenant_code UNIQUE (tenant_id, code)
+    synced_at                 TIMESTAMPTZ DEFAULT now()
 );
-
-CREATE INDEX IF NOT EXISTS idx_products_tenant_id ON products(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);
-CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
-CREATE INDEX IF NOT EXISTS idx_products_active ON products(active);
 
 -- =============================================================================
 -- 3. CUSTOMERS (Customer master)
@@ -115,10 +103,6 @@ CREATE TABLE IF NOT EXISTS customers (
     synced_at      TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_customers_tenant_id ON customers(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone);
-CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(name);
-
 -- =============================================================================
 -- 4. SUPPLIERS (Supplier master)
 -- =============================================================================
@@ -135,10 +119,6 @@ CREATE TABLE IF NOT EXISTS suppliers (
     created_at     TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     synced_at      TIMESTAMPTZ DEFAULT now()
 );
-
-CREATE INDEX IF NOT EXISTS idx_suppliers_tenant_id ON suppliers(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers(name);
-CREATE INDEX IF NOT EXISTS idx_suppliers_phone ON suppliers(phone);
 
 -- =============================================================================
 -- 5. BILLS (Sales invoices / receipts)
@@ -169,14 +149,8 @@ CREATE TABLE IF NOT EXISTS bills (
     cancel_reason    TEXT,
     status           TEXT DEFAULT 'paid',
     is_test          BOOLEAN DEFAULT FALSE,
-    synced_at        TIMESTAMPTZ DEFAULT now(),
-    CONSTRAINT uq_bills_tenant_bill_no UNIQUE (tenant_id, bill_no)
+    synced_at        TIMESTAMPTZ DEFAULT now()
 );
-
-CREATE INDEX IF NOT EXISTS idx_bills_tenant_id ON bills(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_bills_customer_id ON bills(customer_id);
-CREATE INDEX IF NOT EXISTS idx_bills_date ON bills(date);
-CREATE INDEX IF NOT EXISTS idx_bills_status ON bills(status);
 
 -- =============================================================================
 -- 6. BILL_ITEMS (Line items in each bill)
@@ -202,10 +176,6 @@ CREATE TABLE IF NOT EXISTS bill_items (
     synced_at    TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_bill_items_tenant_id ON bill_items(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_bill_items_bill_id ON bill_items(bill_id);
-CREATE INDEX IF NOT EXISTS idx_bill_items_product_id ON bill_items(product_id);
-
 -- =============================================================================
 -- 7. BILL_PAYMENTS (Payment installments / settlements for bills)
 -- =============================================================================
@@ -221,10 +191,6 @@ CREATE TABLE IF NOT EXISTS bill_payments (
     synced_at    TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_bill_payments_tenant_id ON bill_payments(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_bill_payments_bill_id ON bill_payments(bill_id);
-CREATE INDEX IF NOT EXISTS idx_bill_payments_paid_at ON bill_payments(paid_at);
-
 -- =============================================================================
 -- 8. LOYALTY_LEDGER (Loyalty points earn / burn audit ledger)
 -- =============================================================================
@@ -238,10 +204,6 @@ CREATE TABLE IF NOT EXISTS loyalty_ledger (
     created_at    TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     synced_at     TIMESTAMPTZ DEFAULT now()
 );
-
-CREATE INDEX IF NOT EXISTS idx_loyalty_ledger_tenant_id ON loyalty_ledger(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_loyalty_ledger_customer_id ON loyalty_ledger(customer_id);
-CREATE INDEX IF NOT EXISTS idx_loyalty_ledger_bill_id ON loyalty_ledger(bill_id);
 
 -- =============================================================================
 -- 9. STOCK_TRANSACTIONS (Inventory movement ledger)
@@ -265,12 +227,6 @@ CREATE TABLE IF NOT EXISTS stock_transactions (
     synced_at     TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_stock_transactions_tenant_id ON stock_transactions(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_stock_transactions_product_id ON stock_transactions(product_id);
-CREATE INDEX IF NOT EXISTS idx_stock_transactions_supplier_id ON stock_transactions(supplier_id);
-CREATE INDEX IF NOT EXISTS idx_stock_transactions_date ON stock_transactions(date);
-CREATE INDEX IF NOT EXISTS idx_stock_transactions_type ON stock_transactions(type);
-
 -- =============================================================================
 -- 10. LEDGER_VOUCHERS (Double-entry voucher header / idempotency protection)
 -- =============================================================================
@@ -284,13 +240,8 @@ CREATE TABLE IF NOT EXISTS ledger_vouchers (
     reference_id    TEXT,
     created_by      TEXT,
     created_at      TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    synced_at       TIMESTAMPTZ DEFAULT now(),
-    CONSTRAINT uq_ledger_vouchers_tenant_type_no UNIQUE (tenant_id, voucher_type, voucher_no)
+    synced_at       TIMESTAMPTZ DEFAULT now()
 );
-
-CREATE INDEX IF NOT EXISTS idx_ledger_vouchers_tenant_id ON ledger_vouchers(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_ledger_vouchers_date ON ledger_vouchers(voucher_date);
-CREATE INDEX IF NOT EXISTS idx_ledger_vouchers_ref ON ledger_vouchers(reference_table, reference_id);
 
 -- =============================================================================
 -- 11. LEDGER_ENTRIES (Double-entry journal lines)
@@ -312,12 +263,6 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
     synced_at       TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_ledger_entries_tenant_id ON ledger_entries(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_ledger_entries_voucher ON ledger_entries(voucher_type, voucher_no);
-CREATE INDEX IF NOT EXISTS idx_ledger_entries_account ON ledger_entries(account_id);
-CREATE INDEX IF NOT EXISTS idx_ledger_entries_date ON ledger_entries(voucher_date);
-CREATE INDEX IF NOT EXISTS idx_ledger_entries_ref ON ledger_entries(reference_table, reference_id);
-
 -- =============================================================================
 -- 12. LICENSES (Application Licensing & Razorpay Payment Tracking)
 -- =============================================================================
@@ -337,25 +282,26 @@ CREATE TABLE IF NOT EXISTS licenses (
     created_at            TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_licenses_machine_id ON licenses(machine_id);
-CREATE INDEX IF NOT EXISTS idx_licenses_status ON licenses(status);
-
 -- =============================================================================
--- IDEMPOTENT MULTI-TENANCY MIGRATION FOR EXISTING SUPABASE DATABASES
+-- IDEMPOTENT MULTI-TENANCY MIGRATION FOR PRE-EXISTING TABLES
 -- =============================================================================
 DO $$
 BEGIN
     -- 1. categories
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='categories' AND column_name='tenant_id') THEN
         ALTER TABLE categories ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'DEFAULT_TENANT';
-        ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_name_key;
+    END IF;
+    ALTER TABLE categories DROP CONSTRAINT IF EXISTS categories_name_key;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_categories_tenant_name') THEN
         ALTER TABLE categories ADD CONSTRAINT uq_categories_tenant_name UNIQUE (tenant_id, name);
     END IF;
 
     -- 2. products
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='tenant_id') THEN
         ALTER TABLE products ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'DEFAULT_TENANT';
-        ALTER TABLE products DROP CONSTRAINT IF EXISTS products_code_key;
+    END IF;
+    ALTER TABLE products DROP CONSTRAINT IF EXISTS products_code_key;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_products_tenant_code') THEN
         ALTER TABLE products ADD CONSTRAINT uq_products_tenant_code UNIQUE (tenant_id, code);
     END IF;
 
@@ -372,7 +318,9 @@ BEGIN
     -- 5. bills
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='bills' AND column_name='tenant_id') THEN
         ALTER TABLE bills ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'DEFAULT_TENANT';
-        ALTER TABLE bills DROP CONSTRAINT IF EXISTS bills_bill_no_key;
+    END IF;
+    ALTER TABLE bills DROP CONSTRAINT IF EXISTS bills_bill_no_key;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_bills_tenant_bill_no') THEN
         ALTER TABLE bills ADD CONSTRAINT uq_bills_tenant_bill_no UNIQUE (tenant_id, bill_no);
     END IF;
 
@@ -399,7 +347,9 @@ BEGIN
     -- 10. ledger_vouchers
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='ledger_vouchers' AND column_name='tenant_id') THEN
         ALTER TABLE ledger_vouchers ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'DEFAULT_TENANT';
-        ALTER TABLE ledger_vouchers DROP CONSTRAINT IF EXISTS uq_ledger_vouchers_type_no;
+    END IF;
+    ALTER TABLE ledger_vouchers DROP CONSTRAINT IF EXISTS uq_ledger_vouchers_type_no;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_ledger_vouchers_tenant_type_no') THEN
         ALTER TABLE ledger_vouchers ADD CONSTRAINT uq_ledger_vouchers_tenant_type_no UNIQUE (tenant_id, voucher_type, voucher_no);
     END IF;
 
@@ -408,3 +358,60 @@ BEGIN
         ALTER TABLE ledger_entries ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'DEFAULT_TENANT';
     END IF;
 END $$;
+
+-- =============================================================================
+-- PERFORMANCE & PARTITION INDEXES
+-- =============================================================================
+CREATE INDEX IF NOT EXISTS idx_tenants_last_synced ON tenants(last_synced_at);
+
+CREATE INDEX IF NOT EXISTS idx_categories_tenant_id ON categories(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_categories_parent_id ON categories(parent_category_id);
+
+CREATE INDEX IF NOT EXISTS idx_products_tenant_id ON products(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_products_category_id ON products(category_id);
+CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
+CREATE INDEX IF NOT EXISTS idx_products_active ON products(active);
+
+CREATE INDEX IF NOT EXISTS idx_customers_tenant_id ON customers(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers(phone);
+CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(name);
+
+CREATE INDEX IF NOT EXISTS idx_suppliers_tenant_id ON suppliers(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_suppliers_name ON suppliers(name);
+CREATE INDEX IF NOT EXISTS idx_suppliers_phone ON suppliers(phone);
+
+CREATE INDEX IF NOT EXISTS idx_bills_tenant_id ON bills(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_bills_customer_id ON bills(customer_id);
+CREATE INDEX IF NOT EXISTS idx_bills_date ON bills(date);
+CREATE INDEX IF NOT EXISTS idx_bills_status ON bills(status);
+
+CREATE INDEX IF NOT EXISTS idx_bill_items_tenant_id ON bill_items(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_bill_items_bill_id ON bill_items(bill_id);
+CREATE INDEX IF NOT EXISTS idx_bill_items_product_id ON bill_items(product_id);
+
+CREATE INDEX IF NOT EXISTS idx_bill_payments_tenant_id ON bill_payments(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_bill_payments_bill_id ON bill_payments(bill_id);
+CREATE INDEX IF NOT EXISTS idx_bill_payments_paid_at ON bill_payments(paid_at);
+
+CREATE INDEX IF NOT EXISTS idx_loyalty_ledger_tenant_id ON loyalty_ledger(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_loyalty_ledger_customer_id ON loyalty_ledger(customer_id);
+CREATE INDEX IF NOT EXISTS idx_loyalty_ledger_bill_id ON loyalty_ledger(bill_id);
+
+CREATE INDEX IF NOT EXISTS idx_stock_transactions_tenant_id ON stock_transactions(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_stock_transactions_product_id ON stock_transactions(product_id);
+CREATE INDEX IF NOT EXISTS idx_stock_transactions_supplier_id ON stock_transactions(supplier_id);
+CREATE INDEX IF NOT EXISTS idx_stock_transactions_date ON stock_transactions(date);
+CREATE INDEX IF NOT EXISTS idx_stock_transactions_type ON stock_transactions(type);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_vouchers_tenant_id ON ledger_vouchers(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_vouchers_date ON ledger_vouchers(voucher_date);
+CREATE INDEX IF NOT EXISTS idx_ledger_vouchers_ref ON ledger_vouchers(reference_table, reference_id);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_tenant_id ON ledger_entries(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_voucher ON ledger_entries(voucher_type, voucher_no);
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_account ON ledger_entries(account_id);
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_date ON ledger_entries(voucher_date);
+CREATE INDEX IF NOT EXISTS idx_ledger_entries_ref ON ledger_entries(reference_table, reference_id);
+
+CREATE INDEX IF NOT EXISTS idx_licenses_machine_id ON licenses(machine_id);
+CREATE INDEX IF NOT EXISTS idx_licenses_status ON licenses(status);
