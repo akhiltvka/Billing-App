@@ -244,6 +244,10 @@ def get_license_info():
     row_rereg = conn.execute("SELECT value FROM shop_settings WHERE key = 'outlet_needs_reregister'").fetchone()
     needs_reregister = row_rereg and str(row_rereg['value']).strip() == '1'
 
+    # Fetch Razorpay payment link from shop_settings or fallback
+    row_rzp = conn.execute("SELECT value FROM shop_settings WHERE key = 'razorpay_payment_link'").fetchone()
+    razorpay_link = (row_rzp['value'] if row_rzp and row_rzp['value'] else '').strip() or 'https://rzp.io/l/mpi-billing-license'
+
     machine_id = get_machine_id()
 
     if is_revoked:
@@ -259,6 +263,7 @@ def get_license_info():
             'active_key': None,
             'machine_id': machine_id,
             'price_inr': YEARLY_PRICE_INR,
+            'razorpay_payment_link': razorpay_link,
             'upi_id': '9809840548@axisb',
             'upi_name': 'MPI Billing Software'
         }
@@ -276,6 +281,7 @@ def get_license_info():
             'active_key': None,
             'machine_id': machine_id,
             'price_inr': YEARLY_PRICE_INR,
+            'razorpay_payment_link': razorpay_link,
             'upi_id': '9809840548@axisb',
             'upi_name': 'MPI Billing Software'
         }
@@ -320,6 +326,7 @@ def get_license_info():
             'active_key': format_key(active_key),
             'machine_id': machine_id,
             'price_inr': YEARLY_PRICE_INR,
+            'razorpay_payment_link': razorpay_link,
             'upi_id': '9809840548@axisb',
             'upi_name': 'MPI Billing Software'
         }
@@ -348,6 +355,7 @@ def get_license_info():
             'active_key': None,
             'machine_id': machine_id,
             'price_inr': YEARLY_PRICE_INR,
+            'razorpay_payment_link': razorpay_link,
             'upi_id': '9809840548@axisb',
             'upi_name': 'MPI Billing Software'
         }
@@ -448,3 +456,93 @@ def activate_subscription(raw_key_str):
     conn.close()
 
     return True, server_msg
+
+
+def sync_license_with_supabase():
+    """
+    Synchronizes the local license status with the Supabase PostgreSQL database:
+    1. Fetches connection string from database.get_database_url().
+    2. Queries the 'licenses' table in Supabase for this machine_id.
+    3. If row does not exist, registers the machine as 'trial' with 10 days validity.
+    4. If row exists, updates local SQLite (shop_settings) with remote status,
+       expires_at, grace_expires_at, and razorpay_payment_link.
+    Returns (bool success, str message)
+    """
+    from database import get_database_url
+    db_url = get_database_url()
+    if not db_url:
+        return False, "Supabase connection string is not configured."
+
+    machine_id = get_machine_id()
+    conn_sqlite = get_db()
+    try:
+        row_inst = conn_sqlite.execute("SELECT value FROM shop_settings WHERE key = 'installation_date'").fetchone()
+        inst_str = row_inst['value'][:10] if row_inst and row_inst['value'] else str(date.today())
+
+        row_outlet = conn_sqlite.execute("SELECT value FROM shop_settings WHERE key = 'outlet_name'").fetchone()
+        outlet_name = row_outlet['value'] if row_outlet and row_outlet['value'] else "MPI Outlet"
+
+        row_code = conn_sqlite.execute("SELECT value FROM shop_settings WHERE key = 'outlet_code'").fetchone()
+        outlet_code = row_code['value'] if row_code and row_code['value'] else None
+
+        import psycopg2
+        import json as _json
+        with psycopg2.connect(db_url, sslmode='require', connect_timeout=10) as pg_conn:
+            with pg_conn.cursor() as cur:
+                # Query existing license
+                cur.execute("""
+                    SELECT status, activated_at, expires_at, grace_expires_at, razorpay_payment_link, amount
+                    FROM licenses
+                    WHERE machine_id = %s
+                    LIMIT 1;
+                """, (machine_id,))
+                row = cur.fetchone()
+
+                if row:
+                    rem_status, rem_act, rem_exp, rem_grace, rem_link, rem_amount = row
+                    rem_exp_str = str(rem_exp)[:10] if rem_exp else ''
+                    rem_act_str = str(rem_act)[:10] if rem_act else inst_str
+                    rem_grace_str = str(rem_grace)[:10] if rem_grace else ''
+                    rem_link = rem_link or 'https://rzp.io/l/mpi-billing-license'
+
+                    lic_payload = {
+                        'status': rem_status or 'trial',
+                        'activated_at': rem_act_str,
+                        'expires_at': rem_exp_str,
+                        'grace_expires_at': rem_grace_str,
+                        'razorpay_payment_link': rem_link,
+                        'machine_id': machine_id,
+                        'price_inr': float(rem_amount) if rem_amount else YEARLY_PRICE_INR
+                    }
+
+                    conn_sqlite.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('active_license_json', ?)", (_json.dumps(lic_payload),))
+                    conn_sqlite.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('razorpay_payment_link', ?)", (rem_link,))
+                    if rem_status != 'revoked':
+                        conn_sqlite.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_revoked', '0')")
+                    else:
+                        conn_sqlite.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('outlet_revoked', '1')")
+                    conn_sqlite.commit()
+
+                    cur.execute("UPDATE licenses SET last_synced_at = now() WHERE machine_id = %s;", (machine_id,))
+                    pg_conn.commit()
+                    return True, f"License synchronized: {rem_status.upper()}"
+                else:
+                    # Initialize trial in Supabase
+                    try:
+                        inst_date = datetime.strptime(inst_str, "%Y-%m-%d").date()
+                    except Exception:
+                        inst_date = date.today()
+                    trial_exp = str(max(inst_date, date.today()) + timedelta(days=TRIAL_DAYS))
+                    cur.execute("""
+                        INSERT INTO licenses (machine_id, outlet_code, outlet_name, status, expires_at, grace_expires_at, razorpay_payment_link, amount)
+                        VALUES (%s, %s, %s, 'trial', %s, %s, 'https://rzp.io/l/mpi-billing-license', %s)
+                        ON CONFLICT (machine_id) DO NOTHING;
+                    """, (machine_id, outlet_code, outlet_name, trial_exp, trial_exp, YEARLY_PRICE_INR))
+                    pg_conn.commit()
+                    return True, "Registered new trial license on Supabase."
+
+    except Exception as exc:
+        return False, f"Supabase license sync notice: {exc}"
+    finally:
+        conn_sqlite.close()
+

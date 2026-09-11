@@ -98,8 +98,9 @@ class TestLicenseRevocation(unittest.TestCase):
         self.assertEqual(data.get('status'), 'error')
         self.assertIn("revoked", data.get('message', '').lower())
 
+    @patch('database.get_database_url', return_value=None)
     @patch('urllib.request.urlopen')
-    def test_sync_with_cloud_server_persists_403_revocation(self, mock_urlopen):
+    def test_sync_with_cloud_server_persists_403_revocation(self, mock_urlopen, mock_get_url):
         """When cloud server returns HTTP 403, sync_with_cloud_server() must set outlet_revoked = '1' and return False."""
         error_body = json.dumps({
             "status": "error",
@@ -133,6 +134,26 @@ class TestLicenseRevocation(unittest.TestCase):
         self.assertEqual(lic['status'], 'revoked')
         self.assertTrue(lic['is_locked'])
 
+    def test_sync_license_with_supabase_and_razorpay_link(self):
+        """sync_license_with_supabase() updates local status and razorpay_payment_link."""
+        mock_pg_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_pg_conn.__enter__.return_value = mock_pg_conn
+        mock_pg_conn.cursor.return_value.__enter__.return_value = mock_cursor
+        mock_cursor.fetchone.return_value = (
+            'active', '2026-01-01', '2027-01-01', '2027-01-11', 'https://rzp.io/l/custom-link', 12000.00
+        )
+        with patch('database.get_database_url', return_value='postgresql://test:test@localhost:5432/test'):
+            with patch('psycopg2.connect', return_value=mock_pg_conn):
+                from license_manager import sync_license_with_supabase
+                success, msg = sync_license_with_supabase()
+                self.assertTrue(success)
+
+        lic = get_license_info()
+        self.assertEqual(lic['status'], 'active')
+        self.assertEqual(lic['razorpay_payment_link'], 'https://rzp.io/l/custom-link')
+
 
 if __name__ == '__main__':
     unittest.main()
+

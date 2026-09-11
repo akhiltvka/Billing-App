@@ -272,3 +272,26 @@ CREATE INDEX IF NOT EXISTS idx_ledger_entries_voucher ON ledger_entries(voucher_
 CREATE INDEX IF NOT EXISTS idx_ledger_entries_account ON ledger_entries(account_id);
 CREATE INDEX IF NOT EXISTS idx_ledger_entries_date ON ledger_entries(voucher_date);
 CREATE INDEX IF NOT EXISTS idx_ledger_entries_ref ON ledger_entries(reference_table, reference_id);
+
+-- =============================================================================
+-- 12. LICENSES (Application Licensing & Razorpay Payment Tracking)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS licenses (
+    id                    BIGSERIAL PRIMARY KEY,
+    machine_id            VARCHAR(64) UNIQUE NOT NULL,
+    outlet_code           VARCHAR(16),
+    outlet_name           TEXT,
+    status                VARCHAR(32) NOT NULL DEFAULT 'trial', -- 'trial', 'active', 'grace', 'expired'
+    activated_at          TIMESTAMPTZ,
+    expires_at            TIMESTAMPTZ,
+    grace_expires_at      TIMESTAMPTZ,
+    razorpay_payment_link TEXT DEFAULT 'https://rzp.io/l/mpi-billing-license',
+    amount                NUMERIC(12, 2) DEFAULT 12000.00,
+    payment_id            TEXT,
+    last_synced_at        TIMESTAMPTZ DEFAULT now(),
+    created_at            TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_licenses_machine_id ON licenses(machine_id);
+CREATE INDEX IF NOT EXISTS idx_licenses_status ON licenses(status);
+

@@ -29,7 +29,7 @@ from database import (
 from money import db_money, money, to_decimal
 from license_manager import get_license_info, activate_subscription
 from license_sync import sync_with_cloud_server, notify_cloud_payment, re_register_with_cloud
-from cloud_backup import start_cloud_backup_scheduler, run_cloud_backup_job
+from cloud_backup import run_cloud_backup_job
 from external_backup import (
     get_external_backup_status,
     perform_external_backup,
@@ -689,6 +689,7 @@ def license_activate():
     return ok(info, message=msg)
 
 @app.route('/api/license/sync-cloud', methods=['POST'])
+@app.route('/api/license/sync', methods=['POST', 'GET'])
 @require_auth
 def license_sync_cloud():
     # Check if this outlet was re-registered offline and needs to push to server first
@@ -4187,7 +4188,7 @@ def create_bill():
     if lic.get('is_locked'):
         if lic.get('status') == 'revoked':
             return err("Outlet access has been revoked by central administrator. Please contact support to restore access.", 403)
-        return err("Subscription expired and grace period ended. Please activate software with a 12-digit key to create bills.", 403)
+        return err("Subscription expired and grace period ended. Please renew your license via Razorpay to create bills.", 403)
 
     d = request.get_json()
     if d is None:
@@ -7869,10 +7870,6 @@ if __name__ == '__main__':
         sys.exit(1)
 
     init_db()
-    try:
-        start_cloud_backup_scheduler()
-    except Exception as e:
-        print(f"Cloud backup scheduler init notice: {e}")
     try:
         start_sync_scheduler()
     except Exception as e:

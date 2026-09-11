@@ -837,39 +837,41 @@ const App = {
     const bar = document.getElementById('license-banner-bar');
     if (!bar || !info) return;
 
+    const rzpLink = info.razorpay_payment_link || 'https://rzp.io/l/mpi-billing-license';
+
     if (info.status === 'trial') {
       bar.innerHTML = `
         <div style="background:linear-gradient(90deg, #1E293B, #0F172A);border-bottom:1px solid #334155;color:#F1F5F9;padding:8px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;cursor:pointer" onclick="App.showActivationModal()">
           <div>⏳ <strong>FREE TRIAL VERSION:</strong> <span class="text-gold font-bold">${info.days_left} days remaining</span> in trial period.</div>
           <div style="display:flex;gap:8px;align-items:center">
-            <span style="color:var(--gold);font-weight:600">Activate 1-Year License (₹${info.price_inr})</span>
-            <span class="badge badge-gold">Activate ⚡</span>
+            <span style="color:var(--gold);font-weight:600">Annual License (₹${info.price_inr || 12000})</span>
+            <span class="badge badge-gold">💳 Pay via Razorpay</span>
           </div>
         </div>`;
       bar.style.display = 'block';
     } else if (info.status === 'grace') {
       bar.innerHTML = `
         <div style="background:linear-gradient(90deg, #7C2D12, #991B1B);border-bottom:1px solid #B91C1C;color:#FEF2F2;padding:9px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;cursor:pointer" onclick="App.showActivationModal()">
-          <div>⚠️ <strong>SUBSCRIPTION EXPIRED:</strong> <span class="font-bold">${info.days_left} days remaining</span> in 10-day Grace Period! Activate now to avoid software lock.</div>
+          <div>⚠️ <strong>SUBSCRIPTION EXPIRED:</strong> <span class="font-bold">${info.days_left} days remaining</span> in Grace Period! Renew now to avoid software lock.</div>
           <div style="display:flex;gap:8px;align-items:center">
-            <span style="font-weight:700">Renew Subscription (₹${info.price_inr})</span>
-            <span class="badge badge-warning">Activate Now 🔑</span>
+            <span style="font-weight:700">Renew (₹${info.price_inr || 12000})</span>
+            <span class="badge badge-warning">💳 Pay via Razorpay</span>
           </div>
         </div>`;
       bar.style.display = 'block';
     } else if (info.status === 'expired') {
       bar.innerHTML = `
         <div style="background:linear-gradient(90deg, #991B1B, #450A0A);border-bottom:1px solid #EF4444;color:#FEF2F2;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;cursor:pointer" onclick="App.showActivationModal()">
-          <div>🔒 <strong>SOFTWARE LOCKED:</strong> Subscription &amp; Grace Period Expired. Please enter your 12-digit activation key.</div>
+          <div>🔒 <strong>SOFTWARE LOCKED:</strong> Subscription expired. Please renew online via Razorpay.</div>
           <div style="display:flex;gap:8px;align-items:center">
-            <span class="badge badge-danger" style="font-size:12px;padding:4px 10px">Enter 12-Digit Key 🔑</span>
+            <span class="badge badge-danger" style="font-size:12px;padding:4px 10px">💳 Renew Online</span>
           </div>
         </div>`;
       bar.style.display = 'block';
     } else if (info.status === 'needs_reregister') {
       bar.innerHTML = `
         <div style="background:linear-gradient(90deg, #4C0519, #1a0008);border-bottom:2px solid #FB7185;color:#FFE4E6;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;">
-          <div>⚠️ <strong style="color:#FB7185">RE-REGISTRATION REQUIRED:</strong> This outlet was deleted from the central server. Please re-register using the MD registration form.</div>
+          <div>⚠️ <strong style="color:#FB7185">RE-REGISTRATION REQUIRED:</strong> Please re-register using the MD registration form.</div>
           <div style="display:flex;gap:8px;align-items:center">
             <button onclick="Auth.showMDRegisterModal()" style="background:#9F1239;color:#fff;border:none;border-radius:4px;padding:5px 12px;font-size:12px;font-weight:700;cursor:pointer">👑 Re-Register Now</button>
           </div>
@@ -879,7 +881,7 @@ const App = {
       bar.innerHTML = `
         <div style="background:linear-gradient(90deg, #064E3B, #022C22);border-bottom:1px solid #059669;color:#ECFDF5;padding:8px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;cursor:pointer" onclick="App.showActivationModal()">
           <div>🔑 <strong>SUBSCRIPTION ACTIVE:</strong> <span class="font-bold">${info.days_left} days remaining</span> until renewal (${info.expires_at}).</div>
-          <div><span class="badge badge-success">Renew Key ⚡</span></div>
+          <div><span class="badge badge-success">Renew 💳</span></div>
         </div>`;
       bar.style.display = 'block';
     } else {
@@ -889,58 +891,55 @@ const App = {
   },
 
   showActivationModal() {
-    const info = this.licenseInfo || { machine_id: 'FETCHING...', price_inr: 12000, upi_id: 'mpi.billing@upi', upi_name: 'MPI Billing Software' };
-    const upiQrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`upi://pay?pa=${info.upi_id}&pn=${encodeURIComponent(info.upi_name)}&am=${info.price_inr}&cu=INR`)}`;
+    const info = this.licenseInfo || { machine_id: 'FETCHING...', price_inr: 12000, razorpay_payment_link: 'https://rzp.io/l/mpi-billing-license' };
+    const rzpLink = info.razorpay_payment_link || 'https://rzp.io/l/mpi-billing-license';
 
     const html = `
-      <div class="modal" style="max-width:580px">
+      <div class="modal" style="max-width:540px">
         <div class="modal-header">
-          <div class="modal-title"><span class="modal-title-icon">🔑</span> Software Activation &amp; Subscription Renewal</div>
+          <div class="modal-title"><span class="modal-title-icon">💳</span> Software License &amp; Renewal</div>
           <button class="modal-close" onclick="App.closeModal()">✕</button>
         </div>
         <div class="modal-body">
-          <div style="background:var(--bg-input);padding:14px;border-radius:var(--r-md);border:1px solid var(--border);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center">
+          <!-- Machine ID badge -->
+          <div style="background:var(--bg-input);padding:12px 14px;border-radius:var(--r-md);border:1px solid var(--border);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center">
             <div>
-              <div style="font-size:12px;color:var(--text-muted)">Outlet Machine Hardware ID:</div>
+              <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px">Outlet Machine ID:</div>
               <div class="font-bold text-gold" style="font-family:monospace;font-size:15px">${info.machine_id}</div>
             </div>
-            <button class="btn btn-secondary btn-sm" onclick="navigator.clipboard.writeText('${info.machine_id}');App.toast('Machine ID copied','info')">📋 Copy ID</button>
+            <button class="btn btn-secondary btn-sm" onclick="navigator.clipboard.writeText('${info.machine_id}');App.toast('Machine ID copied','info')">📋 Copy</button>
           </div>
 
-          <!-- Option A: Automatic Cloud Activation & UPI -->
-          <div style="background:rgba(16,185,129,0.08);border:1px solid rgba(16,185,129,0.3);border-radius:var(--r-md);padding:16px;margin-bottom:16px">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-              <div style="font-size:15px;font-weight:700;color:var(--text-success)">💰 Annual Subscription: ₹${info.price_inr || 12000} / Year</div>
-              <button class="btn btn-success btn-sm" onclick="App.syncCloudLicense()">⚡ Auto-Check Cloud Approval</button>
-            </div>
-            
-            <div style="display:flex;gap:14px;align-items:center;background:var(--bg-card);padding:12px;border-radius:var(--r-md);border:1px solid var(--border);margin-bottom:12px">
-              <img src="${upiQrUrl}" alt="UPI Payment QR Code" style="width:105px;height:105px;border-radius:6px;border:1px solid var(--border)">
-              <div style="font-size:13px;line-height:1.5;flex:1">
-                <div style="font-weight:700;color:var(--text-primary)">Pay Direct via UPI:</div>
-                <div style="font-family:monospace;color:var(--gold);font-weight:700;font-size:14px;margin:2px 0">${info.upi_id || 'mpi.billing@upi'}</div>
-                <div style="color:var(--text-muted);font-size:12px">After paying via UPI, developer will approve your Machine ID online for automatic activation!</div>
-              </div>
-            </div>
-
-            <!-- Optional UTR Notification -->
-            <div style="display:flex;gap:8px">
-              <input type="text" id="utr-input" class="form-control form-control-sm" placeholder="Optional: Enter UTR / UPI Ref No..." style="font-size:12px">
-              <button class="btn btn-secondary btn-sm" onclick="App.notifyPayment()" style="white-space:nowrap">📩 Notify Developer</button>
+          <!-- Razorpay Instant Online Payment Card -->
+          <div style="background:linear-gradient(135deg, rgba(37,99,235,0.08), rgba(59,130,246,0.04));border:1.5px solid #3B82F6;border-radius:var(--r-md);padding:20px;margin-bottom:16px;text-align:center">
+            <div style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#3B82F6;font-weight:700;margin-bottom:4px">Instant Online Payment</div>
+            <div style="font-size:24px;font-weight:800;color:var(--text-primary);margin-bottom:6px">₹${Number(info.price_inr || 12000).toLocaleString('en-IN')} <span style="font-size:14px;font-weight:500;color:var(--text-muted)">/ Year</span></div>
+            <p style="font-size:13px;color:var(--text-secondary);margin:0 auto 16px;max-width:400px">
+              Pay securely with UPI, Credit/Debit Card, or Net Banking via Razorpay.
+            </p>
+            <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+              <a href="${rzpLink}" target="_blank" class="btn btn-primary" style="background:#2563EB;border-color:#1D4ED8;padding:10px 22px;font-size:14px;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:6px">
+                <span>💳 Pay with Razorpay</span> ↗
+              </a>
+              <button class="btn btn-secondary" onclick="navigator.clipboard.writeText('${rzpLink}');App.toast('Payment link copied!','info')">
+                🔗 Copy Link
+              </button>
             </div>
           </div>
 
-          <!-- Option B: Manual 12-Digit Key -->
-          <div class="form-group mb-16" style="border-top:1px solid var(--border);padding-top:14px">
-            <label class="form-label">Or Enter 12-Digit Alphanumeric Key (Offline/Manual):</label>
-            <input type="text" id="activation-key-input" class="form-control" placeholder="e.g. A9K2-M7W3-P4X8" style="font-family:monospace;font-size:18px;letter-spacing:2px;text-transform:uppercase;text-align:center" oninput="App.formatKeyInput(this)">
+          <!-- Check License Status button -->
+          <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-md);padding:14px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div style="font-size:13px;font-weight:600">Already completed payment?</div>
+              <div style="font-size:12px;color:var(--text-muted)">Sync your license status from the cloud database.</div>
+            </div>
+            <button class="btn btn-success btn-sm" onclick="App.syncCloudLicense()">🔄 Check Status</button>
           </div>
 
           <div id="activation-msg-box"></div>
         </div>
-        <div class="modal-footer" style="justify-content:space-between">
+        <div class="modal-footer" style="justify-content:flex-end">
           <button class="btn btn-secondary" onclick="App.closeModal()">Close</button>
-          <button class="btn btn-primary" onclick="App.submitActivationKey()">⚡ Activate Key Manually</button>
         </div>
       </div>`;
     App.showModal(html);
@@ -948,13 +947,13 @@ const App = {
 
   async syncCloudLicense() {
     const msgBox = document.getElementById('activation-msg-box');
-    if (msgBox) msgBox.innerHTML = `<div class="loading-overlay" style="padding:10px"><div class="spinner"></div> Checking online approval status on developer cloud server...</div>`;
+    if (msgBox) msgBox.innerHTML = `<div class="loading-overlay" style="padding:10px"><div class="spinner"></div> Checking cloud database license status...</div>`;
     try {
-      const res = await App.api('/license/sync-cloud', 'POST');
+      const res = await App.api('/api/license/sync-cloud', 'POST');
       App.toast(res.message || 'Cloud check finished', 'info');
       await this.checkLicenseState();
       if (this.licenseInfo && this.licenseInfo.status === 'active') {
-        App.toast('🎉 Subscription approved & activated for 365 Days!', 'success');
+        App.toast(`🎉 Subscription active until ${this.licenseInfo.expires_at}!`, 'success');
         App.closeModal();
       } else {
         if (msgBox) msgBox.innerHTML = `<div class="badge badge-info mb-12" style="display:block;padding:10px;text-align:center">${res.message}</div>`;

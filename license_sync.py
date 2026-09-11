@@ -35,9 +35,16 @@ def get_cloud_server_url():
 
 def sync_with_cloud_server():
     """
-    Ping central cloud license server.
-    If developer approved payment on central dashboard, auto-activates local app for 365 days!
+    Syncs license status with Supabase PostgreSQL (or legacy server if unconfigured).
     """
+    try:
+        from database import get_database_url
+        if get_database_url():
+            from license_manager import sync_license_with_supabase
+            return sync_license_with_supabase()
+    except Exception:
+        pass
+
     server_url = get_cloud_server_url()
     ping_endpoint = f"{server_url}/api/v1/outlet/ping"
     conn = get_db()
@@ -277,7 +284,24 @@ def re_register_with_cloud():
     return False, "Re-registration sync failed."
 
 def notify_cloud_payment(utr_number):
-    """Notify central developer server of submitted UPI payment UTR/Ref number."""
+    """
+    Notify cloud of payment reference. If Supabase is configured, records it in licenses table.
+    """
+    try:
+        from database import get_database_url
+        db_url = get_database_url()
+        if db_url:
+            from license_manager import get_machine_id
+            machine_id = get_machine_id()
+            import psycopg2
+            with psycopg2.connect(db_url, sslmode='require', connect_timeout=10) as conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE licenses SET payment_id = %s, last_synced_at = now() WHERE machine_id = %s;", (utr_number, machine_id))
+                conn.commit()
+            return True, "Payment reference recorded in Supabase."
+    except Exception:
+        pass
+
     server_url = get_cloud_server_url()
     notify_endpoint = f"{server_url}/api/v1/outlet/notify-payment"
     machine_id = get_machine_id()

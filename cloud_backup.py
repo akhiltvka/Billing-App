@@ -359,19 +359,10 @@ def run_cloud_backup_job():
 
     return success, upload_msg
 
-def _backup_loop():
-    """Background thread loop running every 6 hours."""
-    # Wait 10 seconds after app boot before first backup attempt
-    time.sleep(10)
-    while True:
-        try:
-            run_cloud_backup_job()
-        except Exception as e:
-            print(f"[Cloud Backup Error] {e}")
-        time.sleep(BACKUP_INTERVAL_SECONDS)
-
 def start_cloud_backup_scheduler():
-    """Start the 6-hour background backup scheduler daemon thread."""
-    t = threading.Thread(target=_backup_loop, daemon=True)
-    t.start()
-    return t
+    """
+    Deprecated: The automated 6-hour periodic cloud upload loop has been retired
+    in favor of near-real-time row synchronization with Supabase (sync_worker.py).
+    """
+    return None
+
