@@ -24,6 +24,7 @@ APP_NAME = "MPI Billing Software"
 APP_PUBLISHER = "Meat Products of India"
 APP_VERSION = "2.0.0"
 REG_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\MPI_Billing_Software"
+PROD_SUPABASE_URL = "postgresql://postgres.tjpfkpwmoyooevxjosof:Revathyr%40j6123@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
 
 def get_bundle_dir():
     if getattr(sys, 'frozen', False):
@@ -100,22 +101,10 @@ class InstallerWizard(tk.Tk):
         self.create_start_sc = tk.BooleanVar(value=True)
         self.launch_after = tk.BooleanVar(value=True)
 
-        # Supabase Cloud Sync Configuration State
-        self.db_url_var = tk.StringVar()
-        try:
-            existing_url = get_database_url()
-            if existing_url and not existing_url.startswith('postgresql://test:test@'):
-                self.db_url_var.set(existing_url)
-        except Exception:
-            pass
-        self.db_test_status = tk.StringVar(value="")
-        self.db_test_passed = False
-
         self.current_step = 0
         self.steps = [
             self.show_step_welcome,
             self.show_step_directory,
-            self.show_step_database,
             self.show_step_options,
             self.show_step_install,
             self.show_step_finish
@@ -180,41 +169,6 @@ class InstallerWizard(tk.Tk):
             self.show_step(self.current_step - 1)
 
     def next_step(self):
-        # Validate Step 2 (Database connection setup)
-        if self.current_step == 2:
-            val = self.db_url_var.get().strip()
-            if not val:
-                messagebox.showerror(
-                    "Connection String Required",
-                    "A Supabase connection string is required to configure cloud sync.\n\n"
-                    "Please enter your PostgreSQL connection string before continuing."
-                )
-                return
-
-            try:
-                norm_url = normalize_database_url(val)
-                self.db_url_var.set(norm_url)
-
-                if not self.db_test_passed:
-                    success, msg = test_supabase_connection(norm_url, timeout=5)
-                    if success:
-                        self.db_test_passed = True
-                    else:
-                        proceed = messagebox.askyesno(
-                            "Connection Verification Failed",
-                            f"Could not verify connection to cloud database:\n\n{msg}\n\n"
-                            "Do you want to save this connection string anyway and proceed?"
-                        )
-                        if not proceed:
-                            return
-            except Exception as e:
-                proceed = messagebox.askyesno(
-                    "Connection Verification Warning",
-                    f"Warning during connection check: {e}\n\nDo you want to proceed anyway?"
-                )
-                if not proceed:
-                    return
-
         if self.current_step < len(self.steps) - 1:
             self.show_step(self.current_step + 1)
         else:
@@ -266,92 +220,7 @@ class InstallerWizard(tk.Tk):
 
         tk.Label(self.container, text="Required disk space: ~85 MB", font=("Segoe UI", 9), fg="#94A3B8", bg="#0F172A").pack(anchor="w", pady=(15, 0))
 
-    # ── Step 2: Supabase Cloud Sync Configuration ──
-    def show_step_database(self):
-        self.btn_back.config(state="normal")
-        self.btn_next.config(text="Next ›", state="normal")
-
-        tk.Label(self.container, text="Supabase Cloud Sync Setup", font=("Segoe UI", 14, "bold"), fg="#38BDF8", bg="#0F172A").pack(anchor="w", pady=(0, 6))
-
-        desc = (
-            f"{APP_NAME} operates 100% offline using a fast local SQLite database.\n"
-            "When internet is available, changes automatically mirror to your Supabase PostgreSQL\n"
-            "cloud database in the background."
-        )
-        tk.Label(self.container, text=desc, font=("Segoe UI", 9), fg="#CBD5E1", bg="#0F172A", justify="left").pack(anchor="w", pady=(0, 10))
-
-        tk.Label(self.container, text="Supabase Connection String (PostgreSQL URL):", font=("Segoe UI", 10, "bold"), fg="#F8FAFC", bg="#0F172A").pack(anchor="w", pady=(5, 3))
-
-        frame_url = tk.Frame(self.container, bg="#0F172A")
-        frame_url.pack(fill="x", pady=(0, 5))
-
-        entry = tk.Entry(frame_url, textvariable=self.db_url_var, font=("Segoe UI", 10), bg="#1E293B", fg="#F8FAFC", insertbackground="white")
-        entry.pack(fill="x", ipady=4)
-
-        hint = (
-            "• Example: postgresql://postgres:[PASSWORD]@db.xxxx.supabase.co:5432/postgres\n"
-            "• Special password characters (@, #, !, %, etc.) are automatically percent-encoded.\n"
-            "• Tested via 'SELECT 1' and securely saved to %PROGRAMDATA%\\MPI_Billing_App\\database_url.txt"
-        )
-        tk.Label(self.container, text=hint, font=("Segoe UI", 8), fg="#94A3B8", bg="#0F172A", justify="left").pack(anchor="w", pady=(0, 10))
-
-        # Test connection frame
-        frame_test = tk.Frame(self.container, bg="#0F172A")
-        frame_test.pack(fill="x", pady=5)
-
-        self.btn_test_db = tk.Button(
-            frame_test, text="⚡ Test Connection", font=("Segoe UI", 9, "bold"),
-            bg="#2563EB", fg="#FFFFFF", activebackground="#1D4ED8", activeforeground="#FFFFFF",
-            padx=10, pady=3, command=self.on_test_connection_click
-        )
-        self.btn_test_db.pack(side="left", padx=(0, 10))
-
-        self.lbl_test_result = tk.Label(
-            frame_test, textvariable=self.db_test_status, font=("Segoe UI", 9),
-            fg="#F8FAFC", bg="#0F172A", wraplength=440, justify="left"
-        )
-        self.lbl_test_result.pack(side="left", fill="x", expand=True)
-
-    def on_test_connection_click(self):
-        val = self.db_url_var.get().strip()
-        if not val:
-            self.db_test_status.set("⚠ Please enter a connection string first.")
-            self.lbl_test_result.config(fg="#F59E0B")
-            return
-
-        try:
-            norm_url = normalize_database_url(val)
-            self.db_url_var.set(norm_url)
-        except Exception:
-            norm_url = val
-
-        self.db_test_status.set("Testing connection with 'SELECT 1'…")
-        self.lbl_test_result.config(fg="#FBBF24")
-        self.btn_test_db.config(state="disabled")
-        self.update_idletasks()
-
-        def run_test():
-            try:
-                success, msg = test_supabase_connection(norm_url, timeout=10)
-            except Exception as e:
-                success, msg = False, str(e)
-
-            def update_ui():
-                self.btn_test_db.config(state="normal")
-                if success:
-                    self.db_test_passed = True
-                    self.db_test_status.set("✓ Connected successfully! Cloud database verified.")
-                    self.lbl_test_result.config(fg="#10B981")
-                else:
-                    self.db_test_passed = False
-                    self.db_test_status.set(f"✗ {msg}")
-                    self.lbl_test_result.config(fg="#EF4444")
-
-            self.after(0, update_ui)
-
-        threading.Thread(target=run_test, daemon=True).start()
-
-    # ── Step 3: Options ──
+    # ── Step 2: Options ──
     def show_step_options(self):
         self.btn_back.config(state="normal")
         self.btn_next.config(text="Install", state="normal")
@@ -435,13 +304,13 @@ class InstallerWizard(tk.Tk):
         except Exception:
             pass
 
-        # Save Supabase DATABASE_URL securely to external config directory
-        raw_db_url = self.db_url_var.get().strip()
-        if raw_db_url:
-            try:
-                save_database_url(raw_db_url)
-            except Exception as e:
-                print(f"[Installer Warning] Could not save database URL: {e}")
+        # Ensure Supabase DATABASE_URL is securely provisioned in %PROGRAMDATA% with locked permissions
+        try:
+            curr_url = get_database_url()
+            if not curr_url:
+                save_database_url(PROD_SUPABASE_URL)
+        except Exception as e:
+            print(f"[Installer Warning] Could not provision database URL: {e}")
 
         # Create Uninstaller Script
         uninstaller_cmd = os.path.join(target_dir, "Uninstall.cmd")
@@ -512,5 +381,11 @@ timeout /t 2 >nul
         tk.Label(self.container, text="Click Finish to exit setup.", font=("Segoe UI", 9), fg="#94A3B8", bg="#0F172A").pack(anchor="w", pady=(20, 0))
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description=f"{APP_NAME} Setup Wizard")
+    parser.add_argument("--db-url", dest="db_url", default=None, help="Custom Supabase PostgreSQL connection string (Developer override)")
+    args, _ = parser.parse_known_args()
+    if args.db_url:
+        PROD_SUPABASE_URL = args.db_url.strip()
     app = InstallerWizard()
     app.mainloop()
