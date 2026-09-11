@@ -18,6 +18,7 @@ a = Analysis(
         'database',
         'license_manager',
         'license_sync',
+        'sync_worker',
         'backup_scheduler',
         'cloud_backup',
         'external_backup',
