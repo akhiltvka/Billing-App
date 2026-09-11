@@ -24,9 +24,18 @@ from contextlib import contextmanager
 from datetime import datetime
 
 from database import get_db, get_database_url
-from license_manager import check_internet_connection
+from license_manager import check_internet_connection, get_machine_id
 
 logger = logging.getLogger("sync_worker")
+
+
+def get_tenant_id() -> str:
+    """
+    Returns the authoritative tenant identifier for this installation.
+    Prefers TENANT_ID environment variable (useful in test suites / custom overrides),
+    falling back to the deterministic hardware machine ID.
+    """
+    return os.environ.get('TENANT_ID') or get_machine_id()
 
 
 def _sanitize_error_message(err_str: str) -> str:
@@ -149,6 +158,10 @@ TABLE_COLUMNS = {
         'debit', 'credit', 'narration', 'reference_table', 'reference_id', 'created_by', 'created_at'
     }
 }
+
+# Whitelist tenant_id across all mirrored tables
+for _tbl in TABLE_COLUMNS:
+    TABLE_COLUMNS[_tbl].add('tenant_id')
 
 BOOLEAN_COLUMNS = {
     'products': {'is_price_inclusive_of_tax', 'active'},
@@ -308,7 +321,11 @@ def sanitize_payload_for_sync(table_name: str, payload_dict: dict, sqlite_conn) 
                 # Clean timestamp to calendar date if needed
                 sanitized[d_col] = v[:10]
 
-    # 6. Filter strictly allowed columns
+    # 6. Stamp tenant_id if not explicitly provided or empty
+    if 'tenant_id' not in sanitized or not sanitized['tenant_id']:
+        sanitized['tenant_id'] = get_tenant_id()
+
+    # 7. Filter strictly allowed columns
     allowed_cols = TABLE_COLUMNS.get(table_name, set())
     return {k: v for k, v in sanitized.items() if k in allowed_cols}
 
@@ -343,10 +360,12 @@ def build_upsert_sql(table_name: str, payload: dict, row_client_uuid: str):
     return sql, values
 
 
-def build_delete_sql(table_name: str, row_client_uuid: str):
-    """Builds the PostgreSQL delete query."""
-    sql = f"DELETE FROM {table_name} WHERE client_uuid = %s;"
-    values = [row_client_uuid]
+def build_delete_sql(table_name: str, row_client_uuid: str, tenant_id: str = None):
+    """Builds the PostgreSQL delete query scoped to tenant."""
+    if tenant_id is None:
+        tenant_id = get_tenant_id()
+    sql = f"DELETE FROM {table_name} WHERE client_uuid = %s AND tenant_id = %s;"
+    values = [row_client_uuid, tenant_id]
     return sql, values
 
 
@@ -370,7 +389,9 @@ def sync_single_queue_row(sqlite_conn, pg_cursor, queue_row: dict) -> tuple:
             sql, values = build_upsert_sql(table_name, sanitized, row_client_uuid)
             pg_cursor.execute(sql, values)
         elif operation == 'delete':
-            sql, values = build_delete_sql(table_name, row_client_uuid)
+            raw_payload = json.loads(queue_row['payload']) if queue_row.get('payload') else {}
+            tenant_id = raw_payload.get('tenant_id') or get_tenant_id()
+            sql, values = build_delete_sql(table_name, row_client_uuid, tenant_id=tenant_id)
             pg_cursor.execute(sql, values)
         else:
             return False, f"Unsupported operation '{operation}'"
@@ -378,6 +399,47 @@ def sync_single_queue_row(sqlite_conn, pg_cursor, queue_row: dict) -> tuple:
         return True, None
     except Exception as exc:
         return False, str(exc)
+
+
+def sync_tenant_metadata(pg_cursor, sqlite_conn):
+    """
+    Registers/updates this installation's metadata in the Supabase `tenants` table.
+    Ensures the central dashboard always has an active, up-to-date registry
+    of all shops and their last sync timestamps.
+    """
+    try:
+        tenant_id = get_tenant_id()
+        shop_name = "Meat Products of India"
+        shop_tagline = ""
+        currency_symbol = "₹"
+        try:
+            rows = sqlite_conn.execute(
+                "SELECT key, value FROM settings WHERE key IN ('shop_name', 'tagline', 'currency_symbol')"
+            ).fetchall()
+            for r in rows:
+                k = r['key'] if isinstance(r, dict) or hasattr(r, '__getitem__') else r[0]
+                v = r['value'] if isinstance(r, dict) or hasattr(r, '__getitem__') else r[1]
+                if k == 'shop_name' and v:
+                    shop_name = str(v)
+                elif k == 'tagline' and v:
+                    shop_tagline = str(v)
+                elif k == 'currency_symbol' and v:
+                    currency_symbol = str(v)
+        except Exception:
+            pass
+
+        sql = """
+            INSERT INTO tenants (tenant_id, shop_name, shop_tagline, currency_symbol, last_synced_at)
+            VALUES (%s, %s, %s, %s, now())
+            ON CONFLICT (tenant_id) DO UPDATE SET
+                shop_name = EXCLUDED.shop_name,
+                shop_tagline = EXCLUDED.shop_tagline,
+                currency_symbol = EXCLUDED.currency_symbol,
+                last_synced_at = now();
+        """
+        pg_cursor.execute(sql, (tenant_id, shop_name, shop_tagline, currency_symbol))
+    except Exception as exc:
+        logger.warning("Could not sync tenant metadata to Supabase: %s", _sanitize_error_message(str(exc)))
 
 
 def process_sync_queue() -> tuple:
@@ -432,6 +494,11 @@ def process_sync_queue() -> tuple:
                 ))
 
                 pg_cur = pg_conn.cursor()
+                sync_tenant_metadata(pg_cur, sqlite_conn)
+                try:
+                    pg_conn.commit()
+                except Exception:
+                    pass
 
                 for item in queue_items:
                     success, error_msg = sync_single_queue_row(sqlite_conn, pg_cur, item)

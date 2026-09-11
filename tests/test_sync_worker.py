@@ -165,6 +165,8 @@ def test_foreign_key_resolution_and_payload_sanitization(test_db):
     assert sanitized_prod['category_id'] == cat_uuid
     assert sanitized_prod['active'] is True
     assert sanitized_prod['is_price_inclusive_of_tax'] is True
+    assert 'tenant_id' in sanitized_prod
+    assert sanitized_prod['tenant_id'] == sync_worker.get_tenant_id()
 
     # Bill item payload with integer bill_id and product_id
     raw_bi_payload = {
@@ -183,27 +185,44 @@ def test_foreign_key_resolution_and_payload_sanitization(test_db):
     assert sanitized_bi['bill_id'] == bill_uuid
     assert sanitized_bi['product_id'] == prod_uuid
     assert sanitized_bi['amount'] == 300.0
+    assert 'tenant_id' in sanitized_bi
 
 
 def test_build_upsert_and_delete_sql():
-    """Verify PostgreSQL upsert and delete queries generation."""
+    """Verify PostgreSQL upsert and delete queries generation with tenant isolation."""
     cust_uuid = str(uuid.uuid4())
     payload = {
         'client_uuid': cust_uuid,
         'name': 'John Doe',
         'phone': '9876543210',
-        'is_active': True
+        'is_active': True,
+        'tenant_id': 'TENANT_TEST_123'
     }
 
     sql, values = sync_worker.build_upsert_sql('customers', payload, cust_uuid)
     assert "INSERT INTO customers" in sql
     assert "ON CONFLICT (client_uuid) DO UPDATE SET" in sql
     assert "synced_at = now()" in sql
-    assert values == [cust_uuid, 'John Doe', '9876543210', True]
+    assert values == [cust_uuid, 'John Doe', '9876543210', True, 'TENANT_TEST_123']
 
-    del_sql, del_values = sync_worker.build_delete_sql('customers', cust_uuid)
-    assert del_sql.strip() == "DELETE FROM customers WHERE client_uuid = %s;"
-    assert del_values == [cust_uuid]
+    del_sql, del_values = sync_worker.build_delete_sql('customers', cust_uuid, tenant_id='TENANT_TEST_123')
+    assert del_sql.strip() == "DELETE FROM customers WHERE client_uuid = %s AND tenant_id = %s;"
+    assert del_values == [cust_uuid, 'TENANT_TEST_123']
+
+
+def test_tenant_isolation_payload_stamping(test_db):
+    """Verify tenant_id environment override stamps distinct tenant IDs for multi-shop isolation."""
+    raw_payload = {'name': 'Shop Item', 'code': 'ITEM01', 'client_uuid': str(uuid.uuid4())}
+
+    with patch.dict('os.environ', {'TENANT_ID': 'OUTLET_KOCHI'}):
+        res_kochi = sync_worker.sanitize_payload_for_sync('products', raw_payload, test_db)
+        assert res_kochi['tenant_id'] == 'OUTLET_KOCHI'
+
+    with patch.dict('os.environ', {'TENANT_ID': 'OUTLET_TRIVANDRUM'}):
+        res_tvm = sync_worker.sanitize_payload_for_sync('products', raw_payload, test_db)
+        assert res_tvm['tenant_id'] == 'OUTLET_TRIVANDRUM'
+
+    assert res_kochi['tenant_id'] != res_tvm['tenant_id']
 
 
 def test_sync_queue_tolerance_to_individual_row_failure(test_db):
