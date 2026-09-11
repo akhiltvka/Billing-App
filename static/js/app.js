@@ -837,15 +837,17 @@ const App = {
     const bar = document.getElementById('license-banner-bar');
     if (!bar || !info) return;
 
-    const rzpLink = info.razorpay_payment_link || 'https://rzp.io/l/mpi-billing-license';
+    const isTrial = info.status === 'trial';
+    const rzpLink = info.razorpay_payment_link || (isTrial ? 'https://rzp.io/rzp/gVl69f0' : 'https://rzp.io/rzp/twm6gGM');
+    const displayPrice = Number(info.price_inr || (isTrial ? 8000 : 1500)).toLocaleString('en-IN');
 
     if (info.status === 'trial') {
       bar.innerHTML = `
         <div style="background:linear-gradient(90deg, #1E293B, #0F172A);border-bottom:1px solid #334155;color:#F1F5F9;padding:8px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;cursor:pointer" onclick="App.showActivationModal()">
-          <div>⏳ <strong>FREE TRIAL VERSION:</strong> <span class="text-gold font-bold">${info.days_left} days remaining</span> in trial period.</div>
+          <div>⏳ <strong>FREE TRIAL:</strong> <span class="text-gold font-bold">${info.days_left} days remaining</span> in trial period.</div>
           <div style="display:flex;gap:8px;align-items:center">
-            <span style="color:var(--gold);font-weight:600">Annual License (₹${info.price_inr || 12000})</span>
-            <span class="badge badge-gold">💳 Pay via Razorpay</span>
+            <span style="color:var(--gold);font-weight:600">Setup &amp; 1st Year (₹${displayPrice})</span>
+            <span class="badge badge-gold">💳 Pay Setup Fee</span>
           </div>
         </div>`;
       bar.style.display = 'block';
@@ -854,7 +856,7 @@ const App = {
         <div style="background:linear-gradient(90deg, #7C2D12, #991B1B);border-bottom:1px solid #B91C1C;color:#FEF2F2;padding:9px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;cursor:pointer" onclick="App.showActivationModal()">
           <div>⚠️ <strong>SUBSCRIPTION EXPIRED:</strong> <span class="font-bold">${info.days_left} days remaining</span> in Grace Period! Renew now to avoid software lock.</div>
           <div style="display:flex;gap:8px;align-items:center">
-            <span style="font-weight:700">Renew (₹${info.price_inr || 12000})</span>
+            <span style="font-weight:700">Renew (₹${displayPrice}/yr)</span>
             <span class="badge badge-warning">💳 Pay via Razorpay</span>
           </div>
         </div>`;
@@ -862,7 +864,7 @@ const App = {
     } else if (info.status === 'expired') {
       bar.innerHTML = `
         <div style="background:linear-gradient(90deg, #991B1B, #450A0A);border-bottom:1px solid #EF4444;color:#FEF2F2;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;cursor:pointer" onclick="App.showActivationModal()">
-          <div>🔒 <strong>SOFTWARE LOCKED:</strong> Subscription expired. Please renew online via Razorpay.</div>
+          <div>🔒 <strong>SOFTWARE LOCKED:</strong> Subscription expired. Please renew online via Razorpay (₹${displayPrice}/yr).</div>
           <div style="display:flex;gap:8px;align-items:center">
             <span class="badge badge-danger" style="font-size:12px;padding:4px 10px">💳 Renew Online</span>
           </div>
@@ -881,7 +883,7 @@ const App = {
       bar.innerHTML = `
         <div style="background:linear-gradient(90deg, #064E3B, #022C22);border-bottom:1px solid #059669;color:#ECFDF5;padding:8px 16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;cursor:pointer" onclick="App.showActivationModal()">
           <div>🔑 <strong>SUBSCRIPTION ACTIVE:</strong> <span class="font-bold">${info.days_left} days remaining</span> until renewal (${info.expires_at}).</div>
-          <div><span class="badge badge-success">Renew 💳</span></div>
+          <div><span class="badge badge-success">Renew ₹${displayPrice} 💳</span></div>
         </div>`;
       bar.style.display = 'block';
     } else {
@@ -891,13 +893,24 @@ const App = {
   },
 
   showActivationModal() {
-    const info = this.licenseInfo || { machine_id: 'FETCHING...', price_inr: 12000, razorpay_payment_link: 'https://rzp.io/l/mpi-billing-license' };
-    const rzpLink = info.razorpay_payment_link || 'https://rzp.io/l/mpi-billing-license';
+    const isTrial = (this.licenseInfo && this.licenseInfo.status === 'trial');
+    const defaultPrice = isTrial ? 8000 : 1500;
+    const defaultLink = isTrial ? 'https://rzp.io/rzp/gVl69f0' : 'https://rzp.io/rzp/twm6gGM';
+    const info = this.licenseInfo || { machine_id: 'FETCHING...', price_inr: defaultPrice, razorpay_payment_link: defaultLink };
+
+    const rzpLink = info.razorpay_payment_link || defaultLink;
+    const displayPrice = Number(info.price_inr || defaultPrice).toLocaleString('en-IN');
+    const planTitle = isTrial ? 'One-Time Installation & Registration' : 'Annual Software License Renewal';
+    const planSuffix = isTrial ? '<span style="font-size:14px;font-weight:500;color:var(--text-muted)"> (Setup + 1st Year)</span>' : '<span style="font-size:14px;font-weight:500;color:var(--text-muted)">/ Year</span>';
+    const planDesc = isTrial
+      ? 'Pay one-time initial setup and owner registration charges securely via UPI, Card, or Net Banking.'
+      : 'Renew your annual software license and cloud sync mirror securely via Razorpay.';
+    const buttonLabel = isTrial ? '💳 Pay Installation Charges (₹8,000)' : '💳 Pay Annual Renewal (₹1,500)';
 
     const html = `
       <div class="modal" style="max-width:540px">
         <div class="modal-header">
-          <div class="modal-title"><span class="modal-title-icon">💳</span> Software License &amp; Renewal</div>
+          <div class="modal-title"><span class="modal-title-icon">💳</span> ${planTitle}</div>
           <button class="modal-close" onclick="App.closeModal()">✕</button>
         </div>
         <div class="modal-body">
@@ -912,14 +925,14 @@ const App = {
 
           <!-- Razorpay Instant Online Payment Card -->
           <div style="background:linear-gradient(135deg, rgba(37,99,235,0.08), rgba(59,130,246,0.04));border:1.5px solid #3B82F6;border-radius:var(--r-md);padding:20px;margin-bottom:16px;text-align:center">
-            <div style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#3B82F6;font-weight:700;margin-bottom:4px">Instant Online Payment</div>
-            <div style="font-size:24px;font-weight:800;color:var(--text-primary);margin-bottom:6px">₹${Number(info.price_inr || 12000).toLocaleString('en-IN')} <span style="font-size:14px;font-weight:500;color:var(--text-muted)">/ Year</span></div>
+            <div style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:#3B82F6;font-weight:700;margin-bottom:4px">${planTitle}</div>
+            <div style="font-size:26px;font-weight:800;color:var(--text-primary);margin-bottom:6px">₹${displayPrice} ${planSuffix}</div>
             <p style="font-size:13px;color:var(--text-secondary);margin:0 auto 16px;max-width:400px">
-              Pay securely with UPI, Credit/Debit Card, or Net Banking via Razorpay.
+              ${planDesc}
             </p>
             <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
               <a href="${rzpLink}" target="_blank" class="btn btn-primary" style="background:#2563EB;border-color:#1D4ED8;padding:10px 22px;font-size:14px;font-weight:700;text-decoration:none;display:inline-flex;align-items:center;gap:6px">
-                <span>💳 Pay with Razorpay</span> ↗
+                <span>${buttonLabel}</span> ↗
               </a>
               <button class="btn btn-secondary" onclick="navigator.clipboard.writeText('${rzpLink}');App.toast('Payment link copied!','info')">
                 🔗 Copy Link

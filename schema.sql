@@ -285,8 +285,8 @@ CREATE TABLE IF NOT EXISTS licenses (
     activated_at          TIMESTAMPTZ,
     expires_at            TIMESTAMPTZ,
     grace_expires_at      TIMESTAMPTZ,
-    razorpay_payment_link TEXT DEFAULT 'https://rzp.io/l/mpi-billing-license',
-    amount                NUMERIC(12, 2) DEFAULT 12000.00,
+    razorpay_payment_link TEXT DEFAULT 'https://rzp.io/rzp/gVl69f0',
+    amount                NUMERIC(12, 2) DEFAULT 8000.00,
     payment_id            TEXT,
     last_synced_at        TIMESTAMPTZ DEFAULT now(),
     created_at            TIMESTAMPTZ DEFAULT now()

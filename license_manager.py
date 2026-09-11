@@ -17,11 +17,17 @@ from database import get_db
 # Cryptographic Salt for Developer HMAC key signing (12-digit verification)
 LICENSE_SECRET_SALT = "MPI_MEATSHOP_SUB_KEY_SALT_2025_SECRET_#99!"
 
-# Subscription parameters
+# Subscription & Pricing parameters
 TRIAL_DAYS = 10
 SUBSCRIPTION_DAYS = 365
 GRACE_PERIOD_DAYS = 10
-YEARLY_PRICE_INR = 12000
+
+INSTALLATION_PRICE_INR = 8000
+RENEWAL_PRICE_INR = 1500
+YEARLY_PRICE_INR = RENEWAL_PRICE_INR  # Backward compatibility
+
+RAZORPAY_INSTALL_LINK = 'https://rzp.io/rzp/gVl69f0'
+RAZORPAY_RENEWAL_LINK = 'https://rzp.io/rzp/twm6gGM'
 
 def _get_hwid_cache_path():
     """Return a system-wide or user-wide persistent path for machine ID caching."""
@@ -246,7 +252,9 @@ def get_license_info():
 
     # Fetch Razorpay payment link from shop_settings or fallback
     row_rzp = conn.execute("SELECT value FROM shop_settings WHERE key = 'razorpay_payment_link'").fetchone()
-    razorpay_link = (row_rzp['value'] if row_rzp and row_rzp['value'] else '').strip() or 'https://rzp.io/l/mpi-billing-license'
+    stored_link = (row_rzp['value'] if row_rzp and row_rzp['value'] else '').strip()
+    if not stored_link or 'mpi-billing-license' in stored_link:
+        stored_link = None
 
     machine_id = get_machine_id()
 
@@ -262,8 +270,10 @@ def get_license_info():
             'grace_expires_at': '',
             'active_key': None,
             'machine_id': machine_id,
-            'price_inr': YEARLY_PRICE_INR,
-            'razorpay_payment_link': razorpay_link,
+            'price_inr': RENEWAL_PRICE_INR,
+            'plan_type': 'renewal',
+            'plan_title': 'Annual License Renewal',
+            'razorpay_payment_link': stored_link or RAZORPAY_RENEWAL_LINK,
             'upi_id': '9809840548@axisb',
             'upi_name': 'MPI Billing Software'
         }
@@ -280,8 +290,10 @@ def get_license_info():
             'grace_expires_at': '',
             'active_key': None,
             'machine_id': machine_id,
-            'price_inr': YEARLY_PRICE_INR,
-            'razorpay_payment_link': razorpay_link,
+            'price_inr': RENEWAL_PRICE_INR,
+            'plan_type': 'renewal',
+            'plan_title': 'Annual License Renewal',
+            'razorpay_payment_link': stored_link or RAZORPAY_RENEWAL_LINK,
             'upi_id': '9809840548@axisb',
             'upi_name': 'MPI Billing Software'
         }
@@ -314,6 +326,11 @@ def get_license_info():
             days_left = 0
             is_locked = True
 
+        price = float(lic_data.get('price_inr', RENEWAL_PRICE_INR)) if lic_data else RENEWAL_PRICE_INR
+        renewal_link = stored_link or lic_data.get('razorpay_payment_link') or RAZORPAY_RENEWAL_LINK
+        if 'mpi-billing-license' in renewal_link:
+            renewal_link = RAZORPAY_RENEWAL_LINK
+
         conn.close()
         return {
             'status': status,
@@ -325,8 +342,10 @@ def get_license_info():
             'grace_expires_at': str(grace_exp_date),
             'active_key': format_key(active_key),
             'machine_id': machine_id,
-            'price_inr': YEARLY_PRICE_INR,
-            'razorpay_payment_link': razorpay_link,
+            'price_inr': price,
+            'plan_type': 'renewal',
+            'plan_title': 'Annual License Renewal',
+            'razorpay_payment_link': renewal_link,
             'upi_id': '9809840548@axisb',
             'upi_name': 'MPI Billing Software'
         }
@@ -343,6 +362,8 @@ def get_license_info():
             days_left = 0
             is_locked = True
 
+        install_link = stored_link or RAZORPAY_INSTALL_LINK
+
         conn.close()
         return {
             'status': status,
@@ -354,8 +375,10 @@ def get_license_info():
             'grace_expires_at': str(trial_exp_date),
             'active_key': None,
             'machine_id': machine_id,
-            'price_inr': YEARLY_PRICE_INR,
-            'razorpay_payment_link': razorpay_link,
+            'price_inr': INSTALLATION_PRICE_INR,
+            'plan_type': 'installation',
+            'plan_title': 'Initial Installation & Setup',
+            'razorpay_payment_link': install_link,
             'upi_id': '9809840548@axisb',
             'upi_name': 'MPI Billing Software'
         }
@@ -503,7 +526,12 @@ def sync_license_with_supabase():
                     rem_exp_str = str(rem_exp)[:10] if rem_exp else ''
                     rem_act_str = str(rem_act)[:10] if rem_act else inst_str
                     rem_grace_str = str(rem_grace)[:10] if rem_grace else ''
-                    rem_link = rem_link or 'https://rzp.io/l/mpi-billing-license'
+
+                    if not rem_link or 'mpi-billing-license' in rem_link:
+                        rem_link = RAZORPAY_INSTALL_LINK if rem_status == 'trial' else RAZORPAY_RENEWAL_LINK
+
+                    default_price = INSTALLATION_PRICE_INR if rem_status == 'trial' else RENEWAL_PRICE_INR
+                    price = float(rem_amount) if rem_amount else default_price
 
                     lic_payload = {
                         'status': rem_status or 'trial',
@@ -512,7 +540,7 @@ def sync_license_with_supabase():
                         'grace_expires_at': rem_grace_str,
                         'razorpay_payment_link': rem_link,
                         'machine_id': machine_id,
-                        'price_inr': float(rem_amount) if rem_amount else YEARLY_PRICE_INR
+                        'price_inr': price
                     }
 
                     conn_sqlite.execute("INSERT OR REPLACE INTO shop_settings (key, value) VALUES ('active_license_json', ?)", (_json.dumps(lic_payload),))
@@ -527,7 +555,7 @@ def sync_license_with_supabase():
                     pg_conn.commit()
                     return True, f"License synchronized: {rem_status.upper()}"
                 else:
-                    # Initialize trial in Supabase
+                    # Initialize trial in Supabase with initial installation fee (₹8,000)
                     try:
                         inst_date = datetime.strptime(inst_str, "%Y-%m-%d").date()
                     except Exception:
@@ -535,9 +563,9 @@ def sync_license_with_supabase():
                     trial_exp = str(max(inst_date, date.today()) + timedelta(days=TRIAL_DAYS))
                     cur.execute("""
                         INSERT INTO licenses (machine_id, outlet_code, outlet_name, status, expires_at, grace_expires_at, razorpay_payment_link, amount)
-                        VALUES (%s, %s, %s, 'trial', %s, %s, 'https://rzp.io/l/mpi-billing-license', %s)
+                        VALUES (%s, %s, %s, 'trial', %s, %s, %s, %s)
                         ON CONFLICT (machine_id) DO NOTHING;
-                    """, (machine_id, outlet_code, outlet_name, trial_exp, trial_exp, YEARLY_PRICE_INR))
+                    """, (machine_id, outlet_code, outlet_name, trial_exp, trial_exp, RAZORPAY_INSTALL_LINK, INSTALLATION_PRICE_INR))
                     pg_conn.commit()
                     return True, "Registered new trial license on Supabase."
 
